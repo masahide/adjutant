@@ -1,3 +1,5 @@
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { basename, dirname, extname, join } from "node:path";
 import type { EmitFn, IngestionAdapter } from "../core/adapter.js";
 import type { NormalizedEvent } from "../core/events.js";
 import {
@@ -23,7 +25,27 @@ export type WebSocketFrameEvent = {
 };
 export type ResponseReceivedEvent = {
   requestId: string;
-  response: { url: string };
+  type?: string;
+  response: {
+    url: string;
+    status?: number;
+    statusText?: string;
+    mimeType?: string;
+    headers?: Record<string, string>;
+  };
+};
+export type RequestWillBeSentEvent = {
+  requestId: string;
+  type?: string;
+  initiator?: {
+    type?: string;
+  };
+  request: {
+    url: string;
+    method: string;
+    headers?: Record<string, string>;
+    postData?: string;
+  };
 };
 
 type SlackClient = {
@@ -36,8 +58,14 @@ type SlackClient = {
     enable(opts: Record<string, unknown>): Promise<void>;
     setCacheDisabled(opts: { cacheDisabled: boolean }): Promise<void>;
     on(
-      name: "webSocketFrameReceived" | "webSocketFrameSent" | "responseReceived",
-      handler: (payload: WebSocketFrameEvent | ResponseReceivedEvent) => unknown
+      name:
+        | "webSocketFrameReceived"
+        | "webSocketFrameSent"
+        | "responseReceived"
+        | "requestWillBeSent",
+      handler: (
+        payload: WebSocketFrameEvent | ResponseReceivedEvent | RequestWillBeSentEvent
+      ) => unknown
     ): void;
     getResponseBody(params: {
       requestId: string;
@@ -57,6 +85,9 @@ type SlackAdapterDeps = {
   client: SlackClient;
   now?: () => Date;
   timezone?: string;
+  channelCachePath?: string;
+  userCachePath?: string;
+  debugFetchHookEnabled?: boolean;
   onDebugEvent?: (event: {
     source: "slack-adapter";
     kind: "raw_fetch" | "raw_ws" | "normalized";
@@ -82,6 +113,8 @@ const DEBUG_NOTIFICATION_ENABLED =
   DEBUG_TARGETS.has("slack:notification") || DEBUG_TARGETS.has("slack:network:verbose");
 const DEBUG_FETCH_ENABLED =
   DEBUG_TARGETS.has("slack:fetch") || DEBUG_TARGETS.has("slack:network:verbose");
+const DEBUG_FETCH_HOOK_ENABLED =
+  DEBUG_TARGETS.has("slack:fetch:hook") || DEBUG_TARGETS.has("slack:network:verbose");
 const DEBUG_RUNTIME_ENABLED =
   DEBUG_TARGETS.has("slack:runtime") || DEBUG_TARGETS.has("slack:runtime:verbose");
 const DOM_CAPTURE_DISABLED =
@@ -481,14 +514,19 @@ export class SlackAdapter implements IngestionAdapter {
   private readonly now: () => Date;
   private readonly timezone: string;
   private emit: EmitFn | null = null;
-  private readonly cache: Map<string, { text?: string; user?: string }> = new Map();
+  private readonly cache: Map<string, { text?: string; user?: string; teamId?: string }> =
+    new Map();
   private readonly seenUids: Set<string> = new Set();
   private readonly domCaptureTasks: Map<string, Promise<void>> = new Map();
   private readonly domCaptureByTs: Map<
     string,
     { text: string; channelName?: string | null; channelId?: string | null; capturedAt: number }
   > = new Map();
-  private readonly channelNames: Map<string, string> = new Map();
+  private readonly channelNamesByTeam: Map<string, Map<string, string>> = new Map();
+  private readonly userNamesByTeam: Map<string, Map<string, string>> = new Map();
+  private readonly channelTeamIds: Map<string, string> = new Map();
+  private readonly channelCachePath: string | undefined;
+  private readonly userCachePath: string | undefined;
   private readonly debugEnabled =
     DEBUG_TARGETS.has("slack") || DEBUG_TARGETS.has("slack:verbose") || DOM_PROBE_DEBUG_ENABLED;
   private readonly debugVerboseEnabled = DEBUG_TARGETS.has("slack:verbose");
@@ -497,16 +535,15 @@ export class SlackAdapter implements IngestionAdapter {
   private readonly domCaptureDisabled = DOM_CAPTURE_DISABLED;
   private readonly debugNetworkEvents = DEBUG_NETWORK_ENABLED;
   private readonly debugFetchEvents = DEBUG_FETCH_ENABLED;
+  private readonly debugFetchHookEnabled: boolean;
   private readonly debugRuntimeEvents = DEBUG_RUNTIME_ENABLED;
   private readonly onDebugEvent:
-    | ((
-        event: {
-          source: "slack-adapter";
-          kind: "raw_fetch" | "raw_ws" | "normalized";
-          at: string;
-          payload: unknown;
-        }
-      ) => void)
+    | ((event: {
+        source: "slack-adapter";
+        kind: "raw_fetch" | "raw_ws" | "normalized";
+        at: string;
+        payload: unknown;
+      }) => void)
     | undefined;
   private readonly contextsByFrame: Map<string, FrameContextInfo> = new Map();
   private readonly frameIdByContext: Map<number, string | null> = new Map();
@@ -515,12 +552,17 @@ export class SlackAdapter implements IngestionAdapter {
   constructor(private readonly deps: SlackAdapterDeps) {
     this.now = deps.now ?? (() => new Date());
     this.timezone = deps.timezone ?? "Asia/Tokyo";
+    this.channelCachePath = deps.channelCachePath;
+    this.userCachePath = deps.userCachePath;
+    this.debugFetchHookEnabled = deps.debugFetchHookEnabled ?? DEBUG_FETCH_HOOK_ENABLED;
     this.onDebugEvent = deps.onDebugEvent;
   }
 
   async start(emit: EmitFn): Promise<void> {
     this.emit = emit;
     const { Network, Fetch, Runtime } = this.deps.client;
+    await this.loadChannelNameCache();
+    await this.loadUserNameCache();
 
     await Network.enable({});
     await Network.setCacheDisabled({ cacheDisabled: true });
@@ -537,11 +579,14 @@ export class SlackAdapter implements IngestionAdapter {
       }
       await this.handleWebSocketFrame(payload as WebSocketFrameEvent, "sent");
     });
-    Network.on("responseReceived", (payload) => {
+    Network.on("responseReceived", async (payload) => {
       if (this.debugNetworkEvents) {
         this.debug("responseReceived", this.safePreview(payload));
       }
-      void this.handleResponseReceived(payload as ResponseReceivedEvent);
+      await this.handleResponseReceived(payload as ResponseReceivedEvent);
+    });
+    Network.on("requestWillBeSent", (payload) => {
+      void this.handleRequestWillBeSent(payload as RequestWillBeSentEvent);
     });
 
     if (typeof Runtime.on === "function") {
@@ -604,6 +649,7 @@ export class SlackAdapter implements IngestionAdapter {
     this.pushDebugEvent("raw_fetch", {
       method: event.request.method,
       url: event.request.url,
+      urlInfo: this.parseUrlInfo(event.request.url),
       contentType,
       body: this.truncateForDebug(body, 4000),
     });
@@ -621,6 +667,7 @@ export class SlackAdapter implements IngestionAdapter {
     if (url.pathname.endsWith("/api/chat.postMessage")) {
       const channelId = typeof payload.channel === "string" ? payload.channel : "";
       const userId = typeof payload.user === "string" ? payload.user : undefined;
+      const teamId = this.resolveTeamId(this.asString(payload.team), channelId);
       const blocks = this.parseJsonIfString(payload.blocks) as Parameters<typeof fromBlocks>[0];
       const rawTs = this.asString(payload.ts);
       const slackTs = this.resolveMessageTs(rawTs ?? this.asString(payload.thread_ts));
@@ -637,18 +684,18 @@ export class SlackAdapter implements IngestionAdapter {
           normalizedTs: this.normalizedTimestamp(slackTs) ?? slackTs,
         });
         domCaptured = this.consumeDomCapture(slackTs);
-        if (domCaptured?.channelId && domCaptured.channelName) {
-          this.cacheChannelName(domCaptured.channelId, domCaptured.channelName);
-        }
       }
 
-      const channelNameHint =
-        domCaptured?.channelName ?? this.resolveChannelName(channelId) ?? channelId;
+      const channelNameHint = this.resolveChannelNameFromMap(channelId, teamId) ?? channelId;
+      const userNameHint =
+        (userId ? this.resolveUserNameFromMap(userId, teamId, channelId) : undefined) ??
+        userId ??
+        "unknown";
 
       const event = normalizeSlackMessage(
         {
           channel: { id: channelId, name: channelNameHint },
-          user: { id: userId ?? "unknown", name: userId },
+          user: { id: userId ?? "unknown", name: userNameHint },
           ts: slackTs,
           text: payload.text as string | undefined,
           blocks,
@@ -658,10 +705,6 @@ export class SlackAdapter implements IngestionAdapter {
         normalizeOpts
       );
 
-      if (channelId && channelNameHint) {
-        this.cacheChannelName(channelId, channelNameHint);
-      }
-
       if (channelId) {
         const textFromDom = domCaptured?.text ?? undefined;
         const fallbackText = (payload.text as string | undefined) ?? fromBlocks(blocks);
@@ -669,11 +712,13 @@ export class SlackAdapter implements IngestionAdapter {
         this.cacheMessage(channelId, slackTs, {
           text: resolvedText,
           user: userId,
+          teamId,
         });
         if (rawTs && rawTs !== slackTs) {
           this.cacheMessage(channelId, rawTs, {
             text: resolvedText,
             user: userId,
+            teamId,
           });
         }
       }
@@ -723,32 +768,30 @@ export class SlackAdapter implements IngestionAdapter {
         this.cacheMessage(channelId, itemTsForEvent, { text: domCaptured.text });
       }
       const domChannelId = domCaptured?.channelId ?? channelId;
-      if (domChannelId && domCaptured?.channelName) {
-        this.cacheChannelName(domChannelId, domCaptured.channelName);
-      }
 
       const lookupKeys = [rawItemTs, normalizedItemTs, fallbackItemTs]
         .filter((value): value is string => Boolean(value))
         .map((value) => this.cacheKey(channelId, value));
       const cached = lookupKeys
         .map((key) => this.cache.get(key))
-        .find((entry): entry is { text?: string; user?: string } => Boolean(entry));
+        .find((entry): entry is { text?: string; user?: string; teamId?: string } =>
+          Boolean(entry)
+        );
       const messageText =
         domCaptured?.text ?? cached?.text ?? this.asString(payload.message_text) ?? undefined;
-      const messageUser = cached?.user ?? this.asString(payload.message_user) ?? undefined;
+      const teamId = cached?.teamId ?? this.resolveTeamId(this.asString(payload.team), channelId);
       const resolvedChannelName =
-        this.resolveChannelName(domChannelId) ?? domCaptured?.channelName ?? channelId;
-      if (domChannelId && resolvedChannelName) {
-        this.cacheChannelName(domChannelId, resolvedChannelName);
-      }
+        this.resolveChannelNameFromMap(domChannelId ?? channelId, teamId) ?? channelId;
       const userIdForEvent = cached?.user ?? userId;
+      const userNameForEvent =
+        this.resolveUserNameFromMap(userIdForEvent, teamId, channelId) ?? userIdForEvent;
 
       const reactionEvent = normalizeSlackReaction(
         {
           channel: { id: channelId, name: resolvedChannelName },
           user: {
             id: userIdForEvent,
-            name: messageUser ?? userIdForEvent,
+            name: userNameForEvent,
           },
           item_ts: itemTsForEvent,
           action,
@@ -792,14 +835,26 @@ export class SlackAdapter implements IngestionAdapter {
       }
       if (data?.type === "message" && data.channel && data.ts) {
         const text = fromBlocks(data.blocks);
-        this.cacheMessage(data.channel, data.ts, { text, user: data.user });
+        this.cacheMessage(data.channel, data.ts, {
+          text,
+          user: data.user,
+          teamId: this.asString(data.team),
+        });
       } else if (data?.type === "message_changed" && data.channel && data.message?.ts) {
         const msg = data.message;
         const text = fromBlocks(msg.blocks);
-        this.cacheMessage(data.channel, msg.ts, { text, user: msg.user });
+        this.cacheMessage(data.channel, msg.ts, {
+          text,
+          user: msg.user,
+          teamId: this.asString(msg.team) ?? this.asString(data.team),
+        });
       } else if (data?.type === "thread_broadcast" && data.channel && data.root_ts) {
         const text = fromBlocks(data.blocks);
-        this.cacheMessage(data.channel, data.root_ts, { text, user: data.user });
+        this.cacheMessage(data.channel, data.root_ts, {
+          text,
+          user: data.user,
+          teamId: this.asString(data.team),
+        });
       }
       if (direction === "received") {
         for (const candidate of this.collectNotificationCandidates(data)) {
@@ -815,23 +870,38 @@ export class SlackAdapter implements IngestionAdapter {
   }
 
   private normalizeNotificationFromSocket(data: Record<string, unknown>): NormalizedEvent | null {
-    const eventType = this.asString(data.type) ?? this.asString(data.subtype) ?? "";
+    const type = this.asString(data.type) ?? "";
+    const subtype = this.asString(data.subtype) ?? "";
+    const eventType = (type === "message" && subtype) || type || subtype;
+    const suppressNotification = data.suppress_notification;
+    const isSuppressed =
+      suppressNotification === true ||
+      suppressNotification === 1 ||
+      suppressNotification === "1" ||
+      suppressNotification === "true";
+    const isBotMessageNotification =
+      type === "message" &&
+      subtype === "bot_message" &&
+      !isSuppressed &&
+      this.asString(data.bot_id) !== undefined;
     const looksLikeNotification =
       eventType.toLowerCase().includes("notification") ||
       this.asString(data.title) !== undefined ||
       this.asString(data.subtitle) !== undefined ||
       this.asString(data.body) !== undefined ||
-      this.asString(data.preview) !== undefined;
+      this.asString(data.preview) !== undefined ||
+      isBotMessageNotification;
     if (!looksLikeNotification) return null;
 
     const channelId =
       this.asString(data.channel) ?? this.asString(data.channel_id) ?? this.asString(data.room);
-    const channelName =
-      this.asString(data.channel_name) ??
-      (channelId ? this.resolveChannelName(channelId) : undefined) ??
-      channelId;
+    const teamId = this.resolveTeamId(
+      this.asString(data.team_id) ?? this.asString(data.team),
+      channelId
+    );
+    const channelName = this.resolveChannelNameFromMap(channelId, teamId) ?? channelId;
     const userId = this.asString(data.user) ?? this.asString(data.user_id);
-    const userName = this.asString(data.username) ?? this.asString(data.user_name) ?? userId;
+    const userName = this.resolveUserNameFromMap(userId, teamId, channelId) ?? userId;
     const ts = this.asString(data.event_ts) ?? this.asString(data.ts);
     const title =
       this.asString(data.title) ?? this.asString(data.subtitle) ?? this.asString(data.summary);
@@ -985,10 +1055,8 @@ export class SlackAdapter implements IngestionAdapter {
       );
       const channelKey = outcome.channelId ?? channelId ?? null;
       const channelLabel =
-        outcome.channelName ?? (channelKey ? (this.resolveChannelName(channelKey) ?? null) : null);
-      if (channelKey && channelLabel) {
-        this.cacheChannelName(channelKey, channelLabel);
-      }
+        outcome.channelName ??
+        (channelKey ? (this.resolveChannelNameFromMap(channelKey, undefined) ?? null) : null);
       if (channelKey) {
         this.cacheMessage(channelKey, normalizedTs, { text });
       }
@@ -1196,6 +1264,11 @@ export class SlackAdapter implements IngestionAdapter {
   }
 
   private async handleResponseReceived(event: ResponseReceivedEvent): Promise<void> {
+    if (this.debugFetchHookEnabled) {
+      await this.pushResponseDebugEvent(event);
+    }
+    await this.refreshChannelNameFromConversationsView(event);
+    await this.refreshUserNameFromUsersList(event);
     if (!SLACK_API_RE.test(event.response.url)) return;
     try {
       const { body, base64Encoded } = await this.deps.client.Network.getResponseBody({
@@ -1213,36 +1286,454 @@ export class SlackAdapter implements IngestionAdapter {
     }
   }
 
+  private async pushResponseDebugEvent(event: ResponseReceivedEvent): Promise<void> {
+    const resourceType = this.asString(event.type) ?? "";
+    if (resourceType && resourceType !== "Fetch" && resourceType !== "XHR") return;
+    if (!event?.response?.url) return;
+
+    const contentType =
+      this.normalizeHeader(event.response.headers, "content-type") || event.response.mimeType || "";
+
+    let bodyText: string | null = null;
+    let bodyUnavailable: string | null = null;
+    try {
+      const { body, base64Encoded } = await this.deps.client.Network.getResponseBody({
+        requestId: event.requestId,
+      });
+      bodyText = base64Encoded ? Buffer.from(body, "base64").toString("utf8") : body;
+    } catch {
+      bodyUnavailable = "unavailable";
+    }
+
+    const preview = this.previewResponseBody(bodyText, contentType);
+    this.pushDebugEvent("raw_fetch", {
+      stage: "responseReceived",
+      requestId: event.requestId,
+      resourceType: resourceType || undefined,
+      url: event.response.url,
+      urlInfo: this.parseUrlInfo(event.response.url),
+      status: event.response.status,
+      statusText: event.response.statusText,
+      contentType: contentType || undefined,
+      body: preview.body,
+      bodyType: preview.bodyType,
+      bodyUnavailable,
+    });
+  }
+
+  private async refreshChannelNameFromConversationsView(
+    event: ResponseReceivedEvent
+  ): Promise<void> {
+    const urlInfo = this.parseUrlInfo(event.response.url);
+    if (!urlInfo || urlInfo.pathname !== "/api/conversations.view") return;
+    try {
+      const { body, base64Encoded } = await this.deps.client.Network.getResponseBody({
+        requestId: event.requestId,
+      });
+      const text = base64Encoded ? Buffer.from(body, "base64").toString("utf8") : body;
+      const parsed = JSON.parse(text) as Record<string, unknown>;
+      if (parsed.ok !== true) return;
+
+      const channel = this.asRecord(parsed.channel);
+      const history = this.asRecord(parsed.history);
+      const historyMessages = Array.isArray(history?.messages) ? history.messages : [];
+      const firstMessage =
+        historyMessages.length > 0 ? this.asRecord(historyMessages[0]) : undefined;
+      const users = Array.isArray(parsed.users) ? parsed.users : [];
+      const firstUser = users.length > 0 ? this.asRecord(users[0]) : undefined;
+      const channelId = this.asString(channel?.id);
+      const channelName = this.asString(channel?.name);
+      const teamId =
+        this.asString(channel?.context_team_id) ??
+        this.asString(firstMessage?.team) ??
+        this.asString(firstUser?.team_id);
+      if (!channelId || !channelName || !teamId) return;
+
+      const before = this.resolveChannelNameByTeam(teamId, channelId);
+      this.cacheChannelNameByTeam(teamId, channelId, channelName);
+      if (before !== channelName) {
+        await this.persistChannelNameCache(teamId);
+      }
+    } catch {
+      /* ignore conversations.view parse errors */
+    }
+  }
+
+  private async refreshUserNameFromUsersList(event: ResponseReceivedEvent): Promise<void> {
+    const urlInfo = this.parseUrlInfo(event.response.url);
+    if (!urlInfo) return;
+    const segments = urlInfo.pathSegments ?? [];
+    const looksLikeUserList =
+      (segments.length >= 4 &&
+        segments[0] === "cache" &&
+        segments[2] === "users" &&
+        segments[3] === "list") ||
+      urlInfo.pathname === "/api/users.list";
+    if (!looksLikeUserList) return;
+
+    try {
+      const { body, base64Encoded } = await this.deps.client.Network.getResponseBody({
+        requestId: event.requestId,
+      });
+      const text = base64Encoded ? Buffer.from(body, "base64").toString("utf8") : body;
+      const parsed = JSON.parse(text) as Record<string, unknown>;
+      if (parsed.ok !== true) return;
+
+      const results = Array.isArray(parsed.results) ? parsed.results : [];
+      const teamFromPath =
+        segments.length >= 2 && segments[0] === "cache" ? segments[1] : undefined;
+      const changedTeamIds = new Set<string>();
+
+      for (const item of results) {
+        const user = this.asRecord(item);
+        if (!user) continue;
+        const userId = this.asString(user.id);
+        const teamId =
+          this.asString(user.team_id) ??
+          this.asString(this.asRecord(user.profile)?.team) ??
+          teamFromPath;
+        const userName = this.pickUserName(user);
+        if (!userId || !teamId || !userName) continue;
+
+        const before = this.resolveUserNameByTeam(teamId, userId);
+        this.cacheUserNameByTeam(teamId, userId, userName);
+        if (before !== userName) changedTeamIds.add(teamId);
+      }
+
+      for (const teamId of changedTeamIds) {
+        await this.persistUserNameCache(teamId);
+      }
+    } catch {
+      /* ignore users/list parse errors */
+    }
+  }
+
+  private previewResponseBody(
+    bodyText: string | null,
+    contentType: string
+  ): { body: unknown; bodyType: "json" | "text" | "empty" } {
+    if (!bodyText) {
+      return { body: undefined, bodyType: "empty" };
+    }
+
+    const trimmed = bodyText.trim();
+    const likelyJson =
+      contentType.toLowerCase().includes("application/json") ||
+      trimmed.startsWith("{") ||
+      trimmed.startsWith("[");
+    if (likelyJson) {
+      try {
+        return { body: JSON.parse(trimmed), bodyType: "json" };
+      } catch {
+        // Fall back to text when JSON parse fails.
+      }
+    }
+
+    return { body: this.truncateForDebug(bodyText, 4000), bodyType: "text" };
+  }
+
+  private async handleRequestWillBeSent(event: RequestWillBeSentEvent): Promise<void> {
+    if (!this.debugFetchHookEnabled) return;
+    if (!event?.request?.url || !event?.request?.method) return;
+
+    const resourceType = this.asString(event.type) ?? "";
+    if (resourceType && resourceType !== "Fetch" && resourceType !== "XHR") return;
+
+    const initiatorType = this.asString(event.initiator?.type);
+    const body = event.request.postData ?? "";
+    const contentType = this.normalizeHeader(event.request.headers, "content-type");
+    this.pushDebugEvent("raw_fetch", {
+      stage: "requestWillBeSent",
+      requestId: event.requestId,
+      resourceType: resourceType || undefined,
+      initiatorType,
+      method: event.request.method,
+      url: event.request.url,
+      urlInfo: this.parseUrlInfo(event.request.url),
+      contentType,
+      body: this.truncateForDebug(body, 4000),
+    });
+  }
+
+  private parseUrlInfo(url: string): {
+    protocol?: string;
+    origin?: string;
+    host?: string;
+    hostname?: string;
+    port?: string;
+    pathname?: string;
+    pathSegments?: string[];
+    search?: string;
+    query?: Record<string, string | string[]>;
+    hash?: string;
+  } | null {
+    if (!url) return null;
+    try {
+      const parsed = new URL(url);
+      const query: Record<string, string | string[]> = {};
+      for (const [key, value] of parsed.searchParams.entries()) {
+        if (key in query) {
+          const current = query[key];
+          query[key] = Array.isArray(current) ? [...current, value] : [current, value];
+        } else {
+          query[key] = value;
+        }
+      }
+      return {
+        protocol: parsed.protocol,
+        origin: parsed.origin,
+        host: parsed.host,
+        hostname: parsed.hostname,
+        port: parsed.port || undefined,
+        pathname: parsed.pathname,
+        pathSegments: parsed.pathname.split("/").filter((segment) => segment.length > 0),
+        search: parsed.search || undefined,
+        query: Object.keys(query).length > 0 ? query : undefined,
+        hash: parsed.hash || undefined,
+      };
+    } catch {
+      return null;
+    }
+  }
+
   private cacheMessage(
     channel: string,
     ts: string,
-    value: { text?: string | null; user?: string | null }
+    value: { text?: string | null; user?: string | null; teamId?: string | null }
   ): void {
     if (!channel || !ts) return;
     this.cache.set(this.cacheKey(channel, ts), {
       text: value.text ?? undefined,
       user: value.user ?? undefined,
+      teamId: value.teamId ?? undefined,
     });
   }
 
-  private cacheChannelName(channelId: string, label?: string | null): void {
+  private cacheChannelNameByTeam(teamId: string, channelId: string, label?: string | null): void {
+    const normalizedTeamId = teamId?.trim();
     const normalizedId = channelId?.trim();
     const normalizedLabel = label?.trim();
-    if (!normalizedId || !normalizedLabel) {
-      return;
+    if (!normalizedTeamId || !normalizedId || !normalizedLabel) return;
+    let teamMap = this.channelNamesByTeam.get(normalizedTeamId);
+    if (!teamMap) {
+      teamMap = new Map<string, string>();
+      this.channelNamesByTeam.set(normalizedTeamId, teamMap);
     }
-    if (normalizedLabel === normalizedId) {
-      return;
-    }
-    this.channelNames.set(normalizedId, normalizedLabel);
+    teamMap.set(normalizedId, normalizedLabel);
+    this.channelTeamIds.set(normalizedId, normalizedTeamId);
   }
 
-  private resolveChannelName(channelId: string | null | undefined): string | undefined {
-    const normalizedId = channelId?.trim();
-    if (!normalizedId) {
-      return undefined;
+  private resolveChannelNameByTeam(teamId: string, channelId: string): string | undefined {
+    const teamMap = this.channelNamesByTeam.get(teamId);
+    return teamMap?.get(channelId);
+  }
+
+  private cacheUserNameByTeam(teamId: string, userId: string, userName?: string | null): void {
+    const normalizedTeamId = teamId?.trim();
+    const normalizedUserId = userId?.trim();
+    const normalizedUserName = userName?.trim();
+    if (!normalizedTeamId || !normalizedUserId || !normalizedUserName) return;
+    let teamMap = this.userNamesByTeam.get(normalizedTeamId);
+    if (!teamMap) {
+      teamMap = new Map<string, string>();
+      this.userNamesByTeam.set(normalizedTeamId, teamMap);
     }
-    return this.channelNames.get(normalizedId);
+    teamMap.set(normalizedUserId, normalizedUserName);
+  }
+
+  private resolveUserNameByTeam(teamId: string, userId: string): string | undefined {
+    const teamMap = this.userNamesByTeam.get(teamId);
+    return teamMap?.get(userId);
+  }
+
+  private resolveTeamId(
+    teamIdHint: string | undefined,
+    channelId: string | null | undefined
+  ): string | undefined {
+    const normalizedTeamId = teamIdHint?.trim();
+    if (normalizedTeamId) return normalizedTeamId;
+    const normalizedChannelId = channelId?.trim();
+    if (!normalizedChannelId) return undefined;
+    return this.channelTeamIds.get(normalizedChannelId);
+  }
+
+  private resolveChannelNameFromMap(
+    channelId: string | null | undefined,
+    teamIdHint: string | undefined
+  ): string | undefined {
+    const normalizedChannelId = channelId?.trim();
+    if (!normalizedChannelId) return undefined;
+
+    const teamId = this.resolveTeamId(teamIdHint, normalizedChannelId);
+    if (teamId) {
+      return this.resolveChannelNameByTeam(teamId, normalizedChannelId);
+    }
+
+    let found: string | undefined;
+    for (const teamMap of this.channelNamesByTeam.values()) {
+      const candidate = teamMap.get(normalizedChannelId);
+      if (!candidate) continue;
+      if (found && found !== candidate) return undefined;
+      found = candidate;
+    }
+    return found;
+  }
+
+  private resolveUserNameFromMap(
+    userId: string | null | undefined,
+    teamIdHint: string | undefined,
+    channelIdHint?: string | null | undefined
+  ): string | undefined {
+    const normalizedUserId = userId?.trim();
+    if (!normalizedUserId) return undefined;
+
+    const teamId = this.resolveTeamId(teamIdHint, channelIdHint);
+    if (teamId) {
+      return this.resolveUserNameByTeam(teamId, normalizedUserId);
+    }
+
+    let found: string | undefined;
+    for (const teamMap of this.userNamesByTeam.values()) {
+      const candidate = teamMap.get(normalizedUserId);
+      if (!candidate) continue;
+      if (found && found !== candidate) return undefined;
+      found = candidate;
+    }
+    return found;
+  }
+
+  private async loadChannelNameCache(): Promise<void> {
+    const filePath = this.channelCachePath;
+    if (!filePath) return;
+    const teamDir = this.toTeamCacheDir(filePath);
+    try {
+      const files = await readdir(teamDir);
+      for (const name of files) {
+        if (!name.endsWith(".json")) continue;
+        const teamId = basename(name, ".json");
+        if (!teamId) continue;
+        const raw = await readFile(join(teamDir, name), "utf8");
+        const parsed = JSON.parse(raw) as { channels?: Record<string, string> };
+        const channels = parsed.channels ?? {};
+        for (const [channelId, channelName] of Object.entries(channels)) {
+          if (typeof channelName !== "string" || !channelName.trim()) continue;
+          this.cacheChannelNameByTeam(teamId, channelId, channelName);
+        }
+      }
+    } catch {
+      // Legacy single-file cache fallback.
+      try {
+        const raw = await readFile(filePath, "utf8");
+        const parsed = JSON.parse(raw) as {
+          teams?: Record<string, { channels?: Record<string, string> }>;
+        };
+        const teams = parsed.teams ?? {};
+        for (const [teamId, teamData] of Object.entries(teams)) {
+          const channels = teamData?.channels ?? {};
+          for (const [channelId, channelName] of Object.entries(channels)) {
+            if (typeof channelName !== "string" || !channelName.trim()) continue;
+            this.cacheChannelNameByTeam(teamId, channelId, channelName);
+          }
+        }
+      } catch {
+        /* missing/broken cache should not break ingestion */
+      }
+    }
+  }
+
+  private async loadUserNameCache(): Promise<void> {
+    const filePath = this.userCachePath;
+    if (!filePath) return;
+    const teamDir = this.toTeamCacheDir(filePath);
+    try {
+      const files = await readdir(teamDir);
+      for (const name of files) {
+        if (!name.endsWith(".json")) continue;
+        const teamId = basename(name, ".json");
+        if (!teamId) continue;
+        const raw = await readFile(join(teamDir, name), "utf8");
+        const parsed = JSON.parse(raw) as { users?: Record<string, string> };
+        const users = parsed.users ?? {};
+        for (const [userId, userName] of Object.entries(users)) {
+          if (typeof userName !== "string" || !userName.trim()) continue;
+          this.cacheUserNameByTeam(teamId, userId, userName);
+        }
+      }
+    } catch {
+      // Legacy single-file cache fallback.
+      try {
+        const raw = await readFile(filePath, "utf8");
+        const parsed = JSON.parse(raw) as {
+          teams?: Record<string, { users?: Record<string, string> }>;
+        };
+        const teams = parsed.teams ?? {};
+        for (const [teamId, teamData] of Object.entries(teams)) {
+          const users = teamData?.users ?? {};
+          for (const [userId, userName] of Object.entries(users)) {
+            if (typeof userName !== "string" || !userName.trim()) continue;
+            this.cacheUserNameByTeam(teamId, userId, userName);
+          }
+        }
+      } catch {
+        /* missing/broken cache should not break ingestion */
+      }
+    }
+  }
+
+  private async persistChannelNameCache(teamId: string): Promise<void> {
+    const filePath = this.channelCachePath;
+    if (!filePath) return;
+    const channels = this.channelNamesByTeam.get(teamId);
+    if (!channels) return;
+    const teamDir = this.toTeamCacheDir(filePath);
+    const target = join(teamDir, `${teamId}.json`);
+    const payload = {
+      schema: "adjutant.slack.channel-cache.v1",
+      updated_at: new Date().toISOString(),
+      team_id: teamId,
+      channels: Object.fromEntries(channels.entries()),
+    };
+    try {
+      await mkdir(teamDir, { recursive: true });
+      await writeFile(target, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+    } catch {
+      /* ignore write failures */
+    }
+  }
+
+  private async persistUserNameCache(teamId: string): Promise<void> {
+    const filePath = this.userCachePath;
+    if (!filePath) return;
+    const users = this.userNamesByTeam.get(teamId);
+    if (!users) return;
+    const teamDir = this.toTeamCacheDir(filePath);
+    const target = join(teamDir, `${teamId}.json`);
+    const payload = {
+      schema: "adjutant.slack.user-cache.v1",
+      updated_at: new Date().toISOString(),
+      team_id: teamId,
+      users: Object.fromEntries(users.entries()),
+    };
+    try {
+      await mkdir(teamDir, { recursive: true });
+      await writeFile(target, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+    } catch {
+      /* ignore write failures */
+    }
+  }
+
+  private toTeamCacheDir(filePath: string): string {
+    const ext = extname(filePath);
+    if (!ext) return filePath;
+    return join(dirname(filePath), basename(filePath, ext));
+  }
+
+  private pickUserName(user: Record<string, unknown>): string | undefined {
+    const profile = this.asRecord(user.profile);
+    const accountName = this.asString(user.name);
+    const displayName = this.asString(profile?.display_name);
+    const realName = this.asString(user.real_name) ?? this.asString(profile?.real_name);
+    return accountName || displayName || realName;
   }
 
   private cacheKey(channel: string, ts: string): string {
@@ -1276,10 +1767,7 @@ export class SlackAdapter implements IngestionAdapter {
     await emit(event);
   }
 
-  private pushDebugEvent(
-    kind: "raw_fetch" | "raw_ws" | "normalized",
-    payload: unknown
-  ): void {
+  private pushDebugEvent(kind: "raw_fetch" | "raw_ws" | "normalized", payload: unknown): void {
     if (!this.onDebugEvent) return;
     this.onDebugEvent({
       source: "slack-adapter",
