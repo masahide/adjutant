@@ -1,0 +1,7 @@
+// .vscode/settings.json
+{
+  "editor.defaultFormatter": "esbenp.prettier-vscode",
+  "editor.formatOnSave": true,
+  "eslint.validate": ["javascript", "typescript", "svelte"],
+  "eslint.useFlatConfig": true
+}

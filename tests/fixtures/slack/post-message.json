@@ -1,0 +1,12 @@
+{
+  "payload": {
+    "channel": { "id": "C123", "name": "general" },
+    "user": { "id": "U111", "name": "suzuki" },
+    "ts": "1711120000.000000",
+    "text": "hello world"
+  },
+  "expected": {
+    "uid": "slack:C123@1711120000.000000",
+    "meta": { "channel": "#general" }
+  }
+}

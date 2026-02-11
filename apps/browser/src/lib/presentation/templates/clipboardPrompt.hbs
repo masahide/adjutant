@@ -1,0 +1,21 @@
+以下は本日の活動ログです。内容を要約し、重要なコミットやタスクの進捗、懸念点を抽出してください。リアクションのイベントは私が「読んだ」ことを示し、POSTのイベントは私の投稿を意味します。
+# ReacLog
+{{date}}
+{{#if hasSummary}}
+
+  ## Summary
+
+  {{summary}}
+{{/if}}
+{{#if hasEvents}}
+
+  ## Events
+  {{#each events}}
+    -
+    {{timestamp}}
+    **{{title}}**{{#if reactionLabel}} — {{reactionLabel}}{{else if actor}} — {{actor}}{{/if}}
+    {{#if body}}
+      {{body}}
+    {{/if}}
+  {{/each}}
+{{/if}}

@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["svelte", "node"],
+    "allowJs": false
+  },
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.svelte",
+    "src/**/*.d.ts",
+    "svelte.config.js",
+    "vite.config.ts",
+    "vitest.config.ts"
+  ]
+}

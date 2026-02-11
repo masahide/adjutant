@@ -1,0 +1,17 @@
+{
+  "payload": {
+    "channel": { "id": "C999", "name": "dev-infra" },
+    "user": { "id": "U500", "name": "mori" },
+    "ts": "1711122222.000100",
+    "text": "thread reply",
+    "thread_ts": "1711100000.000050"
+  },
+  "expected": {
+    "uid": "slack:C999@1711122222.000100",
+    "detail": {
+      "slack": {
+        "thread_ts": "1711100000.000050"
+      }
+    }
+  }
+}

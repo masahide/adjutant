@@ -1,0 +1,6 @@
+packages:
+  - apps/browser
+
+onlyBuiltDependencies:
+  - esbuild
+  - svelte-preprocess

@@ -1,0 +1,33 @@
+{
+  "name": "@reaclog/browser",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest run --config vitest.config.ts"
+  },
+  "devDependencies": {
+    "@sveltejs/adapter-node": "^5.0.0",
+    "@sveltejs/kit": "^2.8.3",
+    "@sveltejs/vite-plugin-svelte": "^3.1.2",
+    "@testing-library/jest-dom": "^6.4.1",
+    "@testing-library/dom": "^10.4.0",
+    "@testing-library/svelte": "^5.2.0",
+    "@testing-library/user-event": "^14.5.2",
+    "jsdom": "^24.0.0",
+    "svelte": "^4.2.19",
+    "svelte-check": "^3.8.4",
+    "typescript": "^5.9.3",
+    "vite": "^5.4.11",
+    "vitest": "^2.1.6"
+  },
+  "dependencies": {
+    "handlebars": "^4.7.8",
+    "marked": "^12.0.2",
+    "openai": "^4.56.0",
+    "zod": "^3.23.8"
+  }
+}
