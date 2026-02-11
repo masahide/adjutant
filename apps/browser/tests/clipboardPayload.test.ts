@@ -51,7 +51,7 @@ describe("buildClipboardPayload", () => {
     ];
 
     const payload = buildClipboardPayload("2025-11-05", events, "まとめ");
-    expect(payload).toMatch(/# ReacLog\s+2025-11-05/);
+    expect(payload).toMatch(/# Adjutant\s+2025-11-05/);
     expect(payload).toContain("## Summary");
     expect(payload).toContain("## Events");
     expect(payload).toMatch(/-\s+2025-11-05T10:00:00\+09:00\s+\*\*Slack #test post\*\* — tester/);

@@ -11,13 +11,13 @@
 </script>
 
 <svelte:head>
-  <title>ReacLog ダッシュボード</title>
+  <title>Adjutant ダッシュボード</title>
 </svelte:head>
 
 <main class="container">
   <AppHeader>
     <svelte:fragment slot="main">
-      <h1>ReacLog ブラウザビュー</h1>
+      <h1>Adjutant ブラウザビュー</h1>
       <p class="generated-at">最終更新: {formatTimestamp(data.generatedAt)}</p>
     </svelte:fragment>
     <svelte:fragment slot="actions">

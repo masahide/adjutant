@@ -13,12 +13,12 @@ function writeJsonl(filePath: string, events: Array<Record<string, unknown>>) {
 
 describe("routes/+page.server load", () => {
   let dataDir: string;
-  const cleanupEnv: string | undefined = process.env.REACLOG_DATA_DIR;
+  const cleanupEnv: string | undefined = process.env.ADJUTANT_DATA_DIR;
 
   beforeEach(() => {
     resetConfigCache();
     dataDir = mkdtempSync(join(tmpdir(), "adjutant-dashboard-"));
-    process.env.REACLOG_DATA_DIR = dataDir;
+    process.env.ADJUTANT_DATA_DIR = dataDir;
 
     createDay("2025-11-03", {
       slack: [
@@ -78,9 +78,9 @@ describe("routes/+page.server load", () => {
     rmSync(dataDir, { recursive: true, force: true });
     resetConfigCache();
     if (cleanupEnv === undefined) {
-      delete process.env.REACLOG_DATA_DIR;
+      delete process.env.ADJUTANT_DATA_DIR;
     } else {
-      process.env.REACLOG_DATA_DIR = cleanupEnv;
+      process.env.ADJUTANT_DATA_DIR = cleanupEnv;
     }
   });
 

@@ -11,14 +11,14 @@ const TARGET_DATE = "2025-11-03";
 
 describe("routes/day/[date]/+page.server", () => {
   let dataDir: string;
-  const originalDataEnv = process.env.REACLOG_DATA_DIR;
-  const originalConfigEnv = process.env.REACLOG_CONFIG_DIR;
+  const originalDataEnv = process.env.ADJUTANT_DATA_DIR;
+  const originalConfigEnv = process.env.ADJUTANT_CONFIG_DIR;
 
   beforeEach(() => {
     resetConfigCache();
     dataDir = mkdtempSync(join(tmpdir(), "adjutant-day-"));
-    process.env.REACLOG_DATA_DIR = dataDir;
-    process.env.REACLOG_CONFIG_DIR = join(dataDir, "config");
+    process.env.ADJUTANT_DATA_DIR = dataDir;
+    process.env.ADJUTANT_CONFIG_DIR = join(dataDir, "config");
     seedData();
   });
 
@@ -26,14 +26,14 @@ describe("routes/day/[date]/+page.server", () => {
     rmSync(dataDir, { recursive: true, force: true });
     resetConfigCache();
     if (originalDataEnv === undefined) {
-      delete process.env.REACLOG_DATA_DIR;
+      delete process.env.ADJUTANT_DATA_DIR;
     } else {
-      process.env.REACLOG_DATA_DIR = originalDataEnv;
+      process.env.ADJUTANT_DATA_DIR = originalDataEnv;
     }
     if (originalConfigEnv === undefined) {
-      delete process.env.REACLOG_CONFIG_DIR;
+      delete process.env.ADJUTANT_CONFIG_DIR;
     } else {
-      process.env.REACLOG_CONFIG_DIR = originalConfigEnv;
+      process.env.ADJUTANT_CONFIG_DIR = originalConfigEnv;
     }
   });
 
@@ -98,7 +98,7 @@ describe("routes/day/[date]/+page.server", () => {
   });
 
   it("Slack ワークスペースのベース URL を環境変数から読み込む", async () => {
-    process.env.REACLOG_SLACK_WORKSPACE = "example-team";
+    process.env.ADJUTANT_SLACK_WORKSPACE = "example-team";
     resetConfigCache();
 
     const result = (await load({
@@ -112,7 +112,7 @@ describe("routes/day/[date]/+page.server", () => {
 
     expect(result.slackWorkspaceBaseUrl).toBe("https://example-team.slack.com");
 
-    delete process.env.REACLOG_SLACK_WORKSPACE;
+    delete process.env.ADJUTANT_SLACK_WORKSPACE;
     resetConfigCache();
   });
 

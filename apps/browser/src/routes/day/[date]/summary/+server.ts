@@ -252,7 +252,7 @@ function extractStructuredText(response: unknown): string {
 
 function buildFallbackSummary(options: { date: string; events: TimelineEvent[] }): string {
   const { date, events } = options;
-  const lines: string[] = [`# ReacLog 日報 ${date}`];
+  const lines: string[] = [`# Adjutant 日報 ${date}`];
 
   const sections = buildSummarySections(date, events);
   if (sections.length === 0) {

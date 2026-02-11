@@ -13,20 +13,20 @@ export function loadServerConfig(): ServerConfig {
     return cachedConfig;
   }
 
-  const dataDirEnv = process.env.REACLOG_DATA_DIR;
+  const dataDirEnv = process.env.ADJUTANT_DATA_DIR;
   const initCwd = process.env.INIT_CWD;
 
   const fallbackDir = initCwd && initCwd.length > 0 ? join(initCwd, "data") : "data";
   const dataDir = resolvePath(dataDirEnv && dataDirEnv.length > 0 ? dataDirEnv : fallbackDir);
 
-  const configDirEnv = process.env.REACLOG_CONFIG_DIR;
+  const configDirEnv = process.env.ADJUTANT_CONFIG_DIR;
   const fallbackConfigDir = initCwd && initCwd.length > 0 ? join(initCwd, "config") : "config";
   const configDir = resolvePath(
     configDirEnv && configDirEnv.length > 0 ? configDirEnv : fallbackConfigDir
   );
 
   const slackWorkspaceBaseUrl = normalizeSlackWorkspaceUrl(
-    process.env.REACLOG_SLACK_WORKSPACE ?? process.env.REACLOG_SLACK_WORKSPACE_URL
+    process.env.ADJUTANT_SLACK_WORKSPACE ?? process.env.ADJUTANT_SLACK_WORKSPACE_URL
   );
 
   cachedConfig = {

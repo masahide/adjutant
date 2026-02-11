@@ -60,7 +60,7 @@ type SlackAdapterDeps = {
 
 const SLACK_API_RE = /https:\/\/[^/]+\.slack\.com\/api\/(chat\.postMessage|reactions\.[a-z]+)/i;
 
-const DEBUG_TOKENS = (process.env.REACLOG_DEBUG ?? "")
+const DEBUG_TOKENS = (process.env.ADJUTANT_DEBUG ?? "")
   .split(",")
   .map((token) => token.trim())
   .filter((token) => token.length > 0);
@@ -76,8 +76,8 @@ const DEBUG_FETCH_ENABLED =
 const DEBUG_RUNTIME_ENABLED =
   DEBUG_TARGETS.has("slack:runtime") || DEBUG_TARGETS.has("slack:runtime:verbose");
 const DOM_CAPTURE_DISABLED =
-  (process.env.REACLOG_DISABLE_DOM_CAPTURE ?? "").toLowerCase() === "1" ||
-  (process.env.REACLOG_DISABLE_DOM_CAPTURE ?? "").toLowerCase() === "true";
+  (process.env.ADJUTANT_DISABLE_DOM_CAPTURE ?? "").toLowerCase() === "1" ||
+  (process.env.ADJUTANT_DISABLE_DOM_CAPTURE ?? "").toLowerCase() === "true";
 
 const REACTION_PAYLOAD_KEYS = [
   "reaction_added",
@@ -1250,7 +1250,7 @@ export class SlackAdapter implements IngestionAdapter {
         const href = typeof window.location?.href === "string" ? window.location.href : null;
         const slackPresent = Boolean(window.TS);
         const timestamp = Date.now();
-        window.__REACLOG_DOM_PROBE__ = { timestamp, ready };
+        window.__ADJUTANT_DOM_PROBE__ = { timestamp, ready };
         return {
           ok: true,
           ready,

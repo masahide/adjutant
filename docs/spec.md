@@ -1,6 +1,6 @@
-# ReacLog 仕様書 v0.1（シングルソース実装 + ロードマップ）
+# Adjutant 仕様書 v0.1（シングルソース実装 + ロードマップ）
 
-> 現状：Slack の投稿/リアクションを CDP で収集し、日付ごとの JSONL とビューア（SvelteKit）で参照できるようにする。将来的には GitHub やローカル Git を統合し、LLM 要約まで拡張する。
+> 現状：Slack の投稿/リアクションを CDP で収集し、日付ごとの JSONL とビューア（SvelteKit）で参照できるようにする。将来的には Slack Workflow / Slack Events API 経路や GitHub / ローカル Git を統合し、LLM 要約まで拡張する。
 
 ---
 
@@ -10,11 +10,13 @@
   - Slack（CDP 経由）の `chat.postMessage` / `reactions.add|remove` を正規化して JSONL へ追記
   - JSONL を読み込む SvelteKit 製ビューア
     - ダッシュボード（日次集計）、日別タイムライン、RAW ビュー
-    - Slack イベント用パーマリンク生成（`REACLOG_SLACK_WORKSPACE` 系の環境変数が必須）
+    - Slack イベント用パーマリンク生成（`ADJUTANT_SLACK_WORKSPACE` 系の環境変数が必須）
   - クリップボードテンプレート（Handlebars）と UI での編集
   - SSE ベースのリアルタイム反映（`/day/<date>/stream`）
 
 - **今後の予定（ロードマップ）**：
+  - Slack Workflow 経路の取り込み（`SlackWorkflowAdapter`）
+  - Slack Events API 経路の取り込み（`SlackEventsApiAdapter`）
   - GitHub イベント（PR/Issue/コメント/レビュー）の取り込み
   - ローカル Git hooks からのコミット連携
   - JSONL から MD-Record v1 を生成する要約バッチと LLM プロンプト
@@ -107,6 +109,7 @@ flowchart TB
   "detail": {
     // ソース固有の生/準生データ（ネスト）
     "slack": {
+      "type": "post",
       "channel_id": "C08QLKYPUUW",
       "channel_name": "dev-infra",
       "text": "テストメッセージ",
@@ -117,6 +120,7 @@ flowchart TB
 
   "meta": {
     // 付帯情報（共通）
+    "transport": "cdp", // "cdp" | "workflow" | "events_api" | ...
     "url": null,
     "truncated": false
   }
@@ -126,6 +130,7 @@ flowchart TB
 - `detail` のキーは **source 名**（例：`slack`/`github`/`git_local`）。
 - `detail.<source>` の型は**下記 3.1 のネスト型**に準拠。未使用キーは省略可。
 - コア側の `subject/text/diff/repo/channel/refs` は**任意**。必要なら `detail` から計算して後段でレンダリング。
+- `meta.transport` は同一 `source` 内の取得経路を示す。Slack は `cdp` / `workflow` / `events_api` を使用する。
 
 #### 例：Slack reaction
 
@@ -141,6 +146,7 @@ flowchart TB
   "logged_at": "2025-11-03T15:07:56+09:00",
   "detail": {
     "slack": {
+      "type": "reaction",
       "channel_id": "C08QLKYPUUW",
       "channel_name": "dev-infra",
       "message_ts": "1762149560.712159",
@@ -342,12 +348,37 @@ export type EventCore = {
   subject?: string;            // 見出し（任意）
   ts: string;                  // ISO8601（JST推奨）
   logged_at?: string;          // 取り込み時刻
-  meta?: Record<string, unknown>;
+  meta?: {
+    transport?: 'cdp'|'workflow'|'events_api'|string;
+    [k: string]: unknown;
+  };
 };
 
 export type SlackDetail =
-  | { channel_id: string; channel_name?: string; text?: string; blocks?: unknown; thread_ts?: string }
-  | { message_ts: string; channel_id: string; channel_name?: string; emoji?: string }; // reaction 系
+  | {
+      type: 'post';
+      channel_id: string;
+      channel_name?: string;
+      text?: string;
+      blocks?: unknown;
+      thread_ts?: string;
+    }
+  | {
+      type: 'reaction';
+      message_ts: string;
+      channel_id: string;
+      channel_name?: string;
+      emoji?: string;
+    }
+  | {
+      type: 'trigger';
+      channel_id?: string;
+      channel_name?: string;
+      trigger_id?: string;
+      workflow_id?: string;
+      text?: string;
+      payload?: unknown;
+    };
 
 export type GithubDetail = {
   repo: string; number?: number; title?: string; state?: string;
@@ -378,17 +409,24 @@ export interface IngestionAdapter {
 - ソース固有の深い情報は `detail` 側に閉じ込める（型進化の影響を局所化）。
 - 将来の互換性のため `schema` を明示。フィールド追加は後方互換で行う。
 
-### 3.2 Slack（CDP）
+### 3.2 Slack（複数 transport / 現在は CDP 実装）
+
+- 既存 `SlackAdapter` は `SlackCdpAdapter` の位置付けとし、今後は取得経路ごとにアダプタを追加する。
+  - `SlackCdpAdapter`（現行実装）
+  - `SlackWorkflowAdapter`（追加予定）
+  - `SlackEventsApiAdapter`（将来追加）
+- いずれも `IngestionAdapter` を実装し、`source='slack'` は固定、経路差分は `meta.transport` で表現する。
 
 - **取得チャネル**
   - `Fetch.requestPaused`（POST body）：`chat.postMessage` / `reactions.add|remove` の payload を正規化。
   - `Network.webSocketFrameReceived`：リッチテキストやリアルタイム編集をキャッシュ。
   - `Network.responseReceived`：一部 API 応答を補完キャッシュとして利用。
-  - **DOM スナップショット**：リアクション検知直後に `Runtime.evaluate` で可視 DOM から本文を抜き出す。DOM 取得は既定で有効（`REACLOG_DISABLE_DOM_CAPTURE=1` で無効化可能）。
+  - **DOM スナップショット**：リアクション検知直後に `Runtime.evaluate` で可視 DOM から本文を抜き出す。DOM 取得は既定で有効（`ADJUTANT_DISABLE_DOM_CAPTURE=1` で無効化可能）。
     - トリガー元は `/api/reactions.*` への Fetch リクエストのみ。Slack クライアントが自分のリアクションを送信する際にだけ DOM 取得が実行される。
     - WebSocket 経由で他ユーザーのリアクションを受信しても DOM キャプチャは発火しない。必要最小限のキャッシュ更新のみを行う。
 - **正規化**
   - `kind='post'|'reaction'`
+  - `detail.slack.type='post'|'reaction'|'trigger'` を付与して判別可能にする
   - `subject`：`[#{channel}] メッセージの先頭120字` など軽量な見出し
   - `detail.slack` へ `channel_id / channel_name / text / blocks / message_ts / emoji` 等を格納
   - `uid`：`slack:{channel_id}@{message_ts}`（リアクションは `:emoji:{action}` を付与し actor でユニーク化）
@@ -434,7 +472,7 @@ export interface IngestionAdapter {
 ### 4.2 出力テンプレート（Markdown）
 
 ```markdown
-# ReacLog 日報 {{YYYY-MM-DD}}
+# Adjutant 日報 {{YYYY-MM-DD}}
 
 ## Slack
 
@@ -496,15 +534,15 @@ export interface IngestionAdapter {
 ### 5.2 `pnpm start`（Slack 収集プロセス）
 
 - `tsx src/index.ts` を起動し、Slack デスクトップアプリ（`app.slack.com`）の CDP へ接続して JSONL に追記する常駐プロセス。
-- 環境変数 `REACLOG_DATA_DIR` で保存先、`CDP_HOST`/`CDP_PORT` で接続先を上書き可能。
-- `REACLOG_DISABLE_DOM_CAPTURE=1` を指定すると DOM キャプチャを停止（本文は空になる想定）。
+- 環境変数 `ADJUTANT_DATA_DIR` で保存先、`CDP_HOST`/`CDP_PORT` で接続先を上書き可能。
+- `ADJUTANT_DISABLE_DOM_CAPTURE=1` を指定すると DOM キャプチャを停止（本文は空になる想定）。
 - `pnpm start` 自体は UI を立ち上げない。ビューアは別プロセスで起動する。
 
 ### 5.3 ビューア（apps/browser）
 
 - `pnpm --filter browser dev` で Vite の開発サーバーを起動し、`http://localhost:5173` からダッシュボード／タイムライン／RAW ビューにアクセスできる。
-- `REACLOG_DATA_DIR` を指定すると、閲覧対象の日付ディレクトリを切り替えられる。
-- Slack パーマリンクを有効にする場合は `REACLOG_SLACK_WORKSPACE` または `REACLOG_SLACK_WORKSPACE_URL` を設定する（例：`REACLOG_SLACK_WORKSPACE=example-team`）。
+- `ADJUTANT_DATA_DIR` を指定すると、閲覧対象の日付ディレクトリを切り替えられる。
+- Slack パーマリンクを有効にする場合は `ADJUTANT_SLACK_WORKSPACE` または `ADJUTANT_SLACK_WORKSPACE_URL` を設定する（例：`ADJUTANT_SLACK_WORKSPACE=example-team`）。
 - 本番確認時は `pnpm --filter browser build && pnpm --filter browser preview` を利用する。
 
 ### 5.4 単一起動オーケストレータ（`pnpm run serve` / リリース想定）
@@ -559,10 +597,10 @@ Slack アダプタは環境変数で挙動を切り替えられる。
 
 | 変数                                                      | 例                                                | 説明                                                                                                                                                        |
 | --------------------------------------------------------- | ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `REACLOG_DEBUG`                                           | `slack:verbose,slack:domprobe`                    | ドメイン別デバッグログ。`slack:verbose` で Slack アダプタの詳細、`slack:domprobe` で DOM 評価ログ、`slack:network` 等でネットワークイベントを個別に有効化。 |
-| `REACLOG_DISABLE_DOM_CAPTURE`                             | `1`                                               | DOM 取得を完全に無効化（フォールバックなし、`message_text` は空のまま）。トラブルシュート時のみ使用。                                                       |
-| `REACLOG_TZ`                                              | `Asia/Tokyo`                                      | タイムゾーン上書き。未指定時は `Asia/Tokyo` を使用。                                                                                                        |
-| `REACLOG_SLACK_WORKSPACE` / `REACLOG_SLACK_WORKSPACE_URL` | `example-team` / `https://example-team.slack.com` | ビューアで Slack パーマリンクを生成する際のベース URL。チームスラッグまたはホスト名を指定する。設定が無い場合はリンクが非表示。                             |
+| `ADJUTANT_DEBUG`                                           | `slack:verbose,slack:domprobe`                    | ドメイン別デバッグログ。`slack:verbose` で Slack アダプタの詳細、`slack:domprobe` で DOM 評価ログ、`slack:network` 等でネットワークイベントを個別に有効化。 |
+| `ADJUTANT_DISABLE_DOM_CAPTURE`                             | `1`                                               | DOM 取得を完全に無効化（フォールバックなし、`message_text` は空のまま）。トラブルシュート時のみ使用。                                                       |
+| `ADJUTANT_TZ`                                              | `Asia/Tokyo`                                      | タイムゾーン上書き。未指定時は `Asia/Tokyo` を使用。                                                                                                        |
+| `ADJUTANT_SLACK_WORKSPACE` / `ADJUTANT_SLACK_WORKSPACE_URL` | `example-team` / `https://example-team.slack.com` | ビューアで Slack パーマリンクを生成する際のベース URL。チームスラッグまたはホスト名を指定する。設定が無い場合はリンクが非表示。                             |
 
 **起動例**
 
@@ -572,19 +610,19 @@ Slack アダプタは環境変数で挙動を切り替えられる。
   ```
 - DOM 取得を調査しながら実行
   ```bash
-  REACLOG_DEBUG=slack:verbose,slack:domprobe pnpm start | tee -a debug_dom.log
+  ADJUTANT_DEBUG=slack:verbose,slack:domprobe pnpm start | tee -a debug_dom.log
   ```
 - フォールバック検証（DOM無効化）
   ```bash
-  REACLOG_DISABLE_DOM_CAPTURE=1 REACLOG_DEBUG=slack:verbose pnpm start | tee -a debug_fallback.log
+  ADJUTANT_DISABLE_DOM_CAPTURE=1 ADJUTANT_DEBUG=slack:verbose pnpm start | tee -a debug_fallback.log
   ```
 
 ### 手動検証（リアクション DOM キャプチャ）
 
-1. Slack 起動済みの状態で `REACLOG_DEBUG=slack:verbose pnpm start` を実行し、リアクションを 1 件追加する。
+1. Slack 起動済みの状態で `ADJUTANT_DEBUG=slack:verbose pnpm start` を実行し、リアクションを 1 件追加する。
    - 自分の操作直後に `{"ok":true,...}` の DOM ログと JSONL への記録が生成されることを確認する。
 2. 他メンバーのリアクション通知が届くのを待ち、`{"ok":false,...,"reason":"dom-not-found"}` などが追加で現れないことを確認する（WebSocket 経由では DOM キャプチャが発火しないため）。
-3. 必要に応じて `REACLOG_DISABLE_DOM_CAPTURE=1` で再実行し、DOM キャプチャが無効化されると `message_text` が空のままになるフォールバック挙動を確認する。
+3. 必要に応じて `ADJUTANT_DISABLE_DOM_CAPTURE=1` で再実行し、DOM キャプチャが無効化されると `message_text` が空のままになるフォールバック挙動を確認する。
 
 ````
 
@@ -631,7 +669,7 @@ Slack 以外のソースを含む統合ログの確認には `/data/YY/MM/DD/<so
 - **冪等**：同 uid の重複は要約前処理で去重（最後勝ち）。
 - **バックオフ**：GitHub ポーリング/API失敗は指数バックオフ
 - **サイズガード**：`text/diff` は最大 N KB、超過はトリム＋`meta.truncated=true`
-- **観測性**：`[ReacLog] adapter=slack level=debug` 等の構造化ログ
+- **観測性**：`[Adjutant] adapter=slack level=debug` 等の構造化ログ
 
 ---
 
@@ -659,14 +697,14 @@ Slack 以外のソースを含む統合ログの確認には `/data/YY/MM/DD/<so
 - **起動方法**：
   - 開発時：`pnpm --filter browser dev`
   - 本番確認：`pnpm --filter browser build && pnpm --filter browser preview`
-  - データディレクトリは `REACLOG_DATA_DIR` で指定。
+  - データディレクトリは `ADJUTANT_DATA_DIR` で指定。
 - **主要画面**：
   - `/`：直近 7 日のイベント件数サマリとソース別内訳。
   - `/day/[yyyy-mm-dd]`：タイムライン表示（ソースフィルタ、Slack パーマリンク、リアルタイムストリーム、Markdown サマリ右カラム）。
   - `/day/[yyyy-mm-dd]/raw`：JSONL をそのまま表示。
 - **タイムライン機能**：
   - Slack 投稿/リアクションを HTML にレンダリング。ソースごとのタグ、リアクションタイプの表示、詳細 JSON の折りたたみ。
-  - `REACLOG_SLACK_WORKSPACE` 系が設定されていれば Slack へのパーマリンクを生成し、スレッド返信には `thread_ts`/`cid` クエリを付与。
+  - `ADJUTANT_SLACK_WORKSPACE` 系が設定されていれば Slack へのパーマリンクを生成し、スレッド返信には `thread_ts`/`cid` クエリを付与。
   - `EventSource` による JSONL 追記のストリーミングと、フォールバックポーリング + トースト通知。JSONL ファイルの追記を 1〜2 秒以内に検知してタイムラインへ反映する。
   - テーマ切替（ライト/ダーク/システム）とコピー機能（Handlebars テンプレートを編集可能）。OS のダークモード設定に追従し、ユーザー手動の切替とも整合させる（ダークモード設定に追従）。
   - Markdown 変換済みプレビューを右カラムで提示し、コピー時にも Markdown 変換済みプレビューを維持する。

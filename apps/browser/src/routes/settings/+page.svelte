@@ -182,7 +182,7 @@
 </script>
 
 <svelte:head>
-  <title>ReacLog 設定 - テンプレート編集</title>
+  <title>Adjutant 設定 - テンプレート編集</title>
 </svelte:head>
 
 <main class="page">

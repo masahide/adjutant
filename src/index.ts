@@ -40,13 +40,13 @@ const waitForDisconnect = (client: SlackCdpClient) =>
 
 async function main() {
   const { host, port } = resolveEndpoint();
-  console.log(`[ReacLog] CDP endpoint -> ${host}:${port}`);
+  console.log(`[Adjutant] CDP endpoint -> ${host}:${port}`);
 
   const dataDir = resolveDataDir();
-  console.log(`[ReacLog] dataDir -> ${dataDir}`);
+  console.log(`[Adjutant] dataDir -> ${dataDir}`);
 
-  const timezone = process.env.REACLOG_TZ || "Asia/Tokyo";
-  console.log(`[ReacLog] timezone -> ${timezone}`);
+  const timezone = process.env.ADJUTANT_TZ || "Asia/Tokyo";
+  console.log(`[Adjutant] timezone -> ${timezone}`);
 
   const writer = new JsonlWriter({ dataDir });
   const now = () => new Date();
@@ -63,13 +63,13 @@ async function main() {
     try {
       await session.ingestor.stop();
     } catch (err) {
-      console.error("[ReacLog] failed to stop ingestor:", err);
+      console.error("[Adjutant] failed to stop ingestor:", err);
     }
     if (session.client && typeof session.client.close === "function") {
       try {
         await session.client.close();
       } catch (err) {
-        console.error("[ReacLog] failed to close CDP client:", err);
+        console.error("[Adjutant] failed to close CDP client:", err);
       }
     }
   };
@@ -78,7 +78,7 @@ async function main() {
     if (shuttingDown) return;
     shuttingDown = true;
     continueRunning = false;
-    console.log(`[ReacLog] received ${signal}, shutting down...`);
+    console.log(`[Adjutant] received ${signal}, shutting down...`);
     await cleanupActiveSession();
     process.exit(0);
   };
@@ -87,9 +87,9 @@ async function main() {
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
 
   const runSession = async (): Promise<"disconnect"> => {
-    console.log("[ReacLog] establishing new CDP session...");
+    console.log("[Adjutant] establishing new CDP session...");
     const { client, slackUrl } = await connectToSlackPage(host, port);
-    console.log(`[ReacLog] attached to: ${slackUrl}`);
+    console.log(`[Adjutant] attached to: ${slackUrl}`);
 
     const adapter = new SlackAdapter({ client, now, timezone });
     const ingestor = new SlackIngestor({ adapter, writer });
@@ -97,7 +97,7 @@ async function main() {
 
     try {
       await ingestor.start();
-      console.log("[ReacLog] Slack ingestion started");
+      console.log("[Adjutant] Slack ingestion started");
       await waitForDisconnect(client);
       return "disconnect";
     } finally {
@@ -110,24 +110,24 @@ async function main() {
       const result = await runSession();
       if (!continueRunning) break;
       if (result === "disconnect") {
-        console.warn("[ReacLog] CDP connection closed. Attempting to reconnect...");
+        console.warn("[Adjutant] CDP connection closed. Attempting to reconnect...");
       }
       retryCount = 0;
     } catch (err) {
       if (!continueRunning) break;
       retryCount += 1;
-      console.error("[ReacLog] session ended with error:", err);
+      console.error("[Adjutant] session ended with error:", err);
     }
 
     if (!continueRunning) break;
 
     const delayMs = Math.min(BASE_RETRY_DELAY_MS * Math.max(1, retryCount), MAX_RETRY_DELAY_MS);
-    console.log(`[ReacLog] Retrying connection in ${delayMs}ms...`);
+    console.log(`[Adjutant] Retrying connection in ${delayMs}ms...`);
     await sleep(delayMs);
   }
 }
 
 main().catch((err) => {
-  console.error("[ReacLog] fatal:", err);
+  console.error("[Adjutant] fatal:", err);
   process.exit(1);
 });

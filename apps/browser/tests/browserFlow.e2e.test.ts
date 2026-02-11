@@ -14,14 +14,14 @@ import { createJsonlFixture, writeDailySummary } from "./utils";
 describe("End-to-end data flow", () => {
   let dataDir: string;
   let fixture: JsonlFixture;
-  const originalDataDir = process.env.REACLOG_DATA_DIR;
-  const originalConfigDir = process.env.REACLOG_CONFIG_DIR;
+  const originalDataDir = process.env.ADJUTANT_DATA_DIR;
+  const originalConfigDir = process.env.ADJUTANT_CONFIG_DIR;
 
   beforeEach(async () => {
     fixture = await createJsonlFixture({ source: "slack", date: "2025-11-03" });
     dataDir = fixture.dataDir;
-    process.env.REACLOG_DATA_DIR = dataDir;
-    process.env.REACLOG_CONFIG_DIR = join(dataDir, "config");
+    process.env.ADJUTANT_DATA_DIR = dataDir;
+    process.env.ADJUTANT_CONFIG_DIR = join(dataDir, "config");
     resetConfigCache();
     await seedDataset();
   });
@@ -30,15 +30,15 @@ describe("End-to-end data flow", () => {
     await fixture.cleanup();
     resetConfigCache();
     if (originalDataDir) {
-      process.env.REACLOG_DATA_DIR = originalDataDir;
+      process.env.ADJUTANT_DATA_DIR = originalDataDir;
     } else {
-      delete process.env.REACLOG_DATA_DIR;
+      delete process.env.ADJUTANT_DATA_DIR;
     }
 
     if (originalConfigDir) {
-      process.env.REACLOG_CONFIG_DIR = originalConfigDir;
+      process.env.ADJUTANT_CONFIG_DIR = originalConfigDir;
     } else {
-      delete process.env.REACLOG_CONFIG_DIR;
+      delete process.env.ADJUTANT_CONFIG_DIR;
     }
   });
 

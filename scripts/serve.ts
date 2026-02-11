@@ -115,10 +115,10 @@ async function main(): Promise<void> {
 
   if (resolvedDataDir) {
     envBase.DATA_DIR = resolvedDataDir;
-    envBase.REACLOG_DATA_DIR = resolvedDataDir;
+    envBase.ADJUTANT_DATA_DIR = resolvedDataDir;
   }
   if (runtimeConfig.timezone) {
-    envBase.REACLOG_TZ = runtimeConfig.timezone;
+    envBase.ADJUTANT_TZ = runtimeConfig.timezone;
   }
 
   const managedProcesses: ManagedProcess[] = [];
@@ -276,7 +276,7 @@ function parseArgs(argv: string[]): CliOptions {
 }
 
 function printHelp(): void {
-  console.log(`ReacLog Serve コマンド
+  console.log(`Adjutant Serve コマンド
 
 使用方法:
   pnpm run serve [-- --skip-slack-helper] [--no-browser] [--config <path>] [--open]

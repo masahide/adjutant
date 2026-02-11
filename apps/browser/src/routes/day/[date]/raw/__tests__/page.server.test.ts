@@ -11,12 +11,12 @@ const TARGET_DATE = "2025-11-03";
 
 describe("routes/day/[date]/raw/+page.server", () => {
   let dataDir: string;
-  const originalEnv = process.env.REACLOG_DATA_DIR;
+  const originalEnv = process.env.ADJUTANT_DATA_DIR;
 
   beforeEach(() => {
     resetConfigCache();
     dataDir = mkdtempSync(join(tmpdir(), "adjutant-raw-"));
-    process.env.REACLOG_DATA_DIR = dataDir;
+    process.env.ADJUTANT_DATA_DIR = dataDir;
     seedData();
   });
 
@@ -24,9 +24,9 @@ describe("routes/day/[date]/raw/+page.server", () => {
     rmSync(dataDir, { recursive: true, force: true });
     resetConfigCache();
     if (originalEnv === undefined) {
-      delete process.env.REACLOG_DATA_DIR;
+      delete process.env.ADJUTANT_DATA_DIR;
     } else {
-      process.env.REACLOG_DATA_DIR = originalEnv;
+      process.env.ADJUTANT_DATA_DIR = originalEnv;
     }
   });
 

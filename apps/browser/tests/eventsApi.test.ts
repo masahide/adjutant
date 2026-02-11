@@ -7,11 +7,11 @@ import { GET as eventsHandler } from "../src/routes/day/[date]/events/+server";
 
 describe("/day/[date]/events", () => {
   let fixture: JsonlFixture;
-  const originalDataDir = process.env.REACLOG_DATA_DIR;
+  const originalDataDir = process.env.ADJUTANT_DATA_DIR;
 
   beforeEach(async () => {
     fixture = await createJsonlFixture({ source: "slack", date: "2025-11-03" });
-    process.env.REACLOG_DATA_DIR = fixture.dataDir;
+    process.env.ADJUTANT_DATA_DIR = fixture.dataDir;
     resetConfigCache();
   });
 
@@ -19,9 +19,9 @@ describe("/day/[date]/events", () => {
     await fixture.cleanup();
     resetConfigCache();
     if (originalDataDir === undefined) {
-      delete process.env.REACLOG_DATA_DIR;
+      delete process.env.ADJUTANT_DATA_DIR;
     } else {
-      process.env.REACLOG_DATA_DIR = originalDataDir;
+      process.env.ADJUTANT_DATA_DIR = originalDataDir;
     }
   });
 

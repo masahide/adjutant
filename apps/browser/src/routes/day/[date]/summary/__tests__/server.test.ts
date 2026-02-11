@@ -10,14 +10,14 @@ const TARGET_DATE = "2025-11-03";
 
 describe("routes/day/[date]/summary", () => {
   let dataDir: string;
-  const originalDataEnv = process.env.REACLOG_DATA_DIR;
-  const originalConfigEnv = process.env.REACLOG_CONFIG_DIR;
+  const originalDataEnv = process.env.ADJUTANT_DATA_DIR;
+  const originalConfigEnv = process.env.ADJUTANT_CONFIG_DIR;
 
   beforeEach(() => {
     resetConfigCache();
     dataDir = mkdtempSync(join(tmpdir(), "adjutant-summary-api-"));
-    process.env.REACLOG_DATA_DIR = dataDir;
-    process.env.REACLOG_CONFIG_DIR = join(dataDir, "config");
+    process.env.ADJUTANT_DATA_DIR = dataDir;
+    process.env.ADJUTANT_CONFIG_DIR = join(dataDir, "config");
     seedSummary();
   });
 
@@ -25,14 +25,14 @@ describe("routes/day/[date]/summary", () => {
     rmSync(dataDir, { recursive: true, force: true });
     resetConfigCache();
     if (originalDataEnv === undefined) {
-      delete process.env.REACLOG_DATA_DIR;
+      delete process.env.ADJUTANT_DATA_DIR;
     } else {
-      process.env.REACLOG_DATA_DIR = originalDataEnv;
+      process.env.ADJUTANT_DATA_DIR = originalDataEnv;
     }
     if (originalConfigEnv === undefined) {
-      delete process.env.REACLOG_CONFIG_DIR;
+      delete process.env.ADJUTANT_CONFIG_DIR;
     } else {
-      process.env.REACLOG_CONFIG_DIR = originalConfigEnv;
+      process.env.ADJUTANT_CONFIG_DIR = originalConfigEnv;
     }
   });
 
@@ -173,7 +173,7 @@ describe("routes/day/[date]/summary", () => {
     expect(typeof body.updatedAt === "string").toBe(true);
     expect(typeof body.content === "string").toBe(true);
     expect((body.content as string).length).toBeGreaterThan(0);
-    expect(body.content).toContain("# ReacLog 日報");
+    expect(body.content).toContain("# Adjutant 日報");
     expect(body.content).toContain("## TODO / ブロッカー");
   });
 
