@@ -18,22 +18,31 @@ to_wsl_path() {
 found_win=""
 found_wsl=""
 
-# 1) Microsoft Store (MSIX)
-msix_root="$(pwsh "(Get-AppxPackage -Name 'com.tinyspeck.slackdesktop' -ErrorAction SilentlyContinue).InstallLocation")"
-if [[ -n "$msix_root" ]]; then
-  candidate_win="${msix_root}\\app\\Slack.exe"
-  # Windows側で存在確認
-  if [[ -n "$(pwsh "[IO.File]::Exists('$candidate_win')")" ]] && [[ "$(pwsh "[IO.File]::Exists('$candidate_win')")" == "True" ]]; then
-    found_win="$candidate_win"
-    found_wsl="$(to_wsl_path "$candidate_win")"
+exists_win_file() {
+  [[ "$(pwsh "[IO.File]::Exists('$1')")" == "True" ]]
+}
+
+# 1) PATH 上の Slack.exe（WindowsApps エイリアス）
+cmd_slack="$(pwsh "(Get-Command Slack.exe -ErrorAction SilentlyContinue).Source")"
+if [[ -n "$cmd_slack" ]] && exists_win_file "$cmd_slack"; then
+  found_win="$cmd_slack"
+  found_wsl="$(to_wsl_path "$cmd_slack")"
+fi
+
+# 2) Microsoft Store (MSIX)
+if [[ -z "$found_win" ]]; then
+  msix_root="$(pwsh "(Get-AppxPackage -Name 'com.tinyspeck.slackdesktop' -ErrorAction SilentlyContinue).InstallLocation")"
+  if [[ -n "$msix_root" ]]; then
+    candidate_win="${msix_root}\\app\\Slack.exe"
+    if exists_win_file "$candidate_win"; then
+      found_win="$candidate_win"
+      found_wsl="$(to_wsl_path "$candidate_win")"
+    fi
   fi
 fi
 
-# 2) 通常インストーラ (%LOCALAPPDATA%\slack\app-*\slack.exe)
+# 3) 通常インストーラ (%LOCALAPPDATA%\slack\app-*\slack.exe)
 if [[ -z "$found_win" ]]; then
-  localapp="$(pwsh "[Environment]::GetFolderPath('LocalApplicationData')")"
-  slack_root="${localapp}\\slack"
-  # 最新バージョンの app-* ディレクトリを取得
   latest_dir="$(pwsh @'
 $root = "$env:LOCALAPPDATA\slack"
 if (Test-Path $root) {
@@ -44,19 +53,19 @@ if (Test-Path $root) {
 '@)"
   if [[ -n "$latest_dir" ]]; then
     candidate_win="${latest_dir}\\slack.exe"
-    if [[ "$(pwsh "[IO.File]::Exists('$candidate_win')")" == "True" ]]; then
+    if exists_win_file "$candidate_win"; then
       found_win="$candidate_win"
       found_wsl="$(to_wsl_path "$candidate_win")"
     fi
   fi
 fi
 
-# 3) Program Files フォールバック
+# 4) Program Files フォールバック
 if [[ -z "$found_win" ]]; then
   pf="$(pwsh '$env:ProgramFiles')"
   pf86="$(pwsh '$env:ProgramFiles(x86)')"
   for p in "${pf}\\slack\\slack.exe" "${pf86}\\slack\\slack.exe"; do
-    if [[ "$(pwsh "[IO.File]::Exists('$p')")" == "True" ]]; then
+    if exists_win_file "$p"; then
       found_win="$p"
       found_wsl="$(to_wsl_path "$p")"
       break

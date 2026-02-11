@@ -2,11 +2,11 @@
 set -euo pipefail
 
 # Usage:
-#   ./hack/launch_chrome_cdp.sh            # 9222 / 127.0.0.1 (portproxy併用向け)
-#   ./hack/launch_chrome_cdp.sh 9333       # 任意ポート
-#   ./hack/launch_chrome_cdp.sh --bind     # WSL直アクセス（WindowsブリッジIPにバインド）
-#   ./hack/launch_chrome_cdp.sh --temp     # 一時プロファイルで起動
-#   ./hack/launch_chrome_cdp.sh --show     # 見つけた chrome.exe のWindowsパスだけ表示
+#   ./hack/launch_chrome_cdp.sh
+#   ./hack/launch_chrome_cdp.sh 9333
+#   ./hack/launch_chrome_cdp.sh --bind
+#   ./hack/launch_chrome_cdp.sh --temp
+#   ./hack/launch_chrome_cdp.sh --show
 
 PORT="9222"
 BIND_HOST=0
@@ -15,18 +15,34 @@ SHOW_ONLY=0
 
 for a in "$@"; do
   case "$a" in
-    --bind) BIND_HOST=1;;
-    --temp) TEMP_PROFILE=1;;
-    --show) SHOW_ONLY=1;;
-    ''|*[!0-9]*) ;;                       # 数字以外は無視（上のフラグで処理）
-    *) PORT="$a";;
+    --bind) BIND_HOST=1 ;;
+    --temp) TEMP_PROFILE=1 ;;
+    --show|show) SHOW_ONLY=1 ;;
+    ''|*[!0-9]*) ;;
+    *) PORT="$a" ;;
   esac
 done
 
-# PowerShellは“検出”だけに使用（起動は使わない）
 pwsh() { powershell.exe -NoProfile -Command "$1" | tr -d '\r'; }
 
-# ---- chrome.exe を Windows 側で検出（優先：PF\x64 → PF\x86 → LocalAppData → Canary）----
+detect_wsl_networking_mode() {
+  pwsh "
+\$mode = 'nat'
+\$cfg = Join-Path \$env:USERPROFILE '.wslconfig'
+if (Test-Path \$cfg) {
+  \$line = Get-Content \$cfg | Where-Object { \$_ -match '^\s*networkingMode\s*=' } | Select-Object -First 1
+  if (\$line) {
+    \$mode = ((\$line -split '=', 2)[1]).Trim().ToLowerInvariant()
+  }
+}
+\$mode
+"
+}
+
+get_windows_host_ip() {
+  ip route 2>/dev/null | awk '/default/ {print $3; exit}'
+}
+
 CHROME_WIN="$(pwsh '$c=Get-Command chrome.exe -ErrorAction SilentlyContinue; if($c){$c.Path}else{$pf=$env:ProgramFiles;$pf86=${env:ProgramFiles(x86)};$la=$env:LOCALAPPDATA; foreach($p in @(
   (Join-Path $pf   "Google\Chrome\Application\chrome.exe"),
   (Join-Path $pf86 "Google\Chrome\Application\chrome.exe"),
@@ -42,24 +58,36 @@ fi
 echo "Windows path: $CHROME_WIN"
 [[ "$SHOW_ONLY" -eq 1 ]] && exit 0
 
-# バインド先（既定は127.0.0.1 → portproxy 併用）
 ADDRESS="127.0.0.1"
-if [[ $BIND_HOST -eq 1 ]]; then
-  ADDRESS="$(ip route | awk '/default/ {print $3}')"
+if [[ "$BIND_HOST" -eq 1 ]]; then
+  ADDRESS="$(get_windows_host_ip || true)"
+  if [[ -z "$ADDRESS" ]]; then
+    echo "[ERROR] Windows host IP を検出できませんでした。" >&2
+    exit 1
+  fi
 fi
 
-EXTRA=""
-if [[ $TEMP_PROFILE -eq 1 ]]; then
-  EXTRA=" --user-data-dir=%TEMP%\\chrome-cdp-${PORT}"
+ARGS=("--remote-debugging-port=${PORT}" "--remote-debugging-address=${ADDRESS}")
+if [[ "$TEMP_PROFILE" -eq 1 ]]; then
+  ARGS+=("--user-data-dir=%TEMP%\\chrome-cdp-${PORT}")
 fi
 
-echo "[INFO] Launching (cmd.exe): port=$PORT, addr=$ADDRESS, temp=$TEMP_PROFILE"
-
-cmd.exe /c "${CHROME_WIN}" --remote-debugging-port=${PORT}
+echo "[INFO] Launching Chrome (port=${PORT}, addr=${ADDRESS}, temp=${TEMP_PROFILE})"
+pwsh "
+\$exe = '$CHROME_WIN'
+\$args = @($(printf "'%s'," "${ARGS[@]}" | sed 's/,$//'))
+Start-Process -FilePath \$exe -ArgumentList \$args -ErrorAction Stop | Out-Null
+"
 
 echo "[OK] Launched."
-if [[ $BIND_HOST -eq 1 ]]; then
-  echo "WSL直アクセス: curl http://$ADDRESS:$PORT/json/version"
+mode="$(detect_wsl_networking_mode || true)"
+if [[ "$mode" == "mirrored" ]]; then
+  echo "Test: curl http://127.0.0.1:${PORT}/json/version"
 else
-  echo "portproxy経由: curl http://$(ip route | awk '/default/ {print $3}'):$PORT/json/version"
+  host_ip="$(get_windows_host_ip || true)"
+  if [[ -n "$host_ip" ]]; then
+    echo "Test: curl http://${host_ip}:${PORT}/json/version"
+  else
+    echo "Test: curl http://127.0.0.1:${PORT}/json/version"
+  fi
 fi
