@@ -1644,23 +1644,7 @@ export class SlackAdapter implements IngestionAdapter {
         }
       }
     } catch {
-      // Legacy single-file cache fallback.
-      try {
-        const raw = await readFile(filePath, "utf8");
-        const parsed = JSON.parse(raw) as {
-          teams?: Record<string, { channels?: Record<string, string> }>;
-        };
-        const teams = parsed.teams ?? {};
-        for (const [teamId, teamData] of Object.entries(teams)) {
-          const channels = teamData?.channels ?? {};
-          for (const [channelId, channelName] of Object.entries(channels)) {
-            if (typeof channelName !== "string" || !channelName.trim()) continue;
-            this.cacheChannelNameByTeam(teamId, channelId, channelName);
-          }
-        }
-      } catch {
-        /* missing/broken cache should not break ingestion */
-      }
+      /* missing/broken cache should not break ingestion */
     }
   }
 
@@ -1683,23 +1667,7 @@ export class SlackAdapter implements IngestionAdapter {
         }
       }
     } catch {
-      // Legacy single-file cache fallback.
-      try {
-        const raw = await readFile(filePath, "utf8");
-        const parsed = JSON.parse(raw) as {
-          teams?: Record<string, { users?: Record<string, string> }>;
-        };
-        const teams = parsed.teams ?? {};
-        for (const [teamId, teamData] of Object.entries(teams)) {
-          const users = teamData?.users ?? {};
-          for (const [userId, userName] of Object.entries(users)) {
-            if (typeof userName !== "string" || !userName.trim()) continue;
-            this.cacheUserNameByTeam(teamId, userId, userName);
-          }
-        }
-      } catch {
-        /* missing/broken cache should not break ingestion */
-      }
+      /* missing/broken cache should not break ingestion */
     }
   }
 
