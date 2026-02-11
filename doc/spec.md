@@ -435,6 +435,21 @@ export interface IngestionAdapter {
   - DOM キャプチャの成功時に得た本文をキャッシュし、同メッセージの後続リアクションでも再利用する
   - DOM キャプチャを無効化した場合は本文が空文字／`undefined` になる前提（フォールバック無し）
 
+- **名前解決キャッシュ（team別ファイル）**
+  - `data/_cache/slack/channel-names-by-team/<team_id>.json`
+  - `data/_cache/slack/user-names-by-team/<team_id>.json`
+  - `responseReceived` で `conversations.view` を受信したら channel cache を更新
+  - `responseReceived` で `/cache/{team}/users/list` を受信したら user cache を更新
+  - 更新時ログ例  
+    `[Adjutant] Slack channel cache updated team=T0A... changed=1 total_channels=123`  
+    `[Adjutant] Slack user cache updated team=T0A... changed=12 total_users=456`
+
+- **内部責務分割（実装）**
+  - `SlackAdapter` はオーケストレーションに専念
+  - `SlackNameCacheRepository` が team別 cache の読込 更新 永続化 解決を担当
+  - `ResponseBodyReader` が CDP `getResponseBody` の decode/parse を担当
+  - `SlackResponseProjector` が `conversations.view` / `users.list` 応答の投影を担当
+
 ### 3.3 GitHub（最小：Polling / 将来：App+Webhook）※未実装
 
 - **最小実装**：PAT + Octokit で `repos[]` を 5–10 分間隔でポーリング

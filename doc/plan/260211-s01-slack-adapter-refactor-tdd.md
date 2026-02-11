@@ -230,31 +230,31 @@ sequenceDiagram
 - [x] 要件と仕様の確定 受け入れ条件の確定
 - [x] インターフェース契約の確定 スキーマと例の追加
 - [x] Mermaid図の作成 更新
-- [ ] インターフェース 型定義の作成
+- [x] インターフェース 型定義の作成
 - [x] テスト基盤の確認 例 テストランナー モックユーティリティ
 
 ### Phase 2 キャッシュ責務分離の実装
 
-- [ ] Test `SlackNameCacheRepository` の失敗するテストケースを作成 Red
-- [ ] Impl team別 channel user cache の最小実装 Green
-- [ ] Refactor `SlackAdapter` から cache 読込 更新 resolve を移譲
-- [ ] Integration `slackAdapter.events` に repo 経路の検証を追加
-- [ ] Docs cache 契約と図を更新
+- [x] Test `SlackNameCacheRepository` の失敗するテストケースを作成 Red
+- [x] Impl team別 channel user cache の最小実装 Green
+- [x] Refactor `SlackAdapter` から cache 読込 更新 resolve を移譲
+- [x] Integration `slackAdapter.events` に repo 経路の検証を追加
+- [x] Docs cache 契約と図を更新
 
 ### Phase 3 レスポンス解析責務分離の実装
 
-- [ ] Test `ResponseBodyReader` と `SlackResponseProjector` の失敗するテストケースを作成 Red
-- [ ] Impl response decode parse と conversations.view users/list 投影の最小実装 Green
-- [ ] Refactor `handleResponseReceived` の重複除去 DRY
-- [ ] Integration 既存 raw_fetch と cache 更新テストを維持
-- [ ] Docs エラー契約とログ仕様を更新
+- [x] Test `ResponseBodyReader` と `SlackResponseProjector` の失敗するテストケースを作成 Red
+- [x] Impl response decode parse と conversations.view users/list 投影の最小実装 Green
+- [x] Refactor `handleResponseReceived` の重複除去 DRY
+- [x] Integration 既存 raw_fetch と cache 更新テストを維持
+- [x] Docs エラー契約とログ仕様を更新
 
 ### Phase 4 統合と検証
 
 - [x] 全体テストの実行
-- [ ] エッジケースの動作確認
-- [ ] ログと例外の確認 想定外入力 タイムアウト リトライ
-- [ ] ドキュメント更新 仕様 契約 図
+- [x] エッジケースの動作確認
+- [x] ログと例外の確認 想定外入力 タイムアウト リトライ
+- [x] ドキュメント更新 仕様 契約 図
 
 ## 8. 完了の定義 Definition of Done
 
@@ -266,10 +266,10 @@ sequenceDiagram
 
 ### 8.2 品質DoD Quality DoD
 
-- [ ] 全てのテストがパスしていること
-- [ ] Linter Formatterのエラーがないこと
-- [ ] 不要なデバッグコードが削除されていること
-- [ ] 主要な変更点がドキュメントに反映されていること
+- [x] 全てのテストがパスしていること
+- [x] Linter Formatterのエラーがないこと
+- [x] 不要なデバッグコードが削除されていること
+- [x] 主要な変更点がドキュメントに反映されていること
 
 ## 9. 懸念事項と未確定事項 Concerns and Questions
 

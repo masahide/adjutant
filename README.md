@@ -7,13 +7,13 @@ Slack や Git/GitHub のアクティビティを収集し、日次ログとし�
 - Slack デスクトップ (app.slack.com) への CDP 接続と DOM キャプチャによる本文取得
 - 正規化済みイベントの JSONL 保存およびキャッシュ処理 (`src/index.ts`)
 - CDP ポートフォワードや Slack 起動を補助するシェルスクリプト群 (`hack/`)
-- アーキテクチャ仕様書 (`docs/spec.md`) に基づくログパイプライン構想
+- アーキテクチャ仕様書 (`doc/spec.md`) に基づくログパイプライン構想
 
 ## ディレクトリ構成
 
 ```
 ├── src/              # TypeScript エントリポイント
-├── docs/             # 仕様・設計ドキュメント
+├── doc/              # 仕様・設計ドキュメント
 ├── hack/             # WSL⇔Windows 連携や CDP 用スクリプト
 ├── package.json      # スクリプト定義・依存関係
 └── AGENTS.md         # コントリビューションガイド
@@ -69,7 +69,6 @@ Slack 収集の挙動は環境変数で切り替えられます。
 | `ADJUTANT_DEBUG`               | `slack:verbose,slack:domprobe` | Slack アダプタの詳細ログ。`slack:verbose` で正規化の詳細、`slack:domprobe` で DOM 評価ログ、`slack:network` / `slack:fetch` / `slack:fetch:hook` / `slack:runtime` で各イベントを個別に有効化。 |
 | `ADJUTANT_DISABLE_DOM_CAPTURE` | `1`                            | DOM 取得を完全に停止（本文は空のまま記録される）。フォールバックは存在しないため調査時のみに使用。                                                                                              |
 | `ADJUTANT_TZ`                  | `Asia/Tokyo`                   | タイムゾーン上書き。未指定時は `Asia/Tokyo` を使用。                                                                                                                                            |
-| `ADJUTANT_TZ`                  | `Asia/Tokyo`                   | タイムゾーン上書き。未指定時は `Asia/Tokyo`                                                                                                                                                     |
 
 **起動例**
 
@@ -98,38 +97,8 @@ Slack 収集の挙動は環境変数で切り替えられます。
 2. 他メンバーのリアクションが Slack に届いた場合でも、新たな DOM ログ（`{"ok":false,...,"reason":"dom-not-found"}` など）が増えないことを確認。WebSocket 経由では DOM キャプチャが発火しないため、想定通りスキップされる。
 3. 必要に応じて `ADJUTANT_DISABLE_DOM_CAPTURE=1` で再実行し、DOM キャプチャ無効化時に本文が空のまま記録されるフォールバックを確認する。
 
-## Slack アダプタのデバッグ
-
-Slack 収集の挙動は環境変数で切り替えられます。
-
-| 変数                           | 例                             | 説明                                                                                                                                                                                            |
-| ------------------------------ | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ADJUTANT_DEBUG`               | `slack:verbose,slack:domprobe` | Slack アダプタの詳細ログ。`slack:verbose` で正規化の詳細、`slack:domprobe` で DOM 評価ログ、`slack:network` / `slack:fetch` / `slack:fetch:hook` / `slack:runtime` で各イベントを個別に有効化。 |
-| `ADJUTANT_DISABLE_DOM_CAPTURE` | `1`                            | DOM 取得を完全に停止（本文は空のまま記録される）。フォールバックは存在しないため調査時のみに使用。                                                                                              |
-| `ADJUTANT_TZ`                  | `Asia/Tokyo`                   | タイムゾーン上書き。未指定時は `Asia/Tokyo`。                                                                                                                                                   |
-
-**起動例**
-
-- 通常運用（最小ログ）
-  ```bash
-  pnpm start
-  ```
-- DOM 取得を調査したい場合
-  ```bash
-  ADJUTANT_DEBUG=slack:verbose,slack:domprobe pnpm start | tee -a debug_dom.log
-  ```
-- DOM を無効化してキャッシュのみ確認
-  ```bash
-  ADJUTANT_DISABLE_DOM_CAPTURE=1 ADJUTANT_DEBUG=slack:verbose pnpm start | tee -a debug_fallback.log
-  ```
-- Slack Desktop の fetch/XHR 送信をフックして確認
-  ```bash
-  ADJUTANT_DEBUG_UI=1 ADJUTANT_DEBUG=slack:fetch:hook pnpm start
-  ```
-  `raw_fetch` に `stage=requestWillBeSent`（送信）と `stage=responseReceived`（応答）が表示されます。
-
 ログには API トークン等が含まれることがあります。共有前には必ず `debug.log` などを削除するか、秘匿情報をマスクしてください。
 
 ## 仕様と今後の開発
 
-データモデルや日次要約の詳細は `docs/spec.md` を参照してください。GitHub やローカル Git のアダプタ追加、JSONL 保存、LLM 要約機能はロードマップに含まれています。新しいモジュールやテストを追加する際は `AGENTS.md` に記載のコーディング規約と PR ガイドラインを遵守してください。
+データモデルや日次要約の詳細は `doc/spec.md` を参照してください。GitHub やローカル Git のアダプタ追加、JSONL 保存、LLM 要約機能はロードマップに含まれています。新しいモジュールやテストを追加する際は `AGENTS.md` に記載のコーディング規約と PR ガイドラインを遵守してください。

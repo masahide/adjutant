@@ -1,5 +1,3 @@
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
-import { basename, dirname, extname, join } from "node:path";
 import type { EmitFn, IngestionAdapter } from "../core/adapter.js";
 import type { NormalizedEvent } from "../core/events.js";
 import {
@@ -9,6 +7,9 @@ import {
   type NormalizeOptions,
 } from "./normalize.js";
 import { fromBlocks } from "./blocks.js";
+import { SlackNameCacheRepository } from "./nameCacheRepository.js";
+import { ResponseBodyReader } from "./responseBodyReader.js";
+import { SlackResponseProjector } from "./responseProjector.js";
 
 export type FetchPausedEvent = {
   requestId: string;
@@ -522,11 +523,9 @@ export class SlackAdapter implements IngestionAdapter {
     string,
     { text: string; channelName?: string | null; channelId?: string | null; capturedAt: number }
   > = new Map();
-  private readonly channelNamesByTeam: Map<string, Map<string, string>> = new Map();
-  private readonly userNamesByTeam: Map<string, Map<string, string>> = new Map();
-  private readonly channelTeamIds: Map<string, string> = new Map();
-  private readonly channelCachePath: string | undefined;
-  private readonly userCachePath: string | undefined;
+  private readonly nameCacheRepository: SlackNameCacheRepository;
+  private readonly responseBodyReader: ResponseBodyReader;
+  private readonly responseProjector: SlackResponseProjector;
   private readonly debugEnabled =
     DEBUG_TARGETS.has("slack") || DEBUG_TARGETS.has("slack:verbose") || DOM_PROBE_DEBUG_ENABLED;
   private readonly debugVerboseEnabled = DEBUG_TARGETS.has("slack:verbose");
@@ -552,8 +551,13 @@ export class SlackAdapter implements IngestionAdapter {
   constructor(private readonly deps: SlackAdapterDeps) {
     this.now = deps.now ?? (() => new Date());
     this.timezone = deps.timezone ?? "Asia/Tokyo";
-    this.channelCachePath = deps.channelCachePath;
-    this.userCachePath = deps.userCachePath;
+    this.nameCacheRepository = new SlackNameCacheRepository({
+      channelCachePath: deps.channelCachePath,
+      userCachePath: deps.userCachePath,
+      now: this.now,
+    });
+    this.responseBodyReader = new ResponseBodyReader(this.deps.client);
+    this.responseProjector = new SlackResponseProjector();
     this.debugFetchHookEnabled = deps.debugFetchHookEnabled ?? DEBUG_FETCH_HOOK_ENABLED;
     this.onDebugEvent = deps.onDebugEvent;
   }
@@ -561,8 +565,7 @@ export class SlackAdapter implements IngestionAdapter {
   async start(emit: EmitFn): Promise<void> {
     this.emit = emit;
     const { Network, Fetch, Runtime } = this.deps.client;
-    await this.loadChannelNameCache();
-    await this.loadUserNameCache();
+    await this.nameCacheRepository.load();
 
     await Network.enable({});
     await Network.setCacheDisabled({ cacheDisabled: true });
@@ -1274,15 +1277,16 @@ export class SlackAdapter implements IngestionAdapter {
     await this.refreshUserNameFromUsersList(event);
     if (!SLACK_API_RE.test(event.response.url)) return;
     try {
-      const { body, base64Encoded } = await this.deps.client.Network.getResponseBody({
-        requestId: event.requestId,
-      });
-      const txt = base64Encoded ? Buffer.from(body, "base64").toString("utf8") : body;
-      const data = JSON.parse(txt);
-      const message = data?.message ?? data?.item;
-      if (message?.channel && message?.ts) {
-        const text = fromBlocks(message.blocks);
-        this.cacheMessage(message.channel, message.ts, { text, user: message.user });
+      const json = await this.responseBodyReader.readJson(event.requestId);
+      if (!json.data || json.invalidJson) return;
+      const data = this.asRecord(json.data);
+      if (!data) return;
+      const message = this.asRecord(data.message ?? data.item);
+      const channel = this.asString(message?.channel);
+      const ts = this.asString(message?.ts);
+      if (channel && ts) {
+        const text = fromBlocks(message?.blocks);
+        this.cacheMessage(channel, ts, { text, user: this.asString(message?.user) });
       }
     } catch {
       /* ignore errors */
@@ -1297,16 +1301,9 @@ export class SlackAdapter implements IngestionAdapter {
     const contentType =
       this.normalizeHeader(event.response.headers, "content-type") || event.response.mimeType || "";
 
-    let bodyText: string | null = null;
-    let bodyUnavailable: string | null = null;
-    try {
-      const { body, base64Encoded } = await this.deps.client.Network.getResponseBody({
-        requestId: event.requestId,
-      });
-      bodyText = base64Encoded ? Buffer.from(body, "base64").toString("utf8") : body;
-    } catch {
-      bodyUnavailable = "unavailable";
-    }
+    const bodyResult = await this.responseBodyReader.readText(event.requestId);
+    const bodyText = bodyResult.text;
+    const bodyUnavailable = bodyResult.unavailable ? "unavailable" : null;
 
     const preview = this.previewResponseBody(bodyText, contentType);
     this.pushDebugEvent("raw_fetch", {
@@ -1330,33 +1327,18 @@ export class SlackAdapter implements IngestionAdapter {
     const urlInfo = this.parseUrlInfo(event.response.url);
     if (!urlInfo || urlInfo.pathname !== "/api/conversations.view") return;
     try {
-      const { body, base64Encoded } = await this.deps.client.Network.getResponseBody({
-        requestId: event.requestId,
-      });
-      const text = base64Encoded ? Buffer.from(body, "base64").toString("utf8") : body;
-      const parsed = JSON.parse(text) as Record<string, unknown>;
-      if (parsed.ok !== true) return;
+      const json = await this.responseBodyReader.readJson(event.requestId);
+      if (!json.data || json.invalidJson) return;
+      const projected = this.responseProjector.projectConversationsView(json.data);
+      if (!projected) return;
 
-      const channel = this.asRecord(parsed.channel);
-      const history = this.asRecord(parsed.history);
-      const historyMessages = Array.isArray(history?.messages) ? history.messages : [];
-      const firstMessage =
-        historyMessages.length > 0 ? this.asRecord(historyMessages[0]) : undefined;
-      const users = Array.isArray(parsed.users) ? parsed.users : [];
-      const firstUser = users.length > 0 ? this.asRecord(users[0]) : undefined;
-      const channelId = this.asString(channel?.id);
-      const channelName = this.asString(channel?.name);
-      const teamId =
-        this.asString(channel?.context_team_id) ??
-        this.asString(firstMessage?.team) ??
-        this.asString(firstUser?.team_id);
-      if (!channelId || !channelName || !teamId) return;
-
-      const before = this.resolveChannelNameByTeam(teamId, channelId);
-      this.cacheChannelNameByTeam(teamId, channelId, channelName);
-      if (before !== channelName) {
-        await this.persistChannelNameCache(teamId);
-        this.logCacheUpdate("channel", teamId, 1, this.channelNamesByTeam.get(teamId)?.size ?? 0);
+      const changed = await this.nameCacheRepository.updateChannel(
+        projected.teamId,
+        projected.channelId,
+        projected.channelName
+      );
+      if (changed) {
+        this.logCacheUpdate("channel", changed.teamId, changed.changed, changed.total);
       }
     } catch {
       /* ignore conversations.view parse errors */
@@ -1376,46 +1358,12 @@ export class SlackAdapter implements IngestionAdapter {
     if (!looksLikeUserList) return;
 
     try {
-      const { body, base64Encoded } = await this.deps.client.Network.getResponseBody({
-        requestId: event.requestId,
-      });
-      const text = base64Encoded ? Buffer.from(body, "base64").toString("utf8") : body;
-      const parsed = JSON.parse(text) as Record<string, unknown>;
-      if (parsed.ok !== true) return;
-
-      const results = Array.isArray(parsed.results) ? parsed.results : [];
-      const teamFromPath =
-        segments.length >= 2 && segments[0] === "cache" ? segments[1] : undefined;
-      const changedTeamIds = new Set<string>();
-      const changedCounts = new Map<string, number>();
-
-      for (const item of results) {
-        const user = this.asRecord(item);
-        if (!user) continue;
-        const userId = this.asString(user.id);
-        const teamId =
-          this.asString(user.team_id) ??
-          this.asString(this.asRecord(user.profile)?.team) ??
-          teamFromPath;
-        const userName = this.pickUserName(user);
-        if (!userId || !teamId || !userName) continue;
-
-        const before = this.resolveUserNameByTeam(teamId, userId);
-        this.cacheUserNameByTeam(teamId, userId, userName);
-        if (before !== userName) {
-          changedTeamIds.add(teamId);
-          changedCounts.set(teamId, (changedCounts.get(teamId) ?? 0) + 1);
-        }
-      }
-
-      for (const teamId of changedTeamIds) {
-        await this.persistUserNameCache(teamId);
-        this.logCacheUpdate(
-          "user",
-          teamId,
-          changedCounts.get(teamId) ?? 0,
-          this.userNamesByTeam.get(teamId)?.size ?? 0
-        );
+      const json = await this.responseBodyReader.readJson(event.requestId);
+      if (!json.data || json.invalidJson) return;
+      const projectedUsers = this.responseProjector.projectUsersList(json.data, urlInfo);
+      const changes = await this.nameCacheRepository.updateUsers(projectedUsers);
+      for (const changed of changes) {
+        this.logCacheUpdate("user", changed.teamId, changed.changed, changed.total);
       }
     } catch {
       /* ignore users/list parse errors */
@@ -1535,74 +1483,18 @@ export class SlackAdapter implements IngestionAdapter {
     });
   }
 
-  private cacheChannelNameByTeam(teamId: string, channelId: string, label?: string | null): void {
-    const normalizedTeamId = teamId?.trim();
-    const normalizedId = channelId?.trim();
-    const normalizedLabel = label?.trim();
-    if (!normalizedTeamId || !normalizedId || !normalizedLabel) return;
-    let teamMap = this.channelNamesByTeam.get(normalizedTeamId);
-    if (!teamMap) {
-      teamMap = new Map<string, string>();
-      this.channelNamesByTeam.set(normalizedTeamId, teamMap);
-    }
-    teamMap.set(normalizedId, normalizedLabel);
-    this.channelTeamIds.set(normalizedId, normalizedTeamId);
-  }
-
-  private resolveChannelNameByTeam(teamId: string, channelId: string): string | undefined {
-    const teamMap = this.channelNamesByTeam.get(teamId);
-    return teamMap?.get(channelId);
-  }
-
-  private cacheUserNameByTeam(teamId: string, userId: string, userName?: string | null): void {
-    const normalizedTeamId = teamId?.trim();
-    const normalizedUserId = userId?.trim();
-    const normalizedUserName = userName?.trim();
-    if (!normalizedTeamId || !normalizedUserId || !normalizedUserName) return;
-    let teamMap = this.userNamesByTeam.get(normalizedTeamId);
-    if (!teamMap) {
-      teamMap = new Map<string, string>();
-      this.userNamesByTeam.set(normalizedTeamId, teamMap);
-    }
-    teamMap.set(normalizedUserId, normalizedUserName);
-  }
-
-  private resolveUserNameByTeam(teamId: string, userId: string): string | undefined {
-    const teamMap = this.userNamesByTeam.get(teamId);
-    return teamMap?.get(userId);
+  private resolveChannelNameFromMap(
+    channelId: string | null | undefined,
+    teamIdHint: string | undefined
+  ): string | undefined {
+    return this.nameCacheRepository.resolveChannelName(channelId, teamIdHint);
   }
 
   private resolveTeamId(
     teamIdHint: string | undefined,
     channelId: string | null | undefined
   ): string | undefined {
-    const normalizedTeamId = teamIdHint?.trim();
-    if (normalizedTeamId) return normalizedTeamId;
-    const normalizedChannelId = channelId?.trim();
-    if (!normalizedChannelId) return undefined;
-    return this.channelTeamIds.get(normalizedChannelId);
-  }
-
-  private resolveChannelNameFromMap(
-    channelId: string | null | undefined,
-    teamIdHint: string | undefined
-  ): string | undefined {
-    const normalizedChannelId = channelId?.trim();
-    if (!normalizedChannelId) return undefined;
-
-    const teamId = this.resolveTeamId(teamIdHint, normalizedChannelId);
-    if (teamId) {
-      return this.resolveChannelNameByTeam(teamId, normalizedChannelId);
-    }
-
-    let found: string | undefined;
-    for (const teamMap of this.channelNamesByTeam.values()) {
-      const candidate = teamMap.get(normalizedChannelId);
-      if (!candidate) continue;
-      if (found && found !== candidate) return undefined;
-      found = candidate;
-    }
-    return found;
+    return this.nameCacheRepository.resolveTeam(teamIdHint, channelId);
   }
 
   private resolveUserNameFromMap(
@@ -1610,124 +1502,7 @@ export class SlackAdapter implements IngestionAdapter {
     teamIdHint: string | undefined,
     channelIdHint?: string | null | undefined
   ): string | undefined {
-    const normalizedUserId = userId?.trim();
-    if (!normalizedUserId) return undefined;
-
-    const teamId = this.resolveTeamId(teamIdHint, channelIdHint);
-    if (teamId) {
-      return this.resolveUserNameByTeam(teamId, normalizedUserId);
-    }
-
-    let found: string | undefined;
-    for (const teamMap of this.userNamesByTeam.values()) {
-      const candidate = teamMap.get(normalizedUserId);
-      if (!candidate) continue;
-      if (found && found !== candidate) return undefined;
-      found = candidate;
-    }
-    return found;
-  }
-
-  private async loadChannelNameCache(): Promise<void> {
-    const filePath = this.channelCachePath;
-    if (!filePath) return;
-    const teamDir = this.toTeamCacheDir(filePath);
-    try {
-      const files = await readdir(teamDir);
-      for (const name of files) {
-        if (!name.endsWith(".json")) continue;
-        const teamId = basename(name, ".json");
-        if (!teamId) continue;
-        const raw = await readFile(join(teamDir, name), "utf8");
-        const parsed = JSON.parse(raw) as { channels?: Record<string, string> };
-        const channels = parsed.channels ?? {};
-        for (const [channelId, channelName] of Object.entries(channels)) {
-          if (typeof channelName !== "string" || !channelName.trim()) continue;
-          this.cacheChannelNameByTeam(teamId, channelId, channelName);
-        }
-      }
-    } catch {
-      /* missing/broken cache should not break ingestion */
-    }
-  }
-
-  private async loadUserNameCache(): Promise<void> {
-    const filePath = this.userCachePath;
-    if (!filePath) return;
-    const teamDir = this.toTeamCacheDir(filePath);
-    try {
-      const files = await readdir(teamDir);
-      for (const name of files) {
-        if (!name.endsWith(".json")) continue;
-        const teamId = basename(name, ".json");
-        if (!teamId) continue;
-        const raw = await readFile(join(teamDir, name), "utf8");
-        const parsed = JSON.parse(raw) as { users?: Record<string, string> };
-        const users = parsed.users ?? {};
-        for (const [userId, userName] of Object.entries(users)) {
-          if (typeof userName !== "string" || !userName.trim()) continue;
-          this.cacheUserNameByTeam(teamId, userId, userName);
-        }
-      }
-    } catch {
-      /* missing/broken cache should not break ingestion */
-    }
-  }
-
-  private async persistChannelNameCache(teamId: string): Promise<void> {
-    const filePath = this.channelCachePath;
-    if (!filePath) return;
-    const channels = this.channelNamesByTeam.get(teamId);
-    if (!channels) return;
-    const teamDir = this.toTeamCacheDir(filePath);
-    const target = join(teamDir, `${teamId}.json`);
-    const payload = {
-      schema: "adjutant.slack.channel-cache.v1",
-      updated_at: new Date().toISOString(),
-      team_id: teamId,
-      channels: Object.fromEntries(channels.entries()),
-    };
-    try {
-      await mkdir(teamDir, { recursive: true });
-      await writeFile(target, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
-    } catch {
-      /* ignore write failures */
-    }
-  }
-
-  private async persistUserNameCache(teamId: string): Promise<void> {
-    const filePath = this.userCachePath;
-    if (!filePath) return;
-    const users = this.userNamesByTeam.get(teamId);
-    if (!users) return;
-    const teamDir = this.toTeamCacheDir(filePath);
-    const target = join(teamDir, `${teamId}.json`);
-    const payload = {
-      schema: "adjutant.slack.user-cache.v1",
-      updated_at: new Date().toISOString(),
-      team_id: teamId,
-      users: Object.fromEntries(users.entries()),
-    };
-    try {
-      await mkdir(teamDir, { recursive: true });
-      await writeFile(target, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
-    } catch {
-      /* ignore write failures */
-    }
-  }
-
-  private toTeamCacheDir(filePath: string): string {
-    const ext = extname(filePath);
-    if (!ext) return filePath;
-    return join(dirname(filePath), basename(filePath, ext));
-  }
-
-  private pickUserName(user: Record<string, unknown>): string | undefined {
-    const profile = this.asRecord(user.profile);
-    const accountName = this.asString(user.name);
-    const displayName = this.asString(profile?.display_name);
-    const realName = this.asString(user.real_name) ?? this.asString(profile?.real_name);
-    return accountName || displayName || realName;
+    return this.nameCacheRepository.resolveUserName(userId, teamIdHint, channelIdHint);
   }
 
   private cacheKey(channel: string, ts: string): string {
