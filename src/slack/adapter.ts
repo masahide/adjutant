@@ -2,6 +2,7 @@ import type { EmitFn, IngestionAdapter } from "../core/adapter.js";
 import type { NormalizedEvent } from "../core/events.js";
 import {
   normalizeSlackMessage,
+  normalizeSlackNotification,
   normalizeSlackReaction,
   type NormalizeOptions,
 } from "./normalize.js";
@@ -56,6 +57,12 @@ type SlackAdapterDeps = {
   client: SlackClient;
   now?: () => Date;
   timezone?: string;
+  onDebugEvent?: (event: {
+    source: "slack-adapter";
+    kind: "raw_fetch" | "raw_ws" | "normalized";
+    at: string;
+    payload: unknown;
+  }) => void;
 };
 
 const SLACK_API_RE = /https:\/\/[^/]+\.slack\.com\/api\/(chat\.postMessage|reactions\.[a-z]+)/i;
@@ -71,6 +78,8 @@ const DOM_PROBE_DEBUG_ENABLED = DEBUG_TARGETS.has("slack:domprobe");
 const DOM_VERBOSE_ENABLED = DEBUG_TARGETS.has("slack:domprobe");
 const DEBUG_NETWORK_ENABLED =
   DEBUG_TARGETS.has("slack:network") || DEBUG_TARGETS.has("slack:network:verbose");
+const DEBUG_NOTIFICATION_ENABLED =
+  DEBUG_TARGETS.has("slack:notification") || DEBUG_TARGETS.has("slack:network:verbose");
 const DEBUG_FETCH_ENABLED =
   DEBUG_TARGETS.has("slack:fetch") || DEBUG_TARGETS.has("slack:network:verbose");
 const DEBUG_RUNTIME_ENABLED =
@@ -122,13 +131,7 @@ const DOM_CHANNEL_NAME_SELECTORS = [
 const DOM_RETRY_DELAYS_MS = [0, 100, 200, 300] as const;
 const DOM_EXCERPT_LENGTH = 80;
 const DOM_CACHE_MAX_ENTRIES = 200;
-const JSONISH_PAYLOAD_KEYS = new Set([
-  "blocks",
-  "item",
-  "attachments",
-  "metadata",
-  "message",
-]);
+const JSONISH_PAYLOAD_KEYS = new Set(["blocks", "item", "attachments", "metadata", "message"]);
 
 const DOM_CAPTURE_SCRIPT = `(function adjutantCapture(tsList, selectors, debugMode) {
   try {
@@ -495,6 +498,16 @@ export class SlackAdapter implements IngestionAdapter {
   private readonly debugNetworkEvents = DEBUG_NETWORK_ENABLED;
   private readonly debugFetchEvents = DEBUG_FETCH_ENABLED;
   private readonly debugRuntimeEvents = DEBUG_RUNTIME_ENABLED;
+  private readonly onDebugEvent:
+    | ((
+        event: {
+          source: "slack-adapter";
+          kind: "raw_fetch" | "raw_ws" | "normalized";
+          at: string;
+          payload: unknown;
+        }
+      ) => void)
+    | undefined;
   private readonly contextsByFrame: Map<string, FrameContextInfo> = new Map();
   private readonly frameIdByContext: Map<number, string | null> = new Map();
   private defaultContextId: number | null = null;
@@ -502,6 +515,7 @@ export class SlackAdapter implements IngestionAdapter {
   constructor(private readonly deps: SlackAdapterDeps) {
     this.now = deps.now ?? (() => new Date());
     this.timezone = deps.timezone ?? "Asia/Tokyo";
+    this.onDebugEvent = deps.onDebugEvent;
   }
 
   async start(emit: EmitFn): Promise<void> {
@@ -511,17 +525,17 @@ export class SlackAdapter implements IngestionAdapter {
     await Network.enable({});
     await Network.setCacheDisabled({ cacheDisabled: true });
     this.debugVerbose("Network domain enabled");
-    Network.on("webSocketFrameReceived", (payload) => {
+    Network.on("webSocketFrameReceived", async (payload) => {
       if (this.debugNetworkEvents) {
         this.debug("webSocketFrameReceived", this.safePreview(payload));
       }
-      this.handleWebSocketFrame(payload as WebSocketFrameEvent);
+      await this.handleWebSocketFrame(payload as WebSocketFrameEvent, "received");
     });
-    Network.on("webSocketFrameSent", (payload) => {
+    Network.on("webSocketFrameSent", async (payload) => {
       if (this.debugNetworkEvents) {
         this.debug("webSocketFrameSent", this.safePreview(payload));
       }
-      this.handleWebSocketFrame(payload as WebSocketFrameEvent);
+      await this.handleWebSocketFrame(payload as WebSocketFrameEvent, "sent");
     });
     Network.on("responseReceived", (payload) => {
       if (this.debugNetworkEvents) {
@@ -587,6 +601,12 @@ export class SlackAdapter implements IngestionAdapter {
 
     const body = event.request.postData ?? "";
     const contentType = this.normalizeHeader(event.request.headers, "content-type");
+    this.pushDebugEvent("raw_fetch", {
+      method: event.request.method,
+      url: event.request.url,
+      contentType,
+      body: this.truncateForDebug(body, 4000),
+    });
     const normalizeOpts: NormalizeOptions = { now: this.now(), timezone: this.timezone };
     const url = new URL(event.request.url);
     const parsedPayload = this.parseBody(body, contentType);
@@ -759,11 +779,17 @@ export class SlackAdapter implements IngestionAdapter {
     return "";
   }
 
-  private handleWebSocketFrame(event: WebSocketFrameEvent): void {
+  private async handleWebSocketFrame(
+    event: WebSocketFrameEvent,
+    direction: "received" | "sent"
+  ): Promise<void> {
     const payload = event.response.payloadData;
     if (!payload || payload.length > 512 * 1024) return;
     try {
       const data = JSON.parse(payload);
+      if (direction === "received") {
+        this.pushDebugEvent("raw_ws", data);
+      }
       if (data?.type === "message" && data.channel && data.ts) {
         const text = fromBlocks(data.blocks);
         this.cacheMessage(data.channel, data.ts, { text, user: data.user });
@@ -775,9 +801,96 @@ export class SlackAdapter implements IngestionAdapter {
         const text = fromBlocks(data.blocks);
         this.cacheMessage(data.channel, data.root_ts, { text, user: data.user });
       }
+      if (direction === "received") {
+        for (const candidate of this.collectNotificationCandidates(data)) {
+          const notificationEvent = this.normalizeNotificationFromSocket(candidate);
+          if (notificationEvent && this.emit) {
+            await this.deliver(notificationEvent, this.emit);
+          }
+        }
+      }
     } catch {
       /* ignore JSON parse errors */
     }
+  }
+
+  private normalizeNotificationFromSocket(data: Record<string, unknown>): NormalizedEvent | null {
+    const eventType = this.asString(data.type) ?? this.asString(data.subtype) ?? "";
+    const looksLikeNotification =
+      eventType.toLowerCase().includes("notification") ||
+      this.asString(data.title) !== undefined ||
+      this.asString(data.subtitle) !== undefined ||
+      this.asString(data.body) !== undefined ||
+      this.asString(data.preview) !== undefined;
+    if (!looksLikeNotification) return null;
+
+    const channelId =
+      this.asString(data.channel) ?? this.asString(data.channel_id) ?? this.asString(data.room);
+    const channelName =
+      this.asString(data.channel_name) ??
+      (channelId ? this.resolveChannelName(channelId) : undefined) ??
+      channelId;
+    const userId = this.asString(data.user) ?? this.asString(data.user_id);
+    const userName = this.asString(data.username) ?? this.asString(data.user_name) ?? userId;
+    const ts = this.asString(data.event_ts) ?? this.asString(data.ts);
+    const title =
+      this.asString(data.title) ?? this.asString(data.subtitle) ?? this.asString(data.summary);
+    const text =
+      this.asString(data.text) ??
+      this.asString(data.body) ??
+      this.asString(data.message) ??
+      this.asString(data.preview);
+
+    const normalized = normalizeSlackNotification(
+      {
+        channel: { id: channelId, name: channelName },
+        user: { id: userId, name: userName },
+        type: eventType || "notification",
+        ts,
+        event_ts: ts,
+        title,
+        message_text: text,
+      },
+      { now: this.now(), timezone: this.timezone }
+    );
+    if (DEBUG_NOTIFICATION_ENABLED) {
+      this.debug("notification captured", {
+        type: normalized.meta?.notification_type,
+        channel: normalized.meta?.channel,
+        title,
+      });
+    }
+    return normalized;
+  }
+
+  private collectNotificationCandidates(value: unknown): Record<string, unknown>[] {
+    const queue: unknown[] = [value];
+    const result: Record<string, unknown>[] = [];
+    const visited = new Set<unknown>();
+
+    while (queue.length > 0) {
+      const current = queue.shift();
+      if (!current || visited.has(current)) continue;
+      visited.add(current);
+
+      if (Array.isArray(current)) {
+        for (const item of current) queue.push(item);
+        continue;
+      }
+      if (typeof current !== "object") continue;
+
+      const record = current as Record<string, unknown>;
+      result.push(record);
+
+      for (const key of ["event", "payload", "data", "message", "item", "notification"]) {
+        if (key in record) queue.push(record[key]);
+      }
+      if (Array.isArray(record.notifications)) {
+        queue.push(record.notifications);
+      }
+    }
+
+    return result;
   }
 
   private buildReactionDomCandidate(value: Record<string, unknown>): ReactionDomCandidate | null {
@@ -1158,8 +1271,27 @@ export class SlackAdapter implements IngestionAdapter {
     if (!event || !event.uid) return;
     if (this.seenUids.has(event.uid)) return;
     this.seenUids.add(event.uid);
+    this.pushDebugEvent("normalized", event);
     this.debugVerbose("deliver", event);
     await emit(event);
+  }
+
+  private pushDebugEvent(
+    kind: "raw_fetch" | "raw_ws" | "normalized",
+    payload: unknown
+  ): void {
+    if (!this.onDebugEvent) return;
+    this.onDebugEvent({
+      source: "slack-adapter",
+      kind,
+      at: new Date().toISOString(),
+      payload: this.safePreview(payload),
+    });
+  }
+
+  private truncateForDebug(value: string, max: number): string {
+    if (!value || value.length <= max) return value;
+    return `${value.slice(0, max)}...`;
   }
 
   private asString(value: unknown): string | undefined {

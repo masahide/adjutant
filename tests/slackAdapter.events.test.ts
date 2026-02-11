@@ -61,4 +61,99 @@ describe("SlackAdapter event handling", () => {
     assert.equal(reaction.actor, "U222", "WebSocketキャッシュからactorを補完する");
     assert.equal(reaction.uid, "slack:C999@1711115555.000600:thumbsup:added:U222");
   });
+
+  it("WebSocket通知イベントをnotificationとして記録する", async () => {
+    const mock = createMockSlackClient();
+    const emitted: NormalizedEvent[] = [];
+    const adapter = new SlackAdapter({
+      client: mock.client,
+      now: () => new Date("2024-03-22T12:45:00Z"),
+    });
+
+    await adapter.start(async (ev) => {
+      emitted.push(ev);
+    });
+
+    await mock.triggerNetwork("webSocketFrameReceived", {
+      response: {
+        payloadData: JSON.stringify({
+          type: "desktop_notification",
+          channel: "C999",
+          channel_name: "general",
+          user: "U333",
+          ts: "1711117777.000800",
+          title: "mention",
+          text: "hello from mention",
+        }),
+      },
+    });
+
+    assert.equal(emitted.length, 1);
+    const notification = emitted[0];
+    assert.equal(notification.kind, "notification");
+    assert.equal(notification.meta?.notification_type, "desktop_notification");
+    assert.equal(notification.meta?.channel, "#general");
+    assert.equal(notification.actor, "U333");
+    const detail = notification.detail;
+    assert.ok(detail && "slack" in detail);
+    const slackDetail = detail.slack as {
+      channel_id?: string;
+      notification_type?: string;
+      title?: string;
+      message_text?: string;
+    };
+    assert.equal(slackDetail.channel_id, "C999");
+    assert.equal(slackDetail.notification_type, "desktop_notification");
+    assert.equal(slackDetail.title, "mention");
+    assert.equal(slackDetail.message_text, "hello from mention");
+  });
+
+  it("ネストされた通知payloadをnotificationとして記録する", async () => {
+    const mock = createMockSlackClient();
+    const emitted: NormalizedEvent[] = [];
+    const adapter = new SlackAdapter({
+      client: mock.client,
+      now: () => new Date("2024-03-22T12:45:00Z"),
+    });
+
+    await adapter.start(async (ev) => {
+      emitted.push(ev);
+    });
+
+    await mock.triggerNetwork("webSocketFrameReceived", {
+      response: {
+        payloadData: JSON.stringify({
+          type: "event_wrapper",
+          payload: {
+            event: {
+              subtype: "mention_notification",
+              channel: "C888",
+              channel_name: "random",
+              user_id: "U444",
+              event_ts: "1711118888.000900",
+              body: "ping from mention",
+            },
+          },
+        }),
+      },
+    });
+
+    assert.equal(emitted.length, 1);
+    const notification = emitted[0];
+    assert.equal(notification.kind, "notification");
+    assert.equal(notification.meta?.notification_type, "mention_notification");
+    assert.equal(notification.meta?.channel, "#random");
+    const detail = notification.detail;
+    assert.ok(detail && "slack" in detail);
+    const slackDetail = detail.slack as {
+      channel_id?: string;
+      notification_type?: string;
+      message_text?: string;
+      user?: string;
+    };
+    assert.equal(slackDetail.channel_id, "C888");
+    assert.equal(slackDetail.notification_type, "mention_notification");
+    assert.equal(slackDetail.message_text, "ping from mention");
+    assert.equal(slackDetail.user, "U444");
+  });
 });

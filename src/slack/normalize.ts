@@ -22,6 +22,16 @@ export type SlackReactionPayload = {
   message_text?: string | null;
 };
 
+export type SlackNotificationPayload = {
+  channel?: { id?: string; name?: string };
+  user?: { id?: string; name?: string };
+  type: string;
+  ts?: string;
+  event_ts?: string;
+  title?: string;
+  message_text?: string;
+};
+
 export type NormalizeOptions = {
   now?: Date;
   timezone?: string;
@@ -101,6 +111,49 @@ export function normalizeSlackReaction(
         emoji: reaction,
         user: actor,
         message_text: message_text ?? undefined,
+      },
+    },
+  };
+}
+
+export function normalizeSlackNotification(
+  payload: SlackNotificationPayload,
+  options: NormalizeOptions = {}
+): NormalizedEvent {
+  const timezone = options.timezone ?? DEFAULT_TIMEZONE;
+  const channelId = payload.channel?.id?.trim() || "unknown";
+  const channelName = payload.channel?.name?.trim() || channelId;
+  const actorId = payload.user?.id?.trim() || "unknown";
+  const actorName = payload.user?.name?.trim() || actorId;
+  const eventTs = payload.event_ts ?? payload.ts;
+  const fallbackNow = options.now ?? new Date();
+  const ts = eventTs ? slackTsToIso(eventTs, timezone, options.now) : formatInTimezone(fallbackNow, timezone);
+  const messageText = payload.message_text?.trim();
+  const title = payload.title?.trim();
+  const subject = title ?? messageText ?? `notification:${payload.type}`;
+
+  return {
+    schema: "adjutant.event.v1.1",
+    source: "slack",
+    kind: "notification",
+    uid: `slack:${channelId}@${eventTs ?? fallbackNow.getTime()}:${payload.type}:${actorId}`,
+    actor: actorName,
+    subject,
+    ts,
+    logged_at: formatInTimezone(fallbackNow, timezone),
+    meta: {
+      channel: `#${channelName}`,
+      notification_type: payload.type,
+    },
+    detail: {
+      slack: {
+        channel_id: channelId === "unknown" ? undefined : channelId,
+        channel_name: channelName === "unknown" ? undefined : channelName,
+        notification_type: payload.type,
+        title: title || undefined,
+        message_text: messageText || undefined,
+        user: actorName,
+        event_ts: eventTs,
       },
     },
   };

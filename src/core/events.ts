@@ -29,7 +29,17 @@ export type SlackReactionDetail = {
   message_text?: string;
 };
 
-export type SlackDetail = SlackPostDetail | SlackReactionDetail;
+export type SlackNotificationDetail = {
+  channel_id?: string;
+  channel_name?: string;
+  notification_type: string;
+  title?: string;
+  message_text?: string;
+  user?: string;
+  event_ts?: string;
+};
+
+export type SlackDetail = SlackPostDetail | SlackReactionDetail | SlackNotificationDetail;
 
 export type EventDetail =
   | { slack: SlackDetail }
