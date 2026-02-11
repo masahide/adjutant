@@ -543,12 +543,12 @@ export interface IngestionAdapter {
 
 Slack アダプタは環境変数で挙動を切り替えられる。
 
-| 変数                                                        | 例                                                | 説明                                                                                                                                                        |
-| ----------------------------------------------------------- | ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ADJUTANT_DEBUG`                                            | `slack:verbose,slack:domprobe`                    | ドメイン別デバッグログ。`slack:verbose` で Slack アダプタの詳細、`slack:domprobe` で DOM 評価ログ、`slack:network` 等でネットワークイベントを個別に有効化。 |
-| `ADJUTANT_DISABLE_DOM_CAPTURE`                              | `1`                                               | DOM 取得を完全に無効化（フォールバックなし、`message_text` は空のまま）。トラブルシュート時のみ使用。                                                       |
-| `ADJUTANT_TZ`                                               | `Asia/Tokyo`                                      | タイムゾーン上書き。未指定時は `Asia/Tokyo` を使用。                                                                                                        |
-| `ADJUTANT_SLACK_WORKSPACE` / `ADJUTANT_SLACK_WORKSPACE_URL` | `example-team` / `https://example-team.slack.com` | ビューアで Slack パーマリンクを生成する際のベース URL。チームスラッグまたはホスト名を指定する。設定が無い場合はリンクが非表示。                             |
+| 変数                                                        | 例                                                | 説明                                                                                                                                                                                                   |
+| ----------------------------------------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ADJUTANT_DEBUG`                                            | `slack:verbose,slack:domprobe`                    | ドメイン別デバッグログ。`slack:verbose` で Slack アダプタの詳細、`slack:domprobe` で DOM 評価ログ、`slack:network` / `slack:fetch` / `slack:fetch:hook` / `slack:runtime` で各イベントを個別に有効化。 |
+| `ADJUTANT_DISABLE_DOM_CAPTURE`                              | `1`                                               | DOM 取得を完全に無効化（フォールバックなし、`message_text` は空のまま）。トラブルシュート時のみ使用。                                                                                                  |
+| `ADJUTANT_TZ`                                               | `Asia/Tokyo`                                      | タイムゾーン上書き。未指定時は `Asia/Tokyo` を使用。                                                                                                                                                   |
+| `ADJUTANT_SLACK_WORKSPACE` / `ADJUTANT_SLACK_WORKSPACE_URL` | `example-team` / `https://example-team.slack.com` | ビューアで Slack パーマリンクを生成する際のベース URL。チームスラッグまたはホスト名を指定する。設定が無い場合はリンクが非表示。                                                                        |
 
 **起動例**
 
@@ -564,6 +564,11 @@ Slack アダプタは環境変数で挙動を切り替えられる。
   ```bash
   ADJUTANT_DISABLE_DOM_CAPTURE=1 ADJUTANT_DEBUG=slack:verbose pnpm start | tee -a debug_fallback.log
   ```
+- Slack Desktop の fetch/XHR 送信をフックして確認
+  ```bash
+  ADJUTANT_DEBUG_UI=1 ADJUTANT_DEBUG=slack:fetch:hook pnpm start
+  ```
+  `raw_fetch` には `stage=requestWillBeSent`（送信）と `stage=responseReceived`（応答）が流れる。
 
 ### 手動検証（リアクション DOM キャプチャ）
 

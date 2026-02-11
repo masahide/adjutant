@@ -64,12 +64,12 @@ DOM 取得は既定で有効です。リアクションが本文付きで記録�
 
 Slack 収集の挙動は環境変数で切り替えられます。
 
-| 変数                           | 例                             | 説明                                                                                                                                                                       |
-| ------------------------------ | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ADJUTANT_DEBUG`               | `slack:verbose,slack:domprobe` | Slack アダプタの詳細ログ。`slack:verbose` で正規化の詳細、`slack:domprobe` で DOM 評価ログ、`slack:network` / `slack:fetch` / `slack:runtime` で各イベントを個別に有効化。 |
-| `ADJUTANT_DISABLE_DOM_CAPTURE` | `1`                            | DOM 取得を完全に停止（本文は空のまま記録される）。フォールバックは存在しないため調査時のみに使用。                                                                         |
-| `ADJUTANT_TZ`                  | `Asia/Tokyo`                   | タイムゾーン上書き。未指定時は `Asia/Tokyo` を使用。                                                                                                                       |
-| `ADJUTANT_TZ`                  | `Asia/Tokyo`                   | タイムゾーン上書き。未指定時は `Asia/Tokyo`                                                                                                                                |
+| 変数                           | 例                             | 説明                                                                                                                                                                                            |
+| ------------------------------ | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ADJUTANT_DEBUG`               | `slack:verbose,slack:domprobe` | Slack アダプタの詳細ログ。`slack:verbose` で正規化の詳細、`slack:domprobe` で DOM 評価ログ、`slack:network` / `slack:fetch` / `slack:fetch:hook` / `slack:runtime` で各イベントを個別に有効化。 |
+| `ADJUTANT_DISABLE_DOM_CAPTURE` | `1`                            | DOM 取得を完全に停止（本文は空のまま記録される）。フォールバックは存在しないため調査時のみに使用。                                                                                              |
+| `ADJUTANT_TZ`                  | `Asia/Tokyo`                   | タイムゾーン上書き。未指定時は `Asia/Tokyo` を使用。                                                                                                                                            |
+| `ADJUTANT_TZ`                  | `Asia/Tokyo`                   | タイムゾーン上書き。未指定時は `Asia/Tokyo`                                                                                                                                                     |
 
 **起動例**
 
@@ -85,6 +85,11 @@ Slack 収集の挙動は環境変数で切り替えられます。
   ```bash
   ADJUTANT_DISABLE_DOM_CAPTURE=1 ADJUTANT_DEBUG=slack:verbose pnpm start | tee -a debug_fallback.log
   ```
+- Slack Desktop の fetch/XHR 送信をフックして確認
+  ```bash
+  ADJUTANT_DEBUG_UI=1 ADJUTANT_DEBUG=slack:fetch:hook pnpm start
+  ```
+  `raw_fetch` に `stage=requestWillBeSent`（送信）と `stage=responseReceived`（応答）が表示されます。
 
 ### 手動検証（リアクション DOM キャプチャ）
 
@@ -97,11 +102,11 @@ Slack 収集の挙動は環境変数で切り替えられます。
 
 Slack 収集の挙動は環境変数で切り替えられます。
 
-| 変数                           | 例                             | 説明                                                                                                                                                                       |
-| ------------------------------ | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ADJUTANT_DEBUG`               | `slack:verbose,slack:domprobe` | Slack アダプタの詳細ログ。`slack:verbose` で正規化の詳細、`slack:domprobe` で DOM 評価ログ、`slack:network` / `slack:fetch` / `slack:runtime` で各イベントを個別に有効化。 |
-| `ADJUTANT_DISABLE_DOM_CAPTURE` | `1`                            | DOM 取得を完全に停止（本文は空のまま記録される）。フォールバックは存在しないため調査時のみに使用。                                                                         |
-| `ADJUTANT_TZ`                  | `Asia/Tokyo`                   | タイムゾーン上書き。未指定時は `Asia/Tokyo`。                                                                                                                              |
+| 変数                           | 例                             | 説明                                                                                                                                                                                            |
+| ------------------------------ | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ADJUTANT_DEBUG`               | `slack:verbose,slack:domprobe` | Slack アダプタの詳細ログ。`slack:verbose` で正規化の詳細、`slack:domprobe` で DOM 評価ログ、`slack:network` / `slack:fetch` / `slack:fetch:hook` / `slack:runtime` で各イベントを個別に有効化。 |
+| `ADJUTANT_DISABLE_DOM_CAPTURE` | `1`                            | DOM 取得を完全に停止（本文は空のまま記録される）。フォールバックは存在しないため調査時のみに使用。                                                                                              |
+| `ADJUTANT_TZ`                  | `Asia/Tokyo`                   | タイムゾーン上書き。未指定時は `Asia/Tokyo`。                                                                                                                                                   |
 
 **起動例**
 
@@ -117,6 +122,11 @@ Slack 収集の挙動は環境変数で切り替えられます。
   ```bash
   ADJUTANT_DISABLE_DOM_CAPTURE=1 ADJUTANT_DEBUG=slack:verbose pnpm start | tee -a debug_fallback.log
   ```
+- Slack Desktop の fetch/XHR 送信をフックして確認
+  ```bash
+  ADJUTANT_DEBUG_UI=1 ADJUTANT_DEBUG=slack:fetch:hook pnpm start
+  ```
+  `raw_fetch` に `stage=requestWillBeSent`（送信）と `stage=responseReceived`（応答）が表示されます。
 
 ログには API トークン等が含まれることがあります。共有前には必ず `debug.log` などを削除するか、秘匿情報をマスクしてください。
 

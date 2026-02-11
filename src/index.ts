@@ -5,6 +5,7 @@ import { SlackAdapter } from "./slack/adapter.js";
 import { SlackIngestor } from "./pipeline/slackIngestor.js";
 import { DebugUiServer } from "./debug/debugUi.js";
 import type { SlackCdpClient } from "./runtime/slackConnection.js";
+import path from "node:path";
 
 type ActiveSession = {
   client: SlackCdpClient;
@@ -139,6 +140,8 @@ async function main() {
       client,
       now,
       timezone,
+      channelCachePath: path.join(dataDir, "_cache", "slack", "channel-names-by-team.json"),
+      userCachePath: path.join(dataDir, "_cache", "slack", "user-names-by-team.json"),
       onDebugEvent: debugUi ? (event) => debugUi.record(event) : undefined,
     });
     const ingestor = new SlackIngestor({ adapter, writer });

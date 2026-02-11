@@ -116,6 +116,7 @@
 - キャッシュ更新ログ
   - `[Adjutant] Slack user cache updated team=T0A... changed=12 total_users=233`
 - チャンネルキャッシュファイル
+
 ```json
 {
   "schema": "adjutant.slack.channel-cache.v1",
@@ -124,7 +125,9 @@
   "channels": { "C04GE5BMZCY": "general" }
 }
 ```
+
 - ユーザーキャッシュファイル
+
 ```json
 {
   "schema": "adjutant.slack.user-cache.v1",

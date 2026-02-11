@@ -127,7 +127,9 @@ export function normalizeSlackNotification(
   const actorName = payload.user?.name?.trim() || actorId;
   const eventTs = payload.event_ts ?? payload.ts;
   const fallbackNow = options.now ?? new Date();
-  const ts = eventTs ? slackTsToIso(eventTs, timezone, options.now) : formatInTimezone(fallbackNow, timezone);
+  const ts = eventTs
+    ? slackTsToIso(eventTs, timezone, options.now)
+    : formatInTimezone(fallbackNow, timezone);
   const messageText = payload.message_text?.trim();
   const title = payload.title?.trim();
   const subject = title ?? messageText ?? `notification:${payload.type}`;

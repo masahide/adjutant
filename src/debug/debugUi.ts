@@ -144,6 +144,7 @@ export class DebugUiServer {
     .kind-raw_ws { color:var(--raw); }
     .kind-raw_fetch { color:var(--warn); }
     .kind-normalized { color:var(--ok); }
+    mark { background: #f6d365; color: #111; padding: 0 1px; border-radius: 2px; }
     pre { margin:0; padding:10px; white-space:pre-wrap; word-break:break-word; max-height:none; overflow:visible; }
   </style>
 </head>
@@ -163,11 +164,14 @@ export class DebugUiServer {
           <option value="lifecycle">lifecycle</option>
         </select>
       </label>
+      <label>stage: <input id="stageFilter" placeholder="requestWillBeSent / responseReceived" /></label>
       <label>search: <input id="searchInput" placeholder="text filter" /></label>
       <label>exclude: <input id="excludeInput" value="type:pong, type:reconnect_url" placeholder="type:pong, type:reconnect_url, subtype:ping" /></label>
       <label><input id="excludeEnabled" type="checkbox" checked /> exclude on</label>
       <label>max: <input id="limitInput" type="number" min="10" max="5000" value="200" /></label>
       <button id="pauseBtn" type="button">pause</button>
+      <button id="expandAllBtn" type="button">expand all</button>
+      <button id="collapseAllBtn" type="button">collapse all</button>
       <button id="resetBtn" type="button">reset filters</button>
       <button id="clearBtn" type="button">clear</button>
     </div>
@@ -178,21 +182,64 @@ export class DebugUiServer {
     const statusEl = document.getElementById("status");
     const listEl = document.getElementById("eventList");
     const kindFilterEl = document.getElementById("kindFilter");
+    const stageFilterEl = document.getElementById("stageFilter");
     const searchInputEl = document.getElementById("searchInput");
     const excludeInputEl = document.getElementById("excludeInput");
     const excludeEnabledEl = document.getElementById("excludeEnabled");
     const limitInputEl = document.getElementById("limitInput");
     const pauseBtnEl = document.getElementById("pauseBtn");
+    const expandAllBtnEl = document.getElementById("expandAllBtn");
+    const collapseAllBtnEl = document.getElementById("collapseAllBtn");
     const resetBtnEl = document.getElementById("resetBtn");
     const clearBtnEl = document.getElementById("clearBtn");
     const filterStateEl = document.getElementById("filterState");
     const events = [];
+    const collapsedByRaw = new Set();
+    let defaultCollapsed = false;
     let paused = false;
     let connected = false;
     let bufferedWhilePaused = 0;
 
     const escapeHtml = (s) => s.replace(/[&<>]/g, (ch) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;" }[ch]));
     const normalize = (s) => String(s ?? "").trim().toLowerCase();
+    const parseSearchTerms = (value) =>
+      String(value ?? "")
+        .trim()
+        .split(/\\s+/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+    const applyHighlights = (rawText, terms) => {
+      if (!terms || terms.length === 0) return escapeHtml(rawText);
+      const source = String(rawText ?? "");
+      const lower = source.toLowerCase();
+      const sorted = [...new Set(terms.map((t) => String(t).trim().toLowerCase()).filter(Boolean))]
+        .sort((a, b) => b.length - a.length);
+      if (sorted.length === 0) return escapeHtml(source);
+      let out = "";
+      let cursor = 0;
+      while (cursor < source.length) {
+        let bestIndex = -1;
+        let bestTerm = "";
+        for (const term of sorted) {
+          const idx = lower.indexOf(term, cursor);
+          if (idx < 0) continue;
+          if (bestIndex < 0 || idx < bestIndex || (idx === bestIndex && term.length > bestTerm.length)) {
+            bestIndex = idx;
+            bestTerm = term;
+          }
+        }
+        if (bestIndex < 0 || !bestTerm) {
+          out += escapeHtml(source.slice(cursor));
+          break;
+        }
+        if (bestIndex > cursor) {
+          out += escapeHtml(source.slice(cursor, bestIndex));
+        }
+        out += "<mark>" + escapeHtml(source.slice(bestIndex, bestIndex + bestTerm.length)) + "</mark>";
+        cursor = bestIndex + bestTerm.length;
+      }
+      return out;
+    };
 
     const getByPath = (obj, path) => {
       if (!obj || typeof obj !== "object") return undefined;
@@ -262,14 +309,19 @@ export class DebugUiServer {
 
     function render() {
       const kindFilter = kindFilterEl.value;
-      const search = searchInputEl.value.trim().toLowerCase();
+      const stageFilter = stageFilterEl.value.trim().toLowerCase();
+      const searchTerms = parseSearchTerms(searchInputEl.value);
+      const search = searchTerms.join(" ").toLowerCase();
       const excludeRules = excludeEnabledEl.checked ? parseExcludeRules(excludeInputEl.value) : [];
       const max = Math.max(10, Math.min(5000, Number(limitInputEl.value || 200)));
       const filtered = events.filter((ev) => {
         if (kindFilter && ev.kind !== kindFilter) return false;
+        const stage = normalize(ev?.payload?.stage);
+        if (stageFilter && stage !== stageFilter) return false;
         if (excludeRules.some((rule) => matchesExcludeRule(ev, rule))) return false;
-        if (!search) return true;
-        return JSON.stringify(ev).toLowerCase().includes(search);
+        if (searchTerms.length === 0) return true;
+        const hay = JSON.stringify(ev).toLowerCase();
+        return searchTerms.every((term) => hay.includes(term.toLowerCase()));
       });
       const shown = filtered.slice(-max).reverse();
       filterStateEl.textContent =
@@ -277,19 +329,24 @@ export class DebugUiServer {
         " filtered=" + filtered.length +
         " shown=" + shown.length +
         " | kind=" + (kindFilter || "all") +
+        " | stage=" + (stageFilter || "all") +
         " | search=" + (search || "-") +
         " | exclude=" + (excludeRules.length > 0 ? excludeRules.map((r) => (r.key ? r.key + ":" : "") + r.value).join(", ") : "off");
       listEl.innerHTML = shown.map((ev, idx) => {
-        const body = escapeHtml(JSON.stringify(ev.payload, null, 2));
+        const body = applyHighlights(JSON.stringify(ev.payload, null, 2), searchTerms);
         const raw = encodeURIComponent(JSON.stringify(ev, null, 2));
+        const stage = normalize(ev?.payload?.stage);
+        const isCollapsed = defaultCollapsed || collapsedByRaw.has(raw);
         return '<article class="item">' +
           '<div class="meta">' +
           '<span class="tag kind-' + ev.kind + '">' + escapeHtml(ev.kind) + '</span>' +
+          '<span class="tag">' + escapeHtml(stage || "-") + '</span>' +
           '<span>' + escapeHtml(ev.source) + '</span>' +
           '<span class="muted">' + escapeHtml(ev.at) + '</span>' +
+          '<button class="toggle-btn" data-copy="' + raw + '" type="button">' + (isCollapsed ? "expand" : "collapse") + '</button>' +
           '<button class="copy-btn" data-copy="' + raw + '" data-idx="' + idx + '" type="button">copy</button>' +
           '</div>' +
-          '<pre>' + body + '</pre>' +
+          (isCollapsed ? "" : '<pre>' + body + '</pre>') +
         '</article>';
       }).join("");
     }
@@ -310,23 +367,49 @@ export class DebugUiServer {
       render();
     });
     kindFilterEl.addEventListener("change", render);
+    stageFilterEl.addEventListener("input", render);
     searchInputEl.addEventListener("input", render);
     excludeInputEl.addEventListener("input", render);
     excludeEnabledEl.addEventListener("change", render);
     limitInputEl.addEventListener("input", render);
     pauseBtnEl.addEventListener("click", () => setPaused(!paused));
+    expandAllBtnEl.addEventListener("click", () => {
+      defaultCollapsed = false;
+      collapsedByRaw.clear();
+      render();
+    });
+    collapseAllBtnEl.addEventListener("click", () => {
+      defaultCollapsed = true;
+      collapsedByRaw.clear();
+      render();
+    });
     resetBtnEl.addEventListener("click", () => {
       kindFilterEl.value = "";
+      stageFilterEl.value = "";
       searchInputEl.value = "";
       excludeInputEl.value = "type:pong, type:reconnect_url";
       excludeEnabledEl.checked = true;
       limitInputEl.value = "200";
+      defaultCollapsed = false;
+      collapsedByRaw.clear();
       render();
     });
     listEl.addEventListener("click", async (e) => {
       const t = e.target;
       if (!t || !(t instanceof HTMLElement)) return;
       const btn = t.closest(".copy-btn");
+      const toggleBtn = t.closest(".toggle-btn");
+      if (toggleBtn) {
+        const encodedToggle = toggleBtn.getAttribute("data-copy");
+        if (!encodedToggle) return;
+        if (collapsedByRaw.has(encodedToggle)) {
+          collapsedByRaw.delete(encodedToggle);
+        } else {
+          collapsedByRaw.add(encodedToggle);
+        }
+        render();
+        return;
+      }
       if (!btn) return;
       const encoded = btn.getAttribute("data-copy");
       if (!encoded) return;
