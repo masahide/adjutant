@@ -24,11 +24,6 @@ const processConfigs: ProcessConfig[] = [
     command: ["pnpm", "start"],
     logFileName: "backend-dev.log",
   },
-  {
-    name: "browser",
-    command: ["pnpm", "--filter", "browser", "dev", "--open"],
-    logFileName: "browser-dev.log",
-  },
 ];
 
 function runProcess(config: ProcessConfig): ManagedProcess {

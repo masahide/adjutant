@@ -6,7 +6,7 @@ Main runtime lives in `src/index.ts`, a TypeScript entry that connects to Chrome
 
 ## Build, Test, and Development Commands
 
-Use `pnpm install` to refresh dependencies when package manifests change. `pnpm start` (alias for `npm run start`) executes `tsx src/index.ts` and expects a Slack desktop session exposing CDP at `CDP_HOST` and `CDP_PORT`. Quality gates bundle into `pnpm check`, which now chains `typecheck`, `lint`, `format`, `test`, `svelte-kit sync`, `tsc --noEmit` for the browser workspace, and `vitest` for the SvelteKit app; run it before every push. Spot fixes are available via `pnpm run lint:fix` and `pnpm run format:write`.
+Use `pnpm install` to refresh dependencies when package manifests change. `pnpm start` (alias for `npm run start`) executes `tsx src/index.ts` and expects a Slack desktop session exposing CDP at `CDP_HOST` and `CDP_PORT`. Quality gates bundle into `pnpm check`, which now runs `pnpm run format`, `pnpm run typecheck`, and `pnpm run test`; run it before every push. Spot fixes are available via `pnpm run lint:fix` and `pnpm run format:write`.
 
 ## Coding Style & Naming Conventions
 

@@ -14,7 +14,6 @@ Slack や Git/GitHub のアクティビティを収集し、日次ログとし�
 ```
 ├── src/              # TypeScript エントリポイント
 ├── docs/             # 仕様・設計ドキュメント
-├── apps/browser/     # SvelteKit 製のログビューア
 ├── hack/             # WSL⇔Windows 連携や CDP 用スクリプト
 ├── package.json      # スクリプト定義・依存関係
 └── AGENTS.md         # コントリビューションガイド
@@ -38,62 +37,20 @@ pnpm install
 ## 開発コマンド
 
 ```bash
-pnpm dev                      # Slack CDP の立ち上げ確認 + backend/browser を並列起動
+pnpm dev                      # Slack CDP の立ち上げ確認 + backend を起動（`logs/backend-dev.log` に記録）
 pnpm start                    # tsx 経由で Slack 収集プロセスを起動
-pnpm run serve                # Slack ヘルパー + backend + browser を一括起動（本番想定、-- --open でブラウザを自動表示）
+pnpm run serve                # Slack ヘルパー + backend を一括起動（`-- --skip-slack-helper`/`-- --config` を利用可）
 pnpm run build:backend        # dist/backend/index.js を生成
-pnpm run build:browser        # ブラウザアプリをビルド (apps/browser/build)
-pnpm run build:runtime        # backend と browser のビルドをまとめて実行
 pnpm run typecheck            # TypeScript 型チェック（ワークスペース全体）
 pnpm run lint                 # ESLint による静的解析
 pnpm run format               # Prettier でフォーマット検証
 pnpm run test                 # Node 側の test runner (node --test)
-pnpm --filter browser dev     # ログビューア (SvelteKit) の開発サーバー
-pnpm --filter browser test    # ビューアの Vitest (サーバーロード + E2E 風テスト)
-pnpm --filter browser exec tsc --noEmit  # ビューア側 TypeScript 型チェック
-pnpm check                    # 上記すべて（typecheck/lint/format/test/svelte-kit sync/svelte-check/ブラウザ型検証/Vitest）
+pnpm check                    # format/typecheck/test をまとめて実行
 ```
 
-`pnpm dev` は Slack の CDP 接続（`CDP_HOST`/`CDP_PORT`）を検査し、必要に応じて `hack/launch_slack_cdp.sh` で再起動した後に `pnpm start` とビューア開発サーバーを並列起動します。CDP ポートのオープン待ちは 1 秒間隔で最大 10 回リトライし、`CDP_WAIT_ATTEMPTS` / `CDP_WAIT_DELAY` で試行回数と待機時間を調整できます。ログは `logs/backend-dev.log` / `logs/browser-dev.log` に追記され、コンソールにもタイムスタンプ付きで出力されます。
+`pnpm dev` は Slack の CDP 接続（`CDP_HOST`/`CDP_PORT`）を検査し、必要に応じて `hack/launch_slack_cdp.sh` で再起動した後に `pnpm start` を実行します。CDP ポートのオープン待ちは 1 秒間隔で最大 10 回リトライし、`CDP_WAIT_ATTEMPTS` / `CDP_WAIT_DELAY` で試行回数と待機時間を調整できます。ログは `logs/backend-dev.log` にタイムスタンプ付きで追記されます。
 
-`pnpm run serve -- --open` を指定すると、フロントエンドが立ち上がったタイミングで既定ブラウザ（macOS: `open`, Windows: `start`, Linux: `xdg-open`）を自動起動します。
-Slack が CDP 無効で動作中の場合は終了して再起動するかどうかを必ず確認されます。対話に応じた上で続行してください。
-
-## ログビューア (SvelteKit)
-
-`apps/browser/` には JSONL と Markdown を読み込むログビューアが含まれています。`pnpm --filter browser dev` で開発サーバーを起動し、`http://localhost:5173` から以下を確認できます。
-
-### ログブラウザのサーバー起動手順
-
-```bash
-pnpm --filter browser dev
-```
-
-上記コマンドで Vite の開発サーバーが立ち上がり、既定では `http://localhost:5173` にアクセスできます。別ホスト/ポートで公開したい場合は `pnpm --filter browser dev -- --host 0.0.0.0 --port 4173` のように Vite の引数を渡してください。
-
-本番相当で確認したい場合はビルド後にプレビューサーバーを利用できます。
-
-```bash
-pnpm --filter browser build
-pnpm --filter browser preview -- --host 0.0.0.0 --port 4173
-```
-
-`ADJUTANT_DATA_DIR` などの環境変数は通常どおり `pnpm --filter browser dev` の前に指定するか、`.env` に記述して読み込ませます。
-
-- ダッシュボード：最新 7 日分のイベント件数と Slack/GitHub/その他ソース別の内訳
-- 日付別ページ：フィルタ付きタイムライン、Markdown サマリ、原文 JSONL へのリンク、リアルタイムストリーム（JSONL 追記は数秒以内に反映）
-- テーマ切替：ライト/ダーク/システムの 3 モードを UI から切り替え。ブラウザの `prefers-color-scheme` と同期し、コントラスト AA 以上を維持
-- メッセージ表示：Slack の Markdown 記法（`*bold*` や `> quote` など）を HTML として再現し、リアクションは元メッセージのプレビュー付きで表示
-- Raw ビュー：日付ごとの JSONL をそのまま表示（デバッグ用）
-
-環境変数 `ADJUTANT_DATA_DIR` で参照するデータディレクトリを指定できます。
-
-テストは以下の通りです。
-
-- `pnpm run test`：ワークスペース共通の Node テスト（`node --test`）
-- `pnpm --filter browser test`：SvelteKit ルート/API の Vitest
-- `pnpm --filter browser exec tsc --noEmit`：ブラウザアプリの型チェック
-- `pnpm check`：上記すべて + `svelte-kit sync` → `svelte-check` を一括で実行
+`pnpm run serve` は `dist/backend/index.js` を起動するため、先に `pnpm run build:backend` を実行してください。`-- --skip-slack-helper` で Slack 側の再起動チェックをスキップし、`-- --config <path>` で別の設定ファイルを指定できます。Slack が CDP 無効で動作中の場合は終了して再起動するかどうかを必ず確認してください。
 
 ## Slack/CDP セットアップ
 
@@ -107,8 +64,8 @@ DOM 取得は既定で有効です。リアクションが本文付きで記録�
 
 Slack 収集の挙動は環境変数で切り替えられます。
 
-| 変数                          | 例                             | 説明                                                                                                                                                                       |
-| ----------------------------- | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 変数                           | 例                             | 説明                                                                                                                                                                       |
+| ------------------------------ | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ADJUTANT_DEBUG`               | `slack:verbose,slack:domprobe` | Slack アダプタの詳細ログ。`slack:verbose` で正規化の詳細、`slack:domprobe` で DOM 評価ログ、`slack:network` / `slack:fetch` / `slack:runtime` で各イベントを個別に有効化。 |
 | `ADJUTANT_DISABLE_DOM_CAPTURE` | `1`                            | DOM 取得を完全に停止（本文は空のまま記録される）。フォールバックは存在しないため調査時のみに使用。                                                                         |
 | `ADJUTANT_TZ`                  | `Asia/Tokyo`                   | タイムゾーン上書き。未指定時は `Asia/Tokyo` を使用。                                                                                                                       |
@@ -140,8 +97,8 @@ Slack 収集の挙動は環境変数で切り替えられます。
 
 Slack 収集の挙動は環境変数で切り替えられます。
 
-| 変数                          | 例                             | 説明                                                                                                                                                                       |
-| ----------------------------- | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 変数                           | 例                             | 説明                                                                                                                                                                       |
+| ------------------------------ | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ADJUTANT_DEBUG`               | `slack:verbose,slack:domprobe` | Slack アダプタの詳細ログ。`slack:verbose` で正規化の詳細、`slack:domprobe` で DOM 評価ログ、`slack:network` / `slack:fetch` / `slack:runtime` で各イベントを個別に有効化。 |
 | `ADJUTANT_DISABLE_DOM_CAPTURE` | `1`                            | DOM 取得を完全に停止（本文は空のまま記録される）。フォールバックは存在しないため調査時のみに使用。                                                                         |
 | `ADJUTANT_TZ`                  | `Asia/Tokyo`                   | タイムゾーン上書き。未指定時は `Asia/Tokyo`。                                                                                                                              |

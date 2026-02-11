@@ -2,13 +2,6 @@
   "printWidth": 100,
   "singleQuote": false,
   "trailingComma": "es5",
-  "plugins": ["prettier-plugin-svelte", "prettier-plugin-tailwindcss"],
-  "overrides": [
-    {
-      "files": "*.svelte",
-      "options": {
-        "parser": "svelte"
-      }
-    }
-  ]
+  "plugins": [],
+  "overrides": []
 }

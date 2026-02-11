@@ -497,29 +497,6 @@ export interface IngestionAdapter {
 - **形式**：見出し＋箇条書き、重複排除、80字程度/行
 - **機密対策**：人名/トークン/クエリは前処理でマスク
 
-### 4.4 サマリ生成フロー & 編集 UI
-
-- **サマリ作成ボタン**
-  - 日付別ビュー（`/day/<date>`）に「サマリを作成」ボタンを配置する。押下すると対象日の JSONL を読み込み、4.1 のパイプラインで初期 Markdown サマリを生成する。
-  - 既に `<dataDir>/YYYY/MM/DD/summaries/daily.md` が存在する場合はその内容をロードし、編集モードで再利用する。存在しない場合は新規ファイルを作成し、保存時に初回生成する。
-- **3 ペイン構成（左→右に縦割り）**
-  1. **LLM チャットウィンドウ**
-     - OpenAI API 経由で複数モデル（例：`gpt-4.1-mini`, `gpt-4o`, `gpt-4.1`）から選択可能なプルダウンを用意する。既定値は `adjutant.config.json` の `llm.defaultModel`。
-     - 編集ウィンドウの全文、または選択範囲をコンテキストとしてチャットに添付し、「箇条書きを増やす」「セクションを要約し直す」などのプロンプトを送信できる。
-     - LLM からの返信は差分プレビュー付きで提示し、「置き換え」「追記」「キャンセル」の操作で編集ウィンドウへ反映する。置き換え時は本文を一括更新し、追記時はカーソル位置へ挿入する。
-  2. **編集ウィンドウ**
-     - Markdown 本文をそのまま表示・編集できる複数行テキストエリア（等幅フォント・自動リサイズ無効）を用意する。
-     - キーボードショートカット（`Cmd/Ctrl+S`）で保存、`Cmd/Ctrl+Enter` で LLM チャットに送信しやすいようにする。入力は 500ms デバウンスで内蔵ストアに反映し、プレビューと LLM への共有を同期する。
-  3. **プレビューウィンドウ**
-     - 編集ウィンドウの最新 Markdown をニアリアルタイム（300–500ms 程度のデバウンス）で HTML レンダリングし、Svelte の `marked` 等を利用して GitHub 風 Markdown を表示する。
-     - コードブロック・表・チェックボックス・箇条書きに対応し、スクロール同期（編集ウィンドウとの相互リンク）を提供する。
-- **保存と下書き管理**
-  - 「保存」操作でファイルを `<dataDir>/YYYY/MM/DD/summaries/daily.md` に書き出す。保存成功時はトースト通知とプレビューヘッダにタイムスタンプを表示する。
-  - 未保存の変更がある場合はブラウザを離脱しようとすると確認ダイアログを出す。
-  - サマリ作成画面は URL 内に `?summary=edit` 等のフラグを持たせ、リロードしても同じ日付の下書きを再開できる。
-
-> LLM チャットは OpenAI モデルを前提とするが、API キーはクライアントには露出せず、サーバー経由で署名付きリクエストを行う。将来的に Azure OpenAI や互換 API を追加できるよう、モデル一覧は設定ファイル経由で差し替え可能にする。
-
 ---
 
 ## 5. 実行モデル & バッチ
@@ -528,7 +505,7 @@ export interface IngestionAdapter {
 
 - `scripts/dev.ts` を介して `pnpm dev` を実行すると、Slack の CDP ポート（`CDP_HOST`/`CDP_PORT`。既定 `127.0.0.1:9222`）が開いているかを確認し、必要なら `hack/launch_slack_cdp.sh` を用いて Slack を再起動する。
 - `hack/launch_slack_cdp.sh` は macOS で `open -a Slack --args --remote-debugging-port=<port>` を発火し、`curl http://localhost:<port>/json/version` が成功するまで 1 秒間隔で最大 10 回リトライする。試行回数と待機時間は `CDP_WAIT_ATTEMPTS` / `CDP_WAIT_DELAY` で上書きできる。
-- CDP が利用可能になると `pnpm start`（バックエンド収集）と `pnpm --filter browser dev --open`（ビューア）を並列起動し、標準出力と `logs/backend-dev.log` / `logs/browser-dev.log` にタイムスタンプ付きでログをストリームする。`Ctrl+C` または SIGINT/SIGTERM で両プロセスをまとめて停止する。
+- CDP が利用可能になると `pnpm start`（バックエンド収集）を起動し、標準出力と `logs/backend-dev.log` にタイムスタンプ付きでログをストリームする。`Ctrl+C` または SIGINT/SIGTERM でプロセスをまとめて停止する。
 - 既に Slack が CDP 無効で立ち上がっている場合は停止するかどうかを標準入力で確認し、拒否された場合は安全のため起動を中断する。
 
 ### 5.2 `pnpm start`（Slack 収集プロセス）
@@ -536,45 +513,16 @@ export interface IngestionAdapter {
 - `tsx src/index.ts` を起動し、Slack デスクトップアプリ（`app.slack.com`）の CDP へ接続して JSONL に追記する常駐プロセス。
 - 環境変数 `ADJUTANT_DATA_DIR` で保存先、`CDP_HOST`/`CDP_PORT` で接続先を上書き可能。
 - `ADJUTANT_DISABLE_DOM_CAPTURE=1` を指定すると DOM キャプチャを停止（本文は空になる想定）。
-- `pnpm start` 自体は UI を立ち上げない。ビューアは別プロセスで起動する。
-
-### 5.3 ビューア（apps/browser）
-
-- `pnpm --filter browser dev` で Vite の開発サーバーを起動し、`http://localhost:5173` からダッシュボード／タイムライン／RAW ビューにアクセスできる。
-- `ADJUTANT_DATA_DIR` を指定すると、閲覧対象の日付ディレクトリを切り替えられる。
-- Slack パーマリンクを有効にする場合は `ADJUTANT_SLACK_WORKSPACE` または `ADJUTANT_SLACK_WORKSPACE_URL` を設定する（例：`ADJUTANT_SLACK_WORKSPACE=example-team`）。
-- 本番確認時は `pnpm --filter browser build && pnpm --filter browser preview` を利用する。
 
 ### 5.4 単一起動オーケストレータ（`pnpm run serve` / リリース想定）
 
-- `scripts/serve.ts` を新設し、Slack CDP ヘルパー・JSONL 収集デーモン・ビューアを**1 コマンドで起動/停止**できるようにする。開発用 `scripts/dev.ts` と同じく `spawn` ベースだが、以下の点を本番向けに最適化する。
+- `scripts/serve.ts` を新設し、Slack CDP ヘルパーと JSONL 収集デーモンを**1 コマンドで起動/停止**できるようにする。開発用 `scripts/dev.ts` と同じく `spawn` ベースだが、本番向けの安定性とログ出力に最適化されている。
   - **Slack CDP チェック**：`ensureSlackWithCdp` を共通化し、`--skip-slack-helper` フラグで既に CDP が有効な環境では Slack 再起動を省略できるようにする。
     - Slack が既に起動している場合は必ずユーザーに終了可否を確認する。非対話モードでは自動終了せずエラーで中断し、手動停止を案内する。
-  - **バックエンド起動**：`dist/backend/index.js`（`pnpm run build:backend` もしくは `pnpm run build:runtime` で生成）を `node` で実行し、ログを `logs/runtime/backend.log` にストリーミング。プロセス終了時は自動でリスタート（最大 5 回、指数バックオフ）。
-  - **フロントエンド起動**：`apps/browser/build` の SvelteKit アプリを `node apps/browser/build/index.js` で起動。`--no-browser` フラグで省略可能。起動前に成果物の存在を確認し、無ければエラーメッセージとともに終了。
-  - **ブラウザ自動起動**：`--open` フラグを指定すると、フロントエンドが HTTP 応答を返し始めた時点で既定ブラウザ（macOS: `open` / Windows: `start` / Linux: `xdg-open`）を起動し、`http://localhost:<port>` を表示する。
+  - **バックエンド起動**：`dist/backend/index.js`（`pnpm run build:backend` で生成）を `node` で実行し、ログを `logs/runtime/backend.log` にストリーミング。プロセス終了時は自動でリスタート（最大 5 回、指数バックオフ）。
   - **シグナル処理**：SIGINT/SIGTERM 受信時に子プロセスへ順番に SIGTERM→SIGKILL を送り、すべてのログストリームをクローズしてから終了コード 0 で落ちる。異常終了時は終了コード 1。
   - **構成ファイル読み込み**：デフォルトで `adjutant.config.json` を参照し、`--config` で上書き可能。`dataDir` や `timezone` 等を子プロセスへ環境変数として受け渡す。
 - `pnpm run serve`（`node --import tsx scripts/serve.ts`）をリポジトリの標準起動コマンドとし、将来的なネイティブバンドル（`nexe` など）ではこのエントリポイントをラップする。
-
-### 5.5 パッケージ生成フロー（nexe 前段階）
-
-- `pnpm run package:prepare` を追加し、以下の手順で `out/adjutant-runtime/` に本番用成果物を整える。
-  1. `pnpm run build:runtime` で `dist/backend/index.js` と `apps/browser/build/` をまとめて生成。
-  2. `pnpm run build:serve` で `scripts/serve.ts` を `dist/cli/serve.js` にコンパイル（`tsc` を利用）。
-  3. 出力ディレクトリを初期化し、以下の構成でコピーする。
-     ```
-     out/adjutant-runtime/
-       bin/adjutant.js        # shebang 付き CLI。内部で dist/cli/serve.js を require。
-       backend/index.js      # dist/backend/index.js を配置
-       browser/              # apps/browser/build 以下をサブディレクトリごとコピー
-       hack/launch_slack_cdp.sh
-       config/adjutant.config.sample.json
-       VERSION               # git describe --tags の結果を埋め込む
-     ```
-  4. `bin/adjutant.js` は `adjutant serve` を既定サブコマンドとして実行し、`--` 以降のフラグを `serve` スクリプトへ透過的に渡す。`chmod +x` を適用して tarball 展開後すぐ実行できるようにする。
-- 上記 tarball を配布する段階ではまだ Node バイナリは含めず、利用者には既存の Node 18 以上を要求する。将来 `nexe` で単一バイナリ化する際は `bin/adjutant.js` をエントリポイントに採用するだけでよいように設計しておく。
-- パッケージ生成時に CI で `pnpm run qa` と `pnpm run package:prepare` を連結し、`out/adjutant-runtime` を成果物としてアップロードする。
 
 ### 5.6 CLI 拡張（将来）
 
@@ -595,11 +543,11 @@ export interface IngestionAdapter {
 
 Slack アダプタは環境変数で挙動を切り替えられる。
 
-| 変数                                                      | 例                                                | 説明                                                                                                                                                        |
-| --------------------------------------------------------- | ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ADJUTANT_DEBUG`                                           | `slack:verbose,slack:domprobe`                    | ドメイン別デバッグログ。`slack:verbose` で Slack アダプタの詳細、`slack:domprobe` で DOM 評価ログ、`slack:network` 等でネットワークイベントを個別に有効化。 |
-| `ADJUTANT_DISABLE_DOM_CAPTURE`                             | `1`                                               | DOM 取得を完全に無効化（フォールバックなし、`message_text` は空のまま）。トラブルシュート時のみ使用。                                                       |
-| `ADJUTANT_TZ`                                              | `Asia/Tokyo`                                      | タイムゾーン上書き。未指定時は `Asia/Tokyo` を使用。                                                                                                        |
+| 変数                                                        | 例                                                | 説明                                                                                                                                                        |
+| ----------------------------------------------------------- | ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ADJUTANT_DEBUG`                                            | `slack:verbose,slack:domprobe`                    | ドメイン別デバッグログ。`slack:verbose` で Slack アダプタの詳細、`slack:domprobe` で DOM 評価ログ、`slack:network` 等でネットワークイベントを個別に有効化。 |
+| `ADJUTANT_DISABLE_DOM_CAPTURE`                              | `1`                                               | DOM 取得を完全に無効化（フォールバックなし、`message_text` は空のまま）。トラブルシュート時のみ使用。                                                       |
+| `ADJUTANT_TZ`                                               | `Asia/Tokyo`                                      | タイムゾーン上書き。未指定時は `Asia/Tokyo` を使用。                                                                                                        |
 | `ADJUTANT_SLACK_WORKSPACE` / `ADJUTANT_SLACK_WORKSPACE_URL` | `example-team` / `https://example-team.slack.com` | ビューアで Slack パーマリンクを生成する際のベース URL。チームスラッグまたはホスト名を指定する。設定が無い場合はリンクが非表示。                             |
 
 **起動例**
@@ -687,30 +635,5 @@ Slack 以外のソースを含む統合ログの確認には `/data/YY/MM/DD/<so
 - **Jira / Linear / Notion** の軽量取り込み
 - **Embedding + クラスタリング**で話題自動整理
 - **週次・月次サマリ**、KPT/OKR 連携
-
----
-
-## 11. ブラウズ UI (SvelteKit)
-
-- **目的**：`events.jsonl` や日次サマリをブラウザで確認し、作業ログを自己レビューできるポータルを提供する。
-- **スタック**：SvelteKit + Vite（`pnpm` ワークスペース内 `apps/browser`）。Slack 収集プロセスとは別コマンドで起動する。
-- **起動方法**：
-  - 開発時：`pnpm --filter browser dev`
-  - 本番確認：`pnpm --filter browser build && pnpm --filter browser preview`
-  - データディレクトリは `ADJUTANT_DATA_DIR` で指定。
-- **主要画面**：
-  - `/`：直近 7 日のイベント件数サマリとソース別内訳。
-  - `/day/[yyyy-mm-dd]`：タイムライン表示（ソースフィルタ、Slack パーマリンク、リアルタイムストリーム、Markdown サマリ右カラム）。
-  - `/day/[yyyy-mm-dd]/raw`：JSONL をそのまま表示。
-- **タイムライン機能**：
-  - Slack 投稿/リアクションを HTML にレンダリング。ソースごとのタグ、リアクションタイプの表示、詳細 JSON の折りたたみ。
-  - `ADJUTANT_SLACK_WORKSPACE` 系が設定されていれば Slack へのパーマリンクを生成し、スレッド返信には `thread_ts`/`cid` クエリを付与。
-  - `EventSource` による JSONL 追記のストリーミングと、フォールバックポーリング + トースト通知。JSONL ファイルの追記を 1〜2 秒以内に検知してタイムラインへ反映する。
-  - テーマ切替（ライト/ダーク/システム）とコピー機能（Handlebars テンプレートを編集可能）。OS のダークモード設定に追従し、ユーザー手動の切替とも整合させる（ダークモード設定に追従）。
-  - Markdown 変換済みプレビューを右カラムで提示し、コピー時にも Markdown 変換済みプレビューを維持する。
-- **セキュリティ**：初期版はローカル利用を前提に `localhost` で Listen。将来の認証は `hooks.server.ts` で追加予定。
-- **テスト**：
-  - Vitest でサーバーロード／API のユニットテストを実施（`pnpm --filter browser test`）。
-  - `qa` スクリプトで型チェック／Lint／Vitest をまとめて走らせる。
 
 ---

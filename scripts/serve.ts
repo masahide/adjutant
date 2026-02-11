@@ -2,15 +2,12 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, createWriteStream } from "node:fs";
 import { join, resolve } from "node:path";
 import type { ChildProcess } from "node:child_process";
-import { setTimeout as sleep } from "node:timers/promises";
 import { ensureSlackWithCdp } from "./lib/slackCdp.js";
 
 type CliOptions = {
   skipSlackHelper: boolean;
-  runBrowser: boolean;
   configPath: string;
   help: boolean;
-  openBrowser: boolean;
 };
 
 type RuntimeConfig = {
@@ -95,15 +92,6 @@ async function main(): Promise<void> {
     );
   }
 
-  const browserEntry = resolve(process.cwd(), "apps", "browser", "build", "index.js");
-  if (options.runBrowser && !existsSync(browserEntry)) {
-    throw new Error(
-      `フロントエンドのビルド成果物が見つかりません: ${browserEntry}\n` +
-        "先に `pnpm --filter browser build` を実行してください。\n" +
-        "一時的にフロントエンドを省略する場合は `--no-browser` を指定できます。"
-    );
-  }
-
   const envBase: NodeJS.ProcessEnv = {
     ...process.env,
     NODE_ENV: "production",
@@ -146,34 +134,6 @@ async function main(): Promise<void> {
     },
   };
   managedProcesses.push(createManagedProcess(backendSpec, logsDir, logger, onFatal));
-
-  if (options.runBrowser) {
-    const browserSpec: ProcessSpec = {
-      name: "browser",
-      command: "node",
-      args: [browserEntry],
-      env: envBase,
-      logFile: "browser.log",
-    };
-    managedProcesses.push(createManagedProcess(browserSpec, logsDir, logger, onFatal));
-    if (options.openBrowser) {
-      const host = envBase.HOST ?? process.env.HOST ?? "127.0.0.1";
-      const portRaw = envBase.PORT ?? process.env.PORT ?? "3000";
-      const port = Number.parseInt(portRaw, 10);
-      const targetPort = Number.isFinite(port) ? port : 3000;
-      void waitForBrowserAndOpen({
-        host,
-        port: targetPort,
-        logger,
-        shouldStop: () => shuttingDown,
-      });
-    }
-  } else {
-    logger("info", "フロントエンド起動はスキップされました (--no-browser)。");
-    if (options.openBrowser) {
-      logger("warn", "--open オプションは --no-browser と併用できません。");
-    }
-  }
 
   const handleSignal = async (signal: NodeJS.Signals) => {
     if (shuttingDown) {
@@ -230,10 +190,8 @@ async function main(): Promise<void> {
 
 function parseArgs(argv: string[]): CliOptions {
   let skipSlackHelper = false;
-  let runBrowser = true;
   let configPath = DEFAULT_CONFIG_PATH;
   let help = false;
-  let openBrowser = false;
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index]!;
@@ -242,14 +200,6 @@ function parseArgs(argv: string[]): CliOptions {
     }
     if (arg === "--skip-slack-helper") {
       skipSlackHelper = true;
-      continue;
-    }
-    if (arg === "--no-browser") {
-      runBrowser = false;
-      continue;
-    }
-    if (arg === "--open" || arg === "-o") {
-      openBrowser = true;
       continue;
     }
     if (arg === "--config") {
@@ -272,20 +222,18 @@ function parseArgs(argv: string[]): CliOptions {
     throw new Error(`未知のオプションです: ${arg}`);
   }
 
-  return { skipSlackHelper, runBrowser, configPath, help, openBrowser };
+  return { skipSlackHelper, configPath, help };
 }
 
 function printHelp(): void {
   console.log(`Adjutant Serve コマンド
 
 使用方法:
-  pnpm run serve [-- --skip-slack-helper] [--no-browser] [--config <path>] [--open]
+  pnpm run serve [-- --skip-slack-helper] [--config <path>]
 
 オプション:
   --skip-slack-helper   Slack の CDP 再起動ロジックをスキップします。
-  --no-browser          フロントエンドを起動しません。
   --config <path>       設定ファイルのパスを指定します (既定: ${DEFAULT_CONFIG_PATH}).
-  --open, -o            フロントエンド起動後に既定ブラウザでページを開きます。
   -h, --help            このヘルプを表示します。
 `);
 }
@@ -448,123 +396,6 @@ function createManagedProcess(
   };
 
   return { name: spec.name, stop };
-}
-
-type BrowserOpenContext = {
-  host: string;
-  port: number;
-  logger: Logger;
-  shouldStop: () => boolean;
-};
-
-async function waitForBrowserAndOpen({
-  host,
-  port,
-  logger,
-  shouldStop,
-}: BrowserOpenContext): Promise<void> {
-  const normalizedHost = normalizeHost(host);
-  const hostForUrl = needsBracket(normalizedHost)
-    ? `[${normalizedHost.replace(/^\[|\]$/g, "")}]`
-    : normalizedHost;
-  const url = `http://${hostForUrl}:${port}`;
-  logger("info", `フロントエンドの起動を待機し、準備が整い次第ブラウザを開きます (--open): ${url}`);
-
-  const ready = await waitForHttpReady({
-    url,
-    retries: 30,
-    delayMs: 1000,
-    shouldStop,
-  });
-
-  if (!ready) {
-    logger("warn", `ブラウザ自動起動に必要な応答を確認できませんでした: ${url}`);
-    return;
-  }
-
-  try {
-    await launchSystemBrowser(url);
-    logger("info", `既定ブラウザを起動しました: ${url}`);
-  } catch (error) {
-    logger(
-      "error",
-      `ブラウザ自動起動に失敗しました: ${error instanceof Error ? error.message : String(error)}`
-    );
-  }
-}
-
-function normalizeHost(host: string): string {
-  if (!host || host === "0.0.0.0") {
-    return "127.0.0.1";
-  }
-  if (host === "::" || host === "[::]" || host === "::1") {
-    return "127.0.0.1";
-  }
-  return host;
-}
-
-function needsBracket(host: string): boolean {
-  return host.includes(":") && !host.startsWith("[");
-}
-
-type WaitForHttpOptions = {
-  url: string;
-  retries: number;
-  delayMs: number;
-  shouldStop: () => boolean;
-};
-
-async function waitForHttpReady({
-  url,
-  retries,
-  delayMs,
-  shouldStop,
-}: WaitForHttpOptions): Promise<boolean> {
-  for (let attempt = 0; attempt < retries; attempt += 1) {
-    if (shouldStop()) {
-      return false;
-    }
-    try {
-      await fetch(url, { method: "GET" });
-      return true;
-    } catch {
-      // retry
-    }
-    await sleep(delayMs);
-  }
-  return false;
-}
-
-async function launchSystemBrowser(url: string): Promise<void> {
-  let command: string;
-  let args: string[];
-
-  if (process.platform === "darwin") {
-    command = "open";
-    args = [url];
-  } else if (process.platform === "win32") {
-    command = "cmd";
-    args = ["/c", "start", "", url];
-  } else {
-    command = "xdg-open";
-    args = [url];
-  }
-
-  await new Promise<void>((resolve, reject) => {
-    try {
-      const child = spawn(command, args, {
-        stdio: "ignore",
-        detached: true,
-      });
-      child.once("error", reject);
-      child.once("spawn", () => {
-        child.unref();
-        resolve();
-      });
-    } catch (error) {
-      reject(error instanceof Error ? error : new Error(String(error)));
-    }
-  });
 }
 
 await main().catch((error) => {
