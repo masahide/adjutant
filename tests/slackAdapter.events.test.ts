@@ -237,6 +237,7 @@ describe("SlackAdapter event handling", () => {
           channel: "C777",
           text: "Hello, World!",
           bot_id: "B111",
+          bot_name: "testwebhook2",
           suppress_notification: false,
           ts: "1711119999.001000",
         }),
@@ -248,14 +249,17 @@ describe("SlackAdapter event handling", () => {
     assert.equal(notification.kind, "notification");
     assert.equal(notification.meta?.notification_type, "bot_message");
     assert.equal(notification.meta?.channel, "#C777");
+    assert.equal(notification.actor, "testwebhook2");
     const detail = notification.detail;
     assert.ok(detail && "slack" in detail);
     const slackDetail = detail.slack as {
       notification_type?: string;
       message_text?: string;
+      user?: string;
     };
     assert.equal(slackDetail.notification_type, "bot_message");
     assert.equal(slackDetail.message_text, "Hello, World!");
+    assert.equal(slackDetail.user, "testwebhook2");
   });
 
   it("fetch hook有効時にrequestWillBeSentをraw_fetchとして出力する", async () => {

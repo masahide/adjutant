@@ -901,7 +901,10 @@ export class SlackAdapter implements IngestionAdapter {
     );
     const channelName = this.resolveChannelNameFromMap(channelId, teamId) ?? channelId;
     const userId = this.asString(data.user) ?? this.asString(data.user_id);
-    const userName = this.resolveUserNameFromMap(userId, teamId, channelId) ?? userId;
+    const botProfile = this.asRecord(data.bot_profile);
+    const botName = this.asString(data.bot_name) ?? this.asString(botProfile?.name);
+    const userName =
+      this.resolveUserNameFromMap(userId, teamId, channelId) ?? botName ?? userId ?? "unknown";
     const ts = this.asString(data.event_ts) ?? this.asString(data.ts);
     const title =
       this.asString(data.title) ?? this.asString(data.subtitle) ?? this.asString(data.summary);
