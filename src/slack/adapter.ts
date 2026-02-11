@@ -122,6 +122,13 @@ const DOM_CHANNEL_NAME_SELECTORS = [
 const DOM_RETRY_DELAYS_MS = [0, 100, 200, 300] as const;
 const DOM_EXCERPT_LENGTH = 80;
 const DOM_CACHE_MAX_ENTRIES = 200;
+const JSONISH_PAYLOAD_KEYS = new Set([
+  "blocks",
+  "item",
+  "attachments",
+  "metadata",
+  "message",
+]);
 
 const DOM_CAPTURE_SCRIPT = `(function adjutantCapture(tsList, selectors, debugMode) {
   try {
@@ -582,7 +589,8 @@ export class SlackAdapter implements IngestionAdapter {
     const contentType = this.normalizeHeader(event.request.headers, "content-type");
     const normalizeOpts: NormalizeOptions = { now: this.now(), timezone: this.timezone };
     const url = new URL(event.request.url);
-    const payload = this.parseBody(body, contentType);
+    const parsedPayload = this.parseBody(body, contentType);
+    const payload = parsedPayload ? this.normalizeParsedPayload(parsedPayload) : null;
     if (!payload) {
       this.debug("parseBody returned null", { url: event.request.url, contentType });
       return [];
@@ -593,7 +601,7 @@ export class SlackAdapter implements IngestionAdapter {
     if (url.pathname.endsWith("/api/chat.postMessage")) {
       const channelId = typeof payload.channel === "string" ? payload.channel : "";
       const userId = typeof payload.user === "string" ? payload.user : undefined;
-      const blocks = payload.blocks as Parameters<typeof fromBlocks>[0];
+      const blocks = this.parseJsonIfString(payload.blocks) as Parameters<typeof fromBlocks>[0];
       const rawTs = this.asString(payload.ts);
       const slackTs = this.resolveMessageTs(rawTs ?? this.asString(payload.thread_ts));
 
@@ -654,7 +662,7 @@ export class SlackAdapter implements IngestionAdapter {
     }
 
     if (url.pathname.startsWith("/api/reactions.")) {
-      const item = payload.item as Record<string, unknown> | undefined;
+      const item = this.asRecord(payload.item);
       const channelId = this.asString(payload.channel) ?? this.asString(item?.channel) ?? "";
       const rawItemTs = this.asString(payload.timestamp) ?? this.asString(item?.ts);
       const normalizedItemTs = this.normalizedTimestamp(rawItemTs);
@@ -1128,6 +1136,15 @@ export class SlackAdapter implements IngestionAdapter {
     return `${channel}@${ts}`;
   }
 
+  private normalizeParsedPayload(payload: Record<string, unknown>): Record<string, unknown> {
+    const normalized: Record<string, unknown> = { ...payload };
+    for (const [key, value] of Object.entries(normalized)) {
+      if (!JSONISH_PAYLOAD_KEYS.has(key)) continue;
+      normalized[key] = this.parseJsonIfString(value);
+    }
+    return normalized;
+  }
+
   private resolveMessageTs(ts: string | undefined): string {
     const normalized = this.normalizedTimestamp(ts);
     if (normalized) return normalized;
@@ -1147,6 +1164,25 @@ export class SlackAdapter implements IngestionAdapter {
 
   private asString(value: unknown): string | undefined {
     return typeof value === "string" && value !== "" ? value : undefined;
+  }
+
+  private asRecord(value: unknown): Record<string, unknown> | undefined {
+    const parsed = this.parseJsonIfString(value);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+    return parsed as Record<string, unknown>;
+  }
+
+  private parseJsonIfString(value: unknown): unknown {
+    if (typeof value !== "string") return value;
+    const trimmed = value.trim();
+    if (!trimmed) return value;
+    const prefix = trimmed[0];
+    if (prefix !== "{" && prefix !== "[") return value;
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      return value;
+    }
   }
 
   private normalizedTimestamp(ts: string | undefined): string | null {
