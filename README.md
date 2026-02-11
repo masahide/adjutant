@@ -51,7 +51,7 @@ pnpm run test                 # Node 側の test runner (node --test)
 pnpm --filter browser dev     # ログビューア (SvelteKit) の開発サーバー
 pnpm --filter browser test    # ビューアの Vitest (サーバーロード + E2E 風テスト)
 pnpm --filter browser exec tsc --noEmit  # ビューア側 TypeScript 型チェック
-pnpm run qa                   # 上記すべて（typecheck/lint/format/test/svelte-kit sync/svelte-check/ブラウザ型検証/Vitest）
+pnpm check                    # 上記すべて（typecheck/lint/format/test/svelte-kit sync/svelte-check/ブラウザ型検証/Vitest）
 ```
 
 `pnpm dev` は Slack の CDP 接続（`CDP_HOST`/`CDP_PORT`）を検査し、必要に応じて `hack/launch_slack_cdp.sh` で再起動した後に `pnpm start` とビューア開発サーバーを並列起動します。CDP ポートのオープン待ちは 1 秒間隔で最大 10 回リトライし、`CDP_WAIT_ATTEMPTS` / `CDP_WAIT_DELAY` で試行回数と待機時間を調整できます。ログは `logs/backend-dev.log` / `logs/browser-dev.log` に追記され、コンソールにもタイムスタンプ付きで出力されます。
@@ -93,7 +93,7 @@ pnpm --filter browser preview -- --host 0.0.0.0 --port 4173
 - `pnpm run test`：ワークスペース共通の Node テスト（`node --test`）
 - `pnpm --filter browser test`：SvelteKit ルート/API の Vitest
 - `pnpm --filter browser exec tsc --noEmit`：ブラウザアプリの型チェック
-- `pnpm run qa`：上記すべて + `svelte-kit sync` → `svelte-check` を一括で実行
+- `pnpm check`：上記すべて + `svelte-kit sync` → `svelte-check` を一括で実行
 
 ## Slack/CDP セットアップ
 

@@ -6,7 +6,7 @@ Main runtime lives in `src/index.ts`, a TypeScript entry that connects to Chrome
 
 ## Build, Test, and Development Commands
 
-Use `pnpm install` to refresh dependencies when package manifests change. `pnpm start` (alias for `npm run start`) executes `tsx src/index.ts` and expects a Slack desktop session exposing CDP at `CDP_HOST` and `CDP_PORT`. Quality gates bundle into `pnpm run qa`, which now chains `typecheck`, `lint`, `format`, `test`, `svelte-kit sync`, `tsc --noEmit` for the browser workspace, and `vitest` for the SvelteKit app; run it before every push. Spot fixes are available via `pnpm run lint:fix` and `pnpm run format:write`.
+Use `pnpm install` to refresh dependencies when package manifests change. `pnpm start` (alias for `npm run start`) executes `tsx src/index.ts` and expects a Slack desktop session exposing CDP at `CDP_HOST` and `CDP_PORT`. Quality gates bundle into `pnpm check`, which now chains `typecheck`, `lint`, `format`, `test`, `svelte-kit sync`, `tsc --noEmit` for the browser workspace, and `vitest` for the SvelteKit app; run it before every push. Spot fixes are available via `pnpm run lint:fix` and `pnpm run format:write`.
 
 ## Coding Style & Naming Conventions
 
@@ -18,7 +18,7 @@ There is no unit-test harness yet; rely on `pnpm run typecheck` for static safet
 
 ## Commit & Pull Request Guidelines
 
-Recent history favors Conventional Commits (`feat:`, `fix:`, `chore:`) with imperative summaries—continue that pattern and keep messages under 72 characters. Group related changes into a single commit; avoid mixing feature work with formatter noise by running formatters in a separate commit if needed. Pull requests must describe intent, outline verification commands (`pnpm run qa`), and link tracking issues; attach screenshots or logs for Slack interactions when behaviour changes. Request review once the branch has no lint or format diffs (`git status` should be clean after `pnpm run qa`).
+Recent history favors Conventional Commits (`feat:`, `fix:`, `chore:`) with imperative summaries—continue that pattern and keep messages under 72 characters. Group related changes into a single commit; avoid mixing feature work with formatter noise by running formatters in a separate commit if needed. Pull requests must describe intent, outline verification commands (`pnpm check`), and link tracking issues; attach screenshots or logs for Slack interactions when behaviour changes. Request review once the branch has no lint or format diffs (`git status` should be clean after `pnpm check`).
 
 ## CDP & Slack Environment Notes
 
