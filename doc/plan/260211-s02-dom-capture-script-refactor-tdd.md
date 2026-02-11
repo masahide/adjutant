@@ -218,49 +218,49 @@ sequenceDiagram
 
 ### Phase 1 設計と準備
 
-- [ ] 要件と仕様の確定 受け入れ条件の確定
-- [ ] インターフェース契約の確定 スキーマと例の追加
-- [ ] Mermaid図の作成 更新
-- [ ] インターフェース 型定義の作成
-- [ ] テスト基盤の確認 例 テストランナー モックユーティリティ
+- [x] 要件と仕様の確定 受け入れ条件の確定
+- [x] インターフェース契約の確定 スキーマと例の追加
+- [x] Mermaid図の作成 更新
+- [x] インターフェース 型定義の作成
+- [x] テスト基盤の確認 例 テストランナー モックユーティリティ
 
 ### Phase 2 DOM core 分離の実装
 
-- [ ] Test `domCaptureCore` の失敗するテストケースを作成 Red
-- [ ] Impl `captureDomSnapshot` の最小実装 Green
-- [ ] Refactor 重複処理 attr 取得 sanitize を整理
-- [ ] Integration adapter 経路テストで回帰確認
-- [ ] Docs 契約と図を更新
+- [x] Test `domCaptureCore` の失敗するテストケースを作成 Red
+- [x] Impl `captureDomSnapshot` の最小実装 Green
+- [x] Refactor 重複処理 attr 取得 sanitize を整理
+- [x] Integration adapter 経路テストで回帰確認
+- [x] Docs 契約と図を更新
 
 ### Phase 3 script builder 分離の実装
 
-- [ ] Test `domCaptureScript` の失敗するテストケースを作成 Red
-- [ ] Impl `buildDomCaptureExpression` の最小実装 Green
-- [ ] Refactor `adapter.ts` からインラインスクリプトを除去
-- [ ] Integration `Runtime.evaluate` 呼び出し経路の既存テストを維持
-- [ ] Docs エラー契約と利用例を更新
+- [x] Test `domCaptureScript` の失敗するテストケースを作成 Red
+- [x] Impl `buildDomCaptureExpression` の最小実装 Green
+- [x] Refactor `adapter.ts` からインラインスクリプトを除去
+- [x] Integration `Runtime.evaluate` 呼び出し経路の既存テストを維持
+- [x] Docs エラー契約と利用例を更新
 
 ### Phase 4 統合と検証
 
-- [ ] 全体テストの実行
-- [ ] エッジケースの動作確認
-- [ ] ログと例外の確認 想定外入力 タイムアウト リトライ
-- [ ] ドキュメント更新 仕様 契約 図
+- [x] 全体テストの実行
+- [x] エッジケースの動作確認
+- [x] ログと例外の確認 想定外入力 タイムアウト リトライ
+- [x] ドキュメント更新 仕様 契約 図
 
 ## 8. 完了の定義 Definition of Done
 
 ### 8.1 機能DoD Functional DoD
 
-- [ ] 受け入れ条件がすべて満たされていること
-- [ ] 既知の制約が明文化され、想定通りであること
-- [ ] 契約の例に対して期待通りの結果が得られること
+- [x] 受け入れ条件がすべて満たされていること
+- [x] 既知の制約が明文化され、想定通りであること
+- [x] 契約の例に対して期待通りの結果が得られること
 
 ### 8.2 品質DoD Quality DoD
 
-- [ ] 全てのテストがパスしていること
-- [ ] Linter Formatterのエラーがないこと
-- [ ] 不要なデバッグコードが削除されていること
-- [ ] 主要な変更点がドキュメントに反映されていること
+- [x] 全てのテストがパスしていること
+- [x] Linter Formatterのエラーがないこと
+- [x] 不要なデバッグコードが削除されていること
+- [x] 主要な変更点がドキュメントに反映されていること
 
 ## 9. 懸念事項と未確定事項 Concerns and Questions
 
@@ -274,4 +274,3 @@ sequenceDiagram
   - Slack UI 更新に伴う selector 劣化
 - 将来的な拡張に伴うリスク
   - Workflow/Events API 対応時、DOM 依存を残す設計だと transport ごとの差分が増える
-

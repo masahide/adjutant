@@ -42,6 +42,10 @@ describe("SlackAdapter reactions DOM capture", () => {
       evaluateCalls.some((call) => call.expression?.includes("1711112222.000300")),
       "DOMキャプチャ用のRuntime.evaluateが呼ばれる"
     );
+    assert.ok(
+      evaluateCalls.some((call) => call.expression?.includes("captureDomSnapshot")),
+      "DOMキャプチャ式は script builder の core 関数を使う"
+    );
 
     await adapter.stop();
   });
