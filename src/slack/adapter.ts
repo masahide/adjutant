@@ -1353,6 +1353,7 @@ export class SlackAdapter implements IngestionAdapter {
       this.cacheChannelNameByTeam(teamId, channelId, channelName);
       if (before !== channelName) {
         await this.persistChannelNameCache(teamId);
+        this.logCacheUpdate("channel", teamId, 1, this.channelNamesByTeam.get(teamId)?.size ?? 0);
       }
     } catch {
       /* ignore conversations.view parse errors */
@@ -1383,6 +1384,7 @@ export class SlackAdapter implements IngestionAdapter {
       const teamFromPath =
         segments.length >= 2 && segments[0] === "cache" ? segments[1] : undefined;
       const changedTeamIds = new Set<string>();
+      const changedCounts = new Map<string, number>();
 
       for (const item of results) {
         const user = this.asRecord(item);
@@ -1397,15 +1399,36 @@ export class SlackAdapter implements IngestionAdapter {
 
         const before = this.resolveUserNameByTeam(teamId, userId);
         this.cacheUserNameByTeam(teamId, userId, userName);
-        if (before !== userName) changedTeamIds.add(teamId);
+        if (before !== userName) {
+          changedTeamIds.add(teamId);
+          changedCounts.set(teamId, (changedCounts.get(teamId) ?? 0) + 1);
+        }
       }
 
       for (const teamId of changedTeamIds) {
         await this.persistUserNameCache(teamId);
+        this.logCacheUpdate(
+          "user",
+          teamId,
+          changedCounts.get(teamId) ?? 0,
+          this.userNamesByTeam.get(teamId)?.size ?? 0
+        );
       }
     } catch {
       /* ignore users/list parse errors */
     }
+  }
+
+  private logCacheUpdate(
+    kind: "channel" | "user",
+    teamId: string,
+    changed: number,
+    total: number
+  ): void {
+    const noun = kind === "channel" ? "channels" : "users";
+    console.log(
+      `[Adjutant] Slack ${kind} cache updated team=${teamId} changed=${changed} total_${noun}=${total}`
+    );
   }
 
   private previewResponseBody(
