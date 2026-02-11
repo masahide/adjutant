@@ -15,7 +15,7 @@ describe("routes/day/[date]/raw/+page.server", () => {
 
   beforeEach(() => {
     resetConfigCache();
-    dataDir = mkdtempSync(join(tmpdir(), "reaclog-raw-"));
+    dataDir = mkdtempSync(join(tmpdir(), "adjutant-raw-"));
     process.env.REACLOG_DATA_DIR = dataDir;
     seedData();
   });

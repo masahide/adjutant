@@ -8,7 +8,7 @@ export type LlmConfig = {
   defaultModel: string | null;
 };
 
-const CONFIG_FILENAME = "reaclog.config.json";
+const CONFIG_FILENAME = "adjutant.config.json";
 const DEFAULT_MODELS = ["gpt-5-nano", "gpt-5-mini", "gpt-5", "gpt-4.1"];
 
 export async function loadLlmConfig(): Promise<LlmConfig> {

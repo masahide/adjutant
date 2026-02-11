@@ -12,7 +12,7 @@ export type CdpEndpoint = {
 
 export function resolveEndpoint(): CdpEndpoint {
   const file =
-    process.env.CDP_ENDPOINT_FILE || path.resolve(process.cwd(), ".reaclog/cdp-endpoint.json");
+    process.env.CDP_ENDPOINT_FILE || path.resolve(process.cwd(), ".adjutant/cdp-endpoint.json");
 
   if (fs.existsSync(file)) {
     try {

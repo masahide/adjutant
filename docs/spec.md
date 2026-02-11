@@ -94,7 +94,7 @@ flowchart TB
 
 ```json
 {
-  "schema": "reaclog.event.v1.1",
+  "schema": "adjutant.event.v1.1",
   "uid": "slack:C08QLKYPUUW@1762150061.xxxx10",
   "source": "slack", // "slack" | "github" | "git-local" | ...
   "kind": "post", // 共通の論理種別
@@ -131,7 +131,7 @@ flowchart TB
 
 ```json
 {
-  "schema": "reaclog.event.v1.1",
+  "schema": "adjutant.event.v1.1",
   "uid": "slack:C08QLKYPUUW@1762149560.712159:eyes:added:U123",
   "source": "slack",
   "kind": "reaction",
@@ -158,7 +158,7 @@ flowchart TB
 
 ```json
 {
-  "schema": "reaclog.event.v1.1",
+  "schema": "adjutant.event.v1.1",
   "uid": "gh:you/repo#PR#123",
   "source": "github",
   "kind": "pr",
@@ -185,7 +185,7 @@ flowchart TB
 
 ```json
 {
-  "schema": "reaclog.event.v1.1",
+  "schema": "adjutant.event.v1.1",
   "uid": "git:/home/you/repo#commit#abc123",
   "source": "git-local",
   "kind": "commit",
@@ -333,7 +333,7 @@ feat: add multipart parser
 
 ```ts
 export type EventCore = {
-  schema: 'reaclog.event.v1.1';
+  schema: 'adjutant.event.v1.1';
   uid: string;                 // 一意キー（再生成可能）
   source: 'slack'|'github'|'git-local';
   kind: string;                // post|reaction|commit|pr|review|issue|comment|...
@@ -446,7 +446,7 @@ export interface IngestionAdapter {
 
 ## Local Git
 
-- ~/work/reaclog: commits 3件 …
+- ~/work/adjutant: commits 3件 …
 
 ## TODO / ブロッカー
 
@@ -466,7 +466,7 @@ export interface IngestionAdapter {
   - 既に `<dataDir>/YYYY/MM/DD/summaries/daily.md` が存在する場合はその内容をロードし、編集モードで再利用する。存在しない場合は新規ファイルを作成し、保存時に初回生成する。
 - **3 ペイン構成（左→右に縦割り）**
   1. **LLM チャットウィンドウ**
-     - OpenAI API 経由で複数モデル（例：`gpt-4.1-mini`, `gpt-4o`, `gpt-4.1`）から選択可能なプルダウンを用意する。既定値は `reaclog.config.json` の `llm.defaultModel`。
+     - OpenAI API 経由で複数モデル（例：`gpt-4.1-mini`, `gpt-4o`, `gpt-4.1`）から選択可能なプルダウンを用意する。既定値は `adjutant.config.json` の `llm.defaultModel`。
      - 編集ウィンドウの全文、または選択範囲をコンテキストとしてチャットに添付し、「箇条書きを増やす」「セクションを要約し直す」などのプロンプトを送信できる。
      - LLM からの返信は差分プレビュー付きで提示し、「置き換え」「追記」「キャンセル」の操作で編集ウィンドウへ反映する。置き換え時は本文を一括更新し、追記時はカーソル位置へ挿入する。
   2. **編集ウィンドウ**
@@ -516,33 +516,33 @@ export interface IngestionAdapter {
   - **フロントエンド起動**：`apps/browser/build` の SvelteKit アプリを `node apps/browser/build/index.js` で起動。`--no-browser` フラグで省略可能。起動前に成果物の存在を確認し、無ければエラーメッセージとともに終了。
   - **ブラウザ自動起動**：`--open` フラグを指定すると、フロントエンドが HTTP 応答を返し始めた時点で既定ブラウザ（macOS: `open` / Windows: `start` / Linux: `xdg-open`）を起動し、`http://localhost:<port>` を表示する。
   - **シグナル処理**：SIGINT/SIGTERM 受信時に子プロセスへ順番に SIGTERM→SIGKILL を送り、すべてのログストリームをクローズしてから終了コード 0 で落ちる。異常終了時は終了コード 1。
-  - **構成ファイル読み込み**：デフォルトで `reaclog.config.json` を参照し、`--config` で上書き可能。`dataDir` や `timezone` 等を子プロセスへ環境変数として受け渡す。
+  - **構成ファイル読み込み**：デフォルトで `adjutant.config.json` を参照し、`--config` で上書き可能。`dataDir` や `timezone` 等を子プロセスへ環境変数として受け渡す。
 - `pnpm run serve`（`node --import tsx scripts/serve.ts`）をリポジトリの標準起動コマンドとし、将来的なネイティブバンドル（`nexe` など）ではこのエントリポイントをラップする。
 
 ### 5.5 パッケージ生成フロー（nexe 前段階）
 
-- `pnpm run package:prepare` を追加し、以下の手順で `out/reaclog-runtime/` に本番用成果物を整える。
+- `pnpm run package:prepare` を追加し、以下の手順で `out/adjutant-runtime/` に本番用成果物を整える。
   1. `pnpm run build:runtime` で `dist/backend/index.js` と `apps/browser/build/` をまとめて生成。
   2. `pnpm run build:serve` で `scripts/serve.ts` を `dist/cli/serve.js` にコンパイル（`tsc` を利用）。
   3. 出力ディレクトリを初期化し、以下の構成でコピーする。
      ```
-     out/reaclog-runtime/
-       bin/reaclog.js        # shebang 付き CLI。内部で dist/cli/serve.js を require。
+     out/adjutant-runtime/
+       bin/adjutant.js        # shebang 付き CLI。内部で dist/cli/serve.js を require。
        backend/index.js      # dist/backend/index.js を配置
        browser/              # apps/browser/build 以下をサブディレクトリごとコピー
        hack/launch_slack_cdp.sh
-       config/reaclog.config.sample.json
+       config/adjutant.config.sample.json
        VERSION               # git describe --tags の結果を埋め込む
      ```
-  4. `bin/reaclog.js` は `reaclog serve` を既定サブコマンドとして実行し、`--` 以降のフラグを `serve` スクリプトへ透過的に渡す。`chmod +x` を適用して tarball 展開後すぐ実行できるようにする。
-- 上記 tarball を配布する段階ではまだ Node バイナリは含めず、利用者には既存の Node 18 以上を要求する。将来 `nexe` で単一バイナリ化する際は `bin/reaclog.js` をエントリポイントに採用するだけでよいように設計しておく。
-- パッケージ生成時に CI で `pnpm run qa` と `pnpm run package:prepare` を連結し、`out/reaclog-runtime` を成果物としてアップロードする。
+  4. `bin/adjutant.js` は `adjutant serve` を既定サブコマンドとして実行し、`--` 以降のフラグを `serve` スクリプトへ透過的に渡す。`chmod +x` を適用して tarball 展開後すぐ実行できるようにする。
+- 上記 tarball を配布する段階ではまだ Node バイナリは含めず、利用者には既存の Node 18 以上を要求する。将来 `nexe` で単一バイナリ化する際は `bin/adjutant.js` をエントリポイントに採用するだけでよいように設計しておく。
+- パッケージ生成時に CI で `pnpm run qa` と `pnpm run package:prepare` を連結し、`out/adjutant-runtime` を成果物としてアップロードする。
 
 ### 5.6 CLI 拡張（将来）
 
-- `reaclog summary --day 2025-11-03`：JSONL から日次要約を生成
-- `reaclog search --q "keyword"`：`rg` + `jq` で検索
-- `reaclog export --day 2025-11-03 --out daily-2025-11-03.md`
+- `adjutant summary --day 2025-11-03`：JSONL から日次要約を生成
+- `adjutant search --q "keyword"`：`rg` + `jq` で検索
+- `adjutant export --day 2025-11-03 --out daily-2025-11-03.md`
 
 ### 5.7 スケジューリング（将来）
 
@@ -592,7 +592,7 @@ Slack 以外のソースを含む統合ログの確認には `/data/YY/MM/DD/<so
 
 ---
 
-## 6. 設定ファイル（例：`reaclog.config.json`）
+## 6. 設定ファイル（例：`adjutant.config.json`）
 
 ```json
 {
@@ -607,7 +607,7 @@ Slack 以外のソースを含む統合ログの確認には `/data/YY/MM/DD/<so
 },
 "gitLocal": {
   "enabled": true,
-  "socket": "/tmp/reaclog.sock" // Windows は \\.\pipe\reaclog
+  "socket": "/tmp/adjutant.sock" // Windows は \\.\pipe\adjutant
 },
 "retention": { "days": 365 }, // ディレクトリ削除でローテーション
 "llm": { "model": "gpt-*-mini", "maxChunkChars": 3500 }

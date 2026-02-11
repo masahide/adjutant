@@ -9,7 +9,7 @@ import type { PageServerLoad } from "./$types";
 type ErrnoException = NodeJS.ErrnoException;
 
 export const load: PageServerLoad = async (event) => {
-  event.depends?.("reaclog:day:raw");
+  event.depends?.("adjutant:day:raw");
 
   const date = event.params.date;
   if (!date) {

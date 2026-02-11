@@ -4,7 +4,7 @@ import { isNormalizedEvent } from "../src/core/validateEvent.js";
 import type { NormalizedEvent } from "../src/core/events.js";
 
 const baseEvent: NormalizedEvent = {
-  schema: "reaclog.event.v1.1",
+  schema: "adjutant.event.v1.1",
   uid: "slack:C123@1711111111.000200",
   source: "slack",
   kind: "post",

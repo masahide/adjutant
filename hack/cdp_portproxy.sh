@@ -8,7 +8,7 @@ set -euo pipefail
 #   ./hack/cdp_portproxy.sh remove       # remove 9222（sudo 1回）
 #   ./hack/cdp_portproxy.sh remove 9333  # remove 9333（sudo 1回）
 
-OUT_DIR="${OUT_DIR:-.reaclog}"
+OUT_DIR="${OUT_DIR:-.adjutant}"
 OUT_FILE="${OUT_FILE:-${OUT_DIR}/cdp-endpoint.json}"
 MODE="setup"
 PORT="9222"

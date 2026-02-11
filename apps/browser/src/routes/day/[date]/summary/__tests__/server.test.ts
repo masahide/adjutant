@@ -15,7 +15,7 @@ describe("routes/day/[date]/summary", () => {
 
   beforeEach(() => {
     resetConfigCache();
-    dataDir = mkdtempSync(join(tmpdir(), "reaclog-summary-api-"));
+    dataDir = mkdtempSync(join(tmpdir(), "adjutant-summary-api-"));
     process.env.REACLOG_DATA_DIR = dataDir;
     process.env.REACLOG_CONFIG_DIR = join(dataDir, "config");
     seedSummary();

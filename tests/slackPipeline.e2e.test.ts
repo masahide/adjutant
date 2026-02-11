@@ -10,7 +10,7 @@ import { createMockSlackClient } from "./mockSlackClient.js";
 
 describe("SlackIngestor end-to-end", () => {
   it("Slackイベントをevents.jsonlに書き出す", async () => {
-    const tmp = await mkdtemp(`${tmpdir()}/reaclog-e2e-`);
+    const tmp = await mkdtemp(`${tmpdir()}/adjutant-e2e-`);
     const writer = new JsonlWriter({ dataDir: tmp });
     const mock = createMockSlackClient();
     const adapter = new SlackAdapter({

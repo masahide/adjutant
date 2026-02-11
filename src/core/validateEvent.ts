@@ -4,7 +4,7 @@ export function isNormalizedEvent(input: unknown): input is NormalizedEvent {
   if (!input || typeof input !== "object") return false;
   const event = input as Record<string, unknown>;
 
-  if (event.schema !== "reaclog.event.v1.1") return false;
+  if (event.schema !== "adjutant.event.v1.1") return false;
   if (typeof event.uid !== "string" || !event.uid) return false;
   if (event.source !== "slack" && event.source !== "github" && event.source !== "git-local")
     return false;

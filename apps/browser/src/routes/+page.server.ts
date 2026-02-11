@@ -11,7 +11,7 @@ type ErrnoException = NodeJS.ErrnoException;
 const MAX_DAYS = 7;
 
 export const load: PageServerLoad = async (event) => {
-  event.depends?.("reaclog:dashboard");
+  event.depends?.("adjutant:dashboard");
   const dataDir = resolveDataDir();
   const availableDates = await listAvailableDates(dataDir);
   const targetDates = availableDates.slice(0, MAX_DAYS);

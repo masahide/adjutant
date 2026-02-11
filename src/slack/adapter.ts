@@ -123,7 +123,7 @@ const DOM_RETRY_DELAYS_MS = [0, 100, 200, 300] as const;
 const DOM_EXCERPT_LENGTH = 80;
 const DOM_CACHE_MAX_ENTRIES = 200;
 
-const DOM_CAPTURE_SCRIPT = `(function reaclogCapture(tsList, selectors, debugMode) {
+const DOM_CAPTURE_SCRIPT = `(function adjutantCapture(tsList, selectors, debugMode) {
   try {
     const toArray = (value) => {
       if (Array.isArray(value)) return value;

@@ -42,7 +42,7 @@ type ManagedProcess = {
 
 type Logger = (level: "info" | "warn" | "error", message: string) => void;
 
-const DEFAULT_CONFIG_PATH = "reaclog.config.json";
+const DEFAULT_CONFIG_PATH = "adjutant.config.json";
 const STOP_TIMEOUT_MS = 5000;
 
 function createLogger(scope: string): Logger {

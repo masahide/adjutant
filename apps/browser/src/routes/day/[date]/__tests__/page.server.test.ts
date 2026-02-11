@@ -16,7 +16,7 @@ describe("routes/day/[date]/+page.server", () => {
 
   beforeEach(() => {
     resetConfigCache();
-    dataDir = mkdtempSync(join(tmpdir(), "reaclog-day-"));
+    dataDir = mkdtempSync(join(tmpdir(), "adjutant-day-"));
     process.env.REACLOG_DATA_DIR = dataDir;
     process.env.REACLOG_CONFIG_DIR = join(dataDir, "config");
     seedData();
@@ -122,7 +122,7 @@ describe("routes/day/[date]/+page.server", () => {
 
     mkdirSync(join(dataDir, "config"), { recursive: true });
     writeFileSync(
-      join(dataDir, "config", "reaclog.config.json"),
+      join(dataDir, "config", "adjutant.config.json"),
       JSON.stringify({
         llm: {
           models: ["gpt-4o", "gpt-4.1-mini"],

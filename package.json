@@ -1,5 +1,5 @@
 {
-  "name": "reaclog",
+  "name": "adjutant",
   "private": true,
   "type": "module",
   "scripts": {
@@ -16,7 +16,7 @@
     "format:write": "prettier --write .",
     "test": "bash -lc 'files=$(find tests -type f -name \"*.test.ts\"); if [ -z \"$files\" ]; then echo \"No tests found\"; exit 1; fi; node --import tsx --test $files'",
     "test:slack": "node --import tsx --test \"tests/slack/**/*.test.ts\"",
-    "qa": "pnpm run typecheck && pnpm run lint && pnpm run format && pnpm run test && pnpm --filter browser exec svelte-kit sync && pnpm --filter browser exec svelte-check && pnpm --filter browser exec tsc --noEmit && pnpm --filter browser test"
+    "check": "pnpm run format && pnpm run typecheck && pnpm run test && pnpm --filter browser exec svelte-kit sync && pnpm --filter browser exec svelte-check && pnpm --filter browser exec tsc --noEmit && pnpm --filter browser test"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",

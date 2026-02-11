@@ -7,7 +7,7 @@ import { JsonlWriter } from "../src/io/jsonlWriter.js";
 import type { NormalizedEvent } from "../src/core/events.js";
 
 const createEvent = (overrides: Partial<NormalizedEvent> = {}): NormalizedEvent => ({
-  schema: "reaclog.event.v1.1",
+  schema: "adjutant.event.v1.1",
   uid: overrides.uid ?? "slack:C123@1711111111.000200",
   source: "slack",
   kind: overrides.kind ?? "post",
@@ -23,7 +23,7 @@ const createEvent = (overrides: Partial<NormalizedEvent> = {}): NormalizedEvent 
 
 describe("JsonlWriter", () => {
   it("events.jsonl を日付ディレクトリにappendする", async () => {
-    const tmp = await mkdtemp(`${tmpdir()}/reaclog-jsonl-`);
+    const tmp = await mkdtemp(`${tmpdir()}/adjutant-jsonl-`);
     const writer = new JsonlWriter({ dataDir: tmp });
 
     const event1 = createEvent();
@@ -55,7 +55,7 @@ describe("JsonlWriter", () => {
   });
 
   it("logged_at が無い場合は現在時刻で補完する", async () => {
-    const tmp = await mkdtemp(`${tmpdir()}/reaclog-jsonl-`);
+    const tmp = await mkdtemp(`${tmpdir()}/adjutant-jsonl-`);
     const writer = new JsonlWriter({ dataDir: tmp });
 
     const event = createEvent({ logged_at: undefined });

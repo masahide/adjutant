@@ -1,5 +1,5 @@
 export type EventCore = {
-  schema: "reaclog.event.v1.1";
+  schema: "adjutant.event.v1.1";
   uid: string;
   source: "slack" | "github" | "git-local";
   kind: string;

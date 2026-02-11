@@ -16,7 +16,7 @@ describe("normalizeSlackMessage", () => {
       { now: new Date("2024-03-22T12:40:00Z") }
     );
 
-    assert.equal(normalized.schema, "reaclog.event.v1.1");
+    assert.equal(normalized.schema, "adjutant.event.v1.1");
     assert.equal(normalized.source, "slack");
     assert.equal(normalized.kind, "post");
     assert.equal(normalized.uid, "slack:C123@1711111111.000200");

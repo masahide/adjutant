@@ -17,7 +17,7 @@ describe("routes/+page.server load", () => {
 
   beforeEach(() => {
     resetConfigCache();
-    dataDir = mkdtempSync(join(tmpdir(), "reaclog-dashboard-"));
+    dataDir = mkdtempSync(join(tmpdir(), "adjutant-dashboard-"));
     process.env.REACLOG_DATA_DIR = dataDir;
 
     createDay("2025-11-03", {

@@ -15,7 +15,7 @@ describe("data loader", () => {
   let dataDir: string;
 
   beforeEach(() => {
-    dataDir = mkdtempSync(join(tmpdir(), "reaclog-browser-"));
+    dataDir = mkdtempSync(join(tmpdir(), "adjutant-browser-"));
     const dateDir = join(dataDir, "2025", "11", "03");
     mkdirSync(join(dateDir, "slack"), { recursive: true });
     mkdirSync(join(dateDir, "github"), { recursive: true });
@@ -23,7 +23,7 @@ describe("data loader", () => {
 
     writeJsonl(join(dateDir, "slack", "events.jsonl"), [
       {
-        schema: "reaclog.event.v1.1",
+        schema: "adjutant.event.v1.1",
         uid: "slack:1",
         source: "slack",
         kind: "post",
@@ -32,7 +32,7 @@ describe("data loader", () => {
         detail: { slack: { text: "最初の投稿" } },
       },
       {
-        schema: "reaclog.event.v1.1",
+        schema: "adjutant.event.v1.1",
         uid: "slack:2",
         source: "slack",
         kind: "reaction",
@@ -44,7 +44,7 @@ describe("data loader", () => {
 
     writeJsonl(join(dateDir, "github", "events.jsonl"), [
       {
-        schema: "reaclog.event.v1.1",
+        schema: "adjutant.event.v1.1",
         uid: "gh:1",
         source: "github",
         kind: "issue",

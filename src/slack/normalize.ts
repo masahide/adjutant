@@ -42,7 +42,7 @@ export function normalizeSlackMessage(
   const loggedAt = formatInTimezone(options.now ?? new Date(), timezone);
 
   return {
-    schema: "reaclog.event.v1.1",
+    schema: "adjutant.event.v1.1",
     source: "slack",
     kind: "post",
     uid: `slack:${channel.id}@${rawTs}`,
@@ -80,7 +80,7 @@ export function normalizeSlackReaction(
   const uniqueSuffix = `${item_ts}:${reaction}:${action}:${actorId}`;
 
   return {
-    schema: "reaclog.event.v1.1",
+    schema: "adjutant.event.v1.1",
     source: "slack",
     kind: "reaction",
     action,

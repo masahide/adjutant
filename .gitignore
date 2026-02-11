@@ -85,7 +85,7 @@ dist/
 .netlify/
 
 # Miscellaneous
-.reaclog/
+.adjutant/
 data/
 log
 vite.config.js.timestamp-*

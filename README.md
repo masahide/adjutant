@@ -31,7 +31,7 @@ Slack や Git/GitHub のアクティビティを収集し、日次ログとし�
 
 ```bash
 git clone <this-repo>
-cd reaclog
+cd adjutant
 pnpm install
 ```
 

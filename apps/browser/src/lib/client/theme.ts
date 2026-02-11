@@ -3,7 +3,7 @@ import { derived, writable, type Readable, type Writable } from "svelte/store";
 export type ThemeMode = "light" | "dark" | "system";
 export type ThemeValue = "light" | "dark";
 
-const STORAGE_KEY = "reaclog:theme";
+const STORAGE_KEY = "adjutant:theme";
 
 export interface ThemeControllerOptions {
   initialTheme?: ThemeMode;

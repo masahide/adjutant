@@ -62,7 +62,7 @@ describe("theme controller", () => {
 
     expect(get(controller.theme)).toBe("light");
     expect(applyTheme).toHaveBeenLastCalledWith("light", "light");
-    expect(storage.getItem("reaclog:theme")).toBe("light");
+    expect(storage.getItem("adjutant:theme")).toBe("light");
   });
 });
 

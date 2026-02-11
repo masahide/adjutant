@@ -21,7 +21,7 @@ type CreateFixtureOptions = {
   date?: string; // yyyy-mm-dd
 };
 
-const TMP_PREFIX = "reaclog-jsonl-fixture-";
+const TMP_PREFIX = "adjutant-jsonl-fixture-";
 
 export async function createJsonlFixture(options: CreateFixtureOptions): Promise<JsonlFixture> {
   const date = options.date ?? "2025-11-03";

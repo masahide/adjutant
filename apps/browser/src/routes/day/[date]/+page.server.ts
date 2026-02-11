@@ -8,7 +8,7 @@ import type { DayPageData, DaySourceOption } from "$lib/viewModels/day";
 import type { PageServerLoad } from "./$types";
 
 export const load: PageServerLoad = async (event) => {
-  event.depends?.("reaclog:day");
+  event.depends?.("adjutant:day");
   const date = event.params.date;
   if (!date) {
     return {
