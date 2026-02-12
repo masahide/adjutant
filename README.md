@@ -47,17 +47,23 @@ pnpm check               # format -> typecheck -> test
 
 ## 実行時設定
 
-| 変数                           | 既定値                        | 用途                                          |
-| ------------------------------ | ----------------------------- | --------------------------------------------- |
-| `CDP_HOST`                     | `127.0.0.1`                   | CDP 接続先ホスト                              |
-| `CDP_PORT`                     | `9222`                        | CDP 接続先ポート                              |
-| `CDP_ENDPOINT_FILE`            | `.adjutant/cdp-endpoint.json` | 接続先上書き JSON (`host`, `port`)            |
-| `DATA_DIR`                     | `./data`                      | JSONL 保存ルート                              |
-| `ADJUTANT_TZ`                  | `Asia/Tokyo`                  | 正規化イベントのタイムゾーン                  |
-| `ADJUTANT_DEBUG`               | -                             | Slack アダプタ詳細ログ (`slack:verbose` など) |
-| `ADJUTANT_DISABLE_DOM_CAPTURE` | `0`                           | リアクション時 DOM キャプチャ無効化           |
-| `ADJUTANT_DEBUG_UI`            | `0`                           | Debug UI (`http://127.0.0.1:8787`) を有効化   |
-| `ADJUTANT_DEBUG_UI_PORT`       | `8787`                        | Debug UI ポート                               |
+| 変数                                       | 既定値                              | 用途                                                                    |
+| ------------------------------------------ | ----------------------------------- | ----------------------------------------------------------------------- |
+| `CDP_HOST`                                 | `127.0.0.1`                         | CDP 接続先ホスト                                                        |
+| `CDP_PORT`                                 | `9222`                              | CDP 接続先ポート                                                        |
+| `CDP_ENDPOINT_FILE`                        | `.adjutant/cdp-endpoint.json`       | 接続先上書き JSON (`host`, `port`)                                      |
+| `DATA_DIR`                                 | `./data`                            | JSONL 保存ルート                                                        |
+| `ADJUTANT_TZ`                              | `Asia/Tokyo`                        | 正規化イベントのタイムゾーン                                            |
+| `ADJUTANT_DEBUG`                           | -                                   | Slack アダプタ詳細ログ (`slack:verbose` など)                           |
+| `ADJUTANT_DISABLE_DOM_CAPTURE`             | `0`                                 | リアクション時 DOM キャプチャ無効化                                     |
+| `ADJUTANT_DEBUG_UI`                        | `0`                                 | Debug UI (`http://127.0.0.1:8787`) を有効化                             |
+| `ADJUTANT_DEBUG_UI_PORT`                   | `8787`                              | Debug UI ポート                                                         |
+| `ADJUTANT_CDP_EVENT_LOG`                   | `0`                                 | CDP 生イベントを JSONL へ保存                                           |
+| `ADJUTANT_CDP_EVENT_LOG_PATH`              | `<dataDir>/_debug/cdp-events.jsonl` | CDP 生イベントの出力先                                                  |
+| `ADJUTANT_CDP_EVENT_LOG_MAX_PARAM_CHARS`   | `0`                                 | params を文字列化して上限超過時に切り詰め (`0` は無制限)                |
+| `ADJUTANT_RAW_FETCH_LOG`                   | `0`                                 | `raw_fetch` デバッグイベントを JSONL へ保存（内部 fetch hook も有効化） |
+| `ADJUTANT_RAW_FETCH_LOG_PATH`              | `<dataDir>/_debug/raw-fetch.jsonl`  | `raw_fetch` イベントの出力先                                            |
+| `ADJUTANT_RAW_FETCH_LOG_MAX_PAYLOAD_CHARS` | `0`                                 | payload を文字列化して上限超過時に切り詰め (`0` は無制限)               |
 
 ## 出力
 
@@ -74,6 +80,31 @@ data/
 data/_cache/slack/
   channel-names-by-team/<team_id>.json
   user-names-by-team/<team_id>.json
+data/_debug/
+  cdp-events.jsonl
+  raw-fetch.jsonl
+```
+
+`user-names-by-team/<team_id>.json` は以下のように保存されます（`adjutant.slack.user-cache.v2`）。
+
+```json
+{
+  "schema": "adjutant.slack.user-cache.v2",
+  "updated_at": "2026-02-12T01:32:31.449Z",
+  "team_id": "T12345678",
+  "users": {
+    "U123": {
+      "real_name": "Taro Yamada",
+      "profile": {
+        "display_name": "taro",
+        "email": "taro@example.com",
+        "first_name": "Taro",
+        "last_name": "Yamada",
+        "image_original": "https://..."
+      }
+    }
+  }
+}
 ```
 
 ## デバッグ例
@@ -81,6 +112,8 @@ data/_cache/slack/
 ```bash
 ADJUTANT_DEBUG=slack:verbose,slack:domprobe pnpm start
 ADJUTANT_DEBUG_UI=1 ADJUTANT_DEBUG=slack:fetch:hook pnpm start
+ADJUTANT_CDP_EVENT_LOG=1 ADJUTANT_CDP_EVENT_LOG_MAX_PARAM_CHARS=20000 pnpm start
+ADJUTANT_RAW_FETCH_LOG=1 ADJUTANT_RAW_FETCH_LOG_MAX_PAYLOAD_CHARS=20000 pnpm start
 ADJUTANT_DISABLE_DOM_CAPTURE=1 pnpm start
 ```
 

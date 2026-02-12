@@ -20,7 +20,11 @@ describe("SlackNameCacheRepository", () => {
     );
     await writeFile(
       path.join(root, "_cache", "slack", "user-names-by-team", "T1.json"),
-      `${JSON.stringify({ users: { U1: "alice" } })}\n`,
+      `${JSON.stringify({
+        schema: "adjutant.slack.user-cache.v2",
+        team_id: "T1",
+        users: { U1: { profile: { display_name: "alice" } } },
+      })}\n`,
       "utf8"
     );
 
@@ -50,8 +54,30 @@ describe("SlackNameCacheRepository", () => {
     assert.equal(channelChanged?.changed, 1);
 
     const userChanged = await repo.updateUsers([
-      { teamId: "T2", userId: "U2", userName: "bob" },
-      { teamId: "T2", userId: "U3", userName: "carol" },
+      {
+        teamId: "T2",
+        userId: "U2",
+        user: {
+          real_name: "Bob Example",
+          profile: {
+            display_name: "bob",
+            email: "bob@example.com",
+            first_name: "Bob",
+            last_name: "Example",
+            image_original: "https://example.com/u2.png",
+          },
+        },
+      },
+      {
+        teamId: "T2",
+        userId: "U3",
+        user: {
+          real_name: "Carol Example",
+          profile: {
+            display_name: "carol",
+          },
+        },
+      },
     ]);
     assert.equal(userChanged.length, 1);
     assert.equal(userChanged[0]?.teamId, "T2");
@@ -64,9 +90,31 @@ describe("SlackNameCacheRepository", () => {
 
     const userFile = JSON.parse(
       await readFile(path.join(root, "_cache", "slack", "user-names-by-team", "T2.json"), "utf8")
-    ) as { users: Record<string, string> };
-    assert.equal(userFile.users.U2, "bob");
-    assert.equal(userFile.users.U3, "carol");
+    ) as {
+      schema?: string;
+      users: Record<
+        string,
+        {
+          real_name?: string;
+          profile?: {
+            display_name?: string;
+            email?: string;
+            first_name?: string;
+            last_name?: string;
+            image_original?: string;
+          };
+        }
+      >;
+    };
+    assert.equal(userFile.schema, "adjutant.slack.user-cache.v2");
+    assert.equal(userFile.users.U2?.real_name, "Bob Example");
+    assert.equal(userFile.users.U2?.profile?.display_name, "bob");
+    assert.equal(userFile.users.U2?.profile?.email, "bob@example.com");
+    assert.equal(userFile.users.U2?.profile?.first_name, "Bob");
+    assert.equal(userFile.users.U2?.profile?.last_name, "Example");
+    assert.equal(userFile.users.U2?.profile?.image_original, "https://example.com/u2.png");
+    assert.equal(userFile.users.U3?.real_name, "Carol Example");
+    assert.equal(userFile.users.U3?.profile?.display_name, "carol");
   });
 
   it("壊れたキャッシュファイルでもloadは失敗しない", async () => {

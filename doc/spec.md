@@ -166,22 +166,44 @@ flowchart LR
 
 - team ごとに分割保存
 - 起動時にロードし、収集中に差分更新
+- user cache (`adjutant.slack.user-cache.v2`) の `users` は次を保持する
+  - `real_name`
+  - `profile.display_name`
+  - `profile.email`
+  - `profile.first_name`
+  - `profile.last_name`
+  - `profile.image_original`
+
+### 7.3 CDP 生イベントログ（任意）
+
+`ADJUTANT_CDP_EVENT_LOG=1` の場合、次へ JSONL 追記する。
+
+```text
+<dataDir>/_debug/cdp-events.jsonl
+```
+
+- `schema=adjutant.cdp.event.v1`
+- `method`, `params`, `session_id`, `host`, `port`, `slack_url` を保持
+- `ADJUTANT_CDP_EVENT_LOG_MAX_PARAM_CHARS` で `params` の最大文字数を制限可能
 
 ## 8. 設定
 
-| 変数                           | 既定値                        | 用途                         |
-| ------------------------------ | ----------------------------- | ---------------------------- |
-| `CDP_HOST`                     | `127.0.0.1`                   | CDP 接続先ホスト             |
-| `CDP_PORT`                     | `9222`                        | CDP 接続先ポート             |
-| `CDP_ENDPOINT_FILE`            | `.adjutant/cdp-endpoint.json` | 接続先 JSON の読み込み元     |
-| `DATA_DIR`                     | `./data`                      | 出力ディレクトリ             |
-| `ADJUTANT_TZ`                  | `Asia/Tokyo`                  | イベント時刻整形タイムゾーン |
-| `ADJUTANT_DEBUG`               | -                             | Slack デバッグトピック有効化 |
-| `ADJUTANT_DISABLE_DOM_CAPTURE` | `0`                           | DOM 補完無効化               |
-| `ADJUTANT_DEBUG_UI`            | `0`                           | Debug UI サーバ起動          |
-| `ADJUTANT_DEBUG_UI_PORT`       | `8787`                        | Debug UI ポート              |
-| `CDP_WAIT_ATTEMPTS`            | `10` (script)                 | CDP 起動待ち試行回数         |
-| `CDP_WAIT_DELAY`               | `1` (script, sec)             | CDP 起動待ち間隔             |
+| 変数                                     | 既定値                              | 用途                               |
+| ---------------------------------------- | ----------------------------------- | ---------------------------------- |
+| `CDP_HOST`                               | `127.0.0.1`                         | CDP 接続先ホスト                   |
+| `CDP_PORT`                               | `9222`                              | CDP 接続先ポート                   |
+| `CDP_ENDPOINT_FILE`                      | `.adjutant/cdp-endpoint.json`       | 接続先 JSON の読み込み元           |
+| `DATA_DIR`                               | `./data`                            | 出力ディレクトリ                   |
+| `ADJUTANT_TZ`                            | `Asia/Tokyo`                        | イベント時刻整形タイムゾーン       |
+| `ADJUTANT_DEBUG`                         | -                                   | Slack デバッグトピック有効化       |
+| `ADJUTANT_DISABLE_DOM_CAPTURE`           | `0`                                 | DOM 補完無効化                     |
+| `ADJUTANT_DEBUG_UI`                      | `0`                                 | Debug UI サーバ起動                |
+| `ADJUTANT_DEBUG_UI_PORT`                 | `8787`                              | Debug UI ポート                    |
+| `ADJUTANT_CDP_EVENT_LOG`                 | `0`                                 | CDP 生イベントを JSONL 保存        |
+| `ADJUTANT_CDP_EVENT_LOG_PATH`            | `<dataDir>/_debug/cdp-events.jsonl` | CDP 生イベント出力先               |
+| `ADJUTANT_CDP_EVENT_LOG_MAX_PARAM_CHARS` | `0`                                 | params 切り詰め上限 (`0` は無制限) |
+| `CDP_WAIT_ATTEMPTS`                      | `10` (script)                       | CDP 起動待ち試行回数               |
+| `CDP_WAIT_DELAY`                         | `1` (script, sec)                   | CDP 起動待ち間隔                   |
 
 `ADJUTANT_DEBUG` の主な値:
 

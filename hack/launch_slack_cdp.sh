@@ -18,21 +18,112 @@ fi
 OS_NAME="$(uname -s)"
 
 if [[ "$OS_NAME" == "Darwin" ]]; then
-  echo "[INFO] Launching via open (port=$PORT)"
-  open -a "Slack" --args "--remote-debugging-port=$PORT"
-  echo "[OK] Launched. (Check for 'DevTools listening on ws://127.0.0.1:$PORT/...')"
-  attempts="${CDP_WAIT_ATTEMPTS:-10}"
-  delay="${CDP_WAIT_DELAY:-1}"
-  echo "curl http://localhost:$PORT/json/version"
-  for ((i = 1; i <= attempts; i++)); do
-    if curl -fsS "http://localhost:$PORT/json/version"; then
+  is_mac_cdp_ready() {
+    curl -fsS --connect-timeout 1 --max-time 2 "http://127.0.0.1:${PORT}/json/version" >/dev/null 2>/dev/null
+  }
+
+  is_mac_slack_running() {
+    pgrep -x "Slack" >/dev/null 2>/dev/null
+  }
+
+  stop_mac_slack_process() {
+    osascript -e 'tell application "Slack" to quit' >/dev/null 2>/dev/null || true
+    if is_mac_slack_running; then
+      pkill -x "Slack" >/dev/null 2>/dev/null || true
+    fi
+  }
+
+  wait_until_mac_slack_stops() {
+    local attempts="${SLACK_STOP_WAIT_ATTEMPTS:-10}"
+    local delay="${SLACK_STOP_WAIT_DELAY:-1}"
+    for ((i = 1; i <= attempts; i++)); do
+      if ! is_mac_slack_running; then
+        return 0
+      fi
+      sleep "$delay"
+    done
+    return 1
+  }
+
+  find_mac_slack_exec() {
+    local candidate
+    for candidate in \
+      "/Applications/Slack.app/Contents/MacOS/Slack" \
+      "$HOME/Applications/Slack.app/Contents/MacOS/Slack"; do
+      if [[ -x "$candidate" ]]; then
+        echo "$candidate"
+        return 0
+      fi
+    done
+
+    if command -v mdfind >/dev/null 2>&1; then
+      candidate="$(mdfind "kMDItemCFBundleIdentifier == 'com.tinyspeck.slackmacgap'" | head -n1 || true)"
+      if [[ -n "$candidate" && -x "$candidate/Contents/MacOS/Slack" ]]; then
+        echo "$candidate/Contents/MacOS/Slack"
+        return 0
+      fi
+    fi
+
+    return 1
+  }
+
+  mac_exec="$(find_mac_slack_exec || true)"
+  if [[ "$SHOW_ONLY" -eq 1 ]]; then
+    if [[ -n "$mac_exec" ]]; then
+      echo "macOS path: $mac_exec"
       exit 0
     fi
+    echo "[ERROR] Slack.app が見つかりませんでした。" >&2
+    exit 1
+  fi
+
+  if is_mac_cdp_ready; then
+    echo "[OK] DevTools endpoint is already reachable: http://127.0.0.1:$PORT/json/version"
+    exit 0
+  fi
+
+  if is_mac_slack_running; then
+    echo "[INFO] Slack is running without reachable CDP endpoint. Restarting Slack..."
+    stop_mac_slack_process
+    if ! wait_until_mac_slack_stops; then
+      echo "[ERROR] Failed to stop existing Slack process on macOS." >&2
+      exit 1
+    fi
+  fi
+
+  echo "[INFO] Launching via open -na (port=$PORT)"
+  open -na "Slack" --args "--remote-debugging-port=$PORT" || true
+  echo "[OK] Launch command sent. (Check for 'DevTools listening on ws://127.0.0.1:$PORT/...')"
+
+  attempts="${CDP_WAIT_ATTEMPTS:-15}"
+  delay="${CDP_WAIT_DELAY:-1}"
+  fallback_done=0
+
+  echo "curl http://127.0.0.1:$PORT/json/version"
+  for ((i = 1; i <= attempts; i++)); do
+    if is_mac_cdp_ready; then
+      echo "[OK] DevTools endpoint is reachable: http://127.0.0.1:$PORT/json/version"
+      curl -fsS "http://127.0.0.1:$PORT/json/version" || true
+      exit 0
+    fi
+
+    if [[ "$fallback_done" -eq 0 && "$i" -ge 3 ]]; then
+      fallback_done=1
+      if [[ -z "$mac_exec" ]]; then
+        mac_exec="$(find_mac_slack_exec || true)"
+      fi
+      if [[ -n "$mac_exec" ]]; then
+        echo "[INFO] Retrying launch via app executable: $mac_exec"
+        "$mac_exec" "--remote-debugging-port=$PORT" >/dev/null 2>/dev/null &
+      fi
+    fi
+
     echo "[WARN] DevTools endpoint not ready yet (attempt $i/$attempts). Retrying in ${delay}s..."
     sleep "$delay"
   done
+
   echo "[ERROR] DevTools endpoint did not respond after $attempts attempts." >&2
-  curl "http://localhost:$PORT/json/version" || true
+  curl "http://127.0.0.1:$PORT/json/version" || true
   exit 1
 fi
 

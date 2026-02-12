@@ -1,6 +1,8 @@
 import { resolveDataDir, resolveEndpoint } from "./runtime/config.js";
 import { connectToSlackPage } from "./runtime/slackConnection.js";
 import { JsonlWriter } from "./io/jsonlWriter.js";
+import { CdpEventFileLogger } from "./io/cdpEventFileLogger.js";
+import { RawFetchEventFileLogger } from "./io/rawFetchEventFileLogger.js";
 import { SlackAdapter } from "./slack/adapter.js";
 import { SlackIngestor } from "./pipeline/slackIngestor.js";
 import { DebugUiServer } from "./debug/debugUi.js";
@@ -10,6 +12,7 @@ import path from "node:path";
 type ActiveSession = {
   client: SlackCdpClient;
   ingestor: SlackIngestor;
+  detachCdpEventLogger?: () => void;
 };
 
 const BASE_RETRY_DELAY_MS = 1000;
@@ -57,6 +60,49 @@ async function main() {
   const debugUiEnabled = isEnabled(process.env.ADJUTANT_DEBUG_UI);
   const debugUiPort = Number(process.env.ADJUTANT_DEBUG_UI_PORT || "8787");
   const debugUi = debugUiEnabled ? new DebugUiServer({ port: debugUiPort }) : null;
+  const cdpEventLogEnabled = isEnabled(process.env.ADJUTANT_CDP_EVENT_LOG);
+  const cdpEventLogPathEnv = process.env.ADJUTANT_CDP_EVENT_LOG_PATH?.trim();
+  const cdpEventLogPath = cdpEventLogPathEnv
+    ? path.resolve(cdpEventLogPathEnv)
+    : path.join(dataDir, "_debug", "cdp-events.jsonl");
+  const cdpEventLogMaxParamChars = Number(
+    process.env.ADJUTANT_CDP_EVENT_LOG_MAX_PARAM_CHARS || "0"
+  );
+  const cdpEventLogger = cdpEventLogEnabled
+    ? new CdpEventFileLogger({
+        filePath: cdpEventLogPath,
+        maxParamChars: Number.isFinite(cdpEventLogMaxParamChars)
+          ? Math.max(0, Math.floor(cdpEventLogMaxParamChars))
+          : 0,
+      })
+    : null;
+  const rawFetchLogEnabled = isEnabled(process.env.ADJUTANT_RAW_FETCH_LOG);
+  const rawFetchLogPathEnv = process.env.ADJUTANT_RAW_FETCH_LOG_PATH?.trim();
+  const rawFetchLogPath = rawFetchLogPathEnv
+    ? path.resolve(rawFetchLogPathEnv)
+    : path.join(dataDir, "_debug", "raw-fetch.jsonl");
+  const rawFetchLogMaxPayloadChars = Number(
+    process.env.ADJUTANT_RAW_FETCH_LOG_MAX_PAYLOAD_CHARS || "0"
+  );
+  const rawFetchEventLogger = rawFetchLogEnabled
+    ? new RawFetchEventFileLogger({
+        filePath: rawFetchLogPath,
+        maxPayloadChars: Number.isFinite(rawFetchLogMaxPayloadChars)
+          ? Math.max(0, Math.floor(rawFetchLogMaxPayloadChars))
+          : 0,
+      })
+    : null;
+  const onDebugEvent =
+    debugUi || rawFetchEventLogger
+      ? (event: { source: string; kind: string; at: string; payload: unknown }) => {
+          if (debugUi) {
+            debugUi.record(event);
+          }
+          if (rawFetchEventLogger) {
+            rawFetchEventLogger.record(event);
+          }
+        }
+      : undefined;
 
   if (debugUi) {
     await debugUi.start();
@@ -68,6 +114,12 @@ async function main() {
       payload: { event: "debug_ui_started", port: debugUiPort },
     });
   }
+  if (cdpEventLogger) {
+    console.log(`[Adjutant] CDP raw event log -> ${cdpEventLogPath}`);
+  }
+  if (rawFetchEventLogger) {
+    console.log(`[Adjutant] raw_fetch event log -> ${rawFetchLogPath}`);
+  }
 
   let activeSession: ActiveSession | null = null;
   let shuttingDown = false;
@@ -78,6 +130,13 @@ async function main() {
     const session = activeSession;
     if (!session) return;
     activeSession = null;
+    if (session.detachCdpEventLogger) {
+      try {
+        session.detachCdpEventLogger();
+      } catch (err) {
+        console.error("[Adjutant] failed to detach CDP event logger:", err);
+      }
+    }
     try {
       await session.ingestor.stop();
     } catch (err) {
@@ -88,6 +147,20 @@ async function main() {
         await session.client.close();
       } catch (err) {
         console.error("[Adjutant] failed to close CDP client:", err);
+      }
+    }
+    if (cdpEventLogger) {
+      try {
+        await cdpEventLogger.flush();
+      } catch (err) {
+        console.error("[Adjutant] failed to flush CDP event log:", err);
+      }
+    }
+    if (rawFetchEventLogger) {
+      try {
+        await rawFetchEventLogger.flush();
+      } catch (err) {
+        console.error("[Adjutant] failed to flush raw_fetch event log:", err);
       }
     }
   };
@@ -126,6 +199,9 @@ async function main() {
       });
     }
     const { client, slackUrl } = await connectToSlackPage(host, port);
+    const detachCdpEventLogger = cdpEventLogger
+      ? cdpEventLogger.attach(client, { host, port, slackUrl })
+      : undefined;
     console.log(`[Adjutant] attached to: ${slackUrl}`);
     if (debugUi) {
       debugUi.record({
@@ -142,10 +218,11 @@ async function main() {
       timezone,
       channelCachePath: path.join(dataDir, "_cache", "slack", "channel-names-by-team.json"),
       userCachePath: path.join(dataDir, "_cache", "slack", "user-names-by-team.json"),
-      onDebugEvent: debugUi ? (event) => debugUi.record(event) : undefined,
+      debugFetchHookEnabled: rawFetchEventLogger ? true : undefined,
+      onDebugEvent,
     });
     const ingestor = new SlackIngestor({ adapter, writer });
-    activeSession = { client, ingestor };
+    activeSession = { client, ingestor, detachCdpEventLogger };
 
     try {
       await ingestor.start();

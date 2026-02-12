@@ -92,9 +92,15 @@ describe("SlackAdapter event handling", () => {
       path.join(tempRoot, "_cache", "slack", "user-names-by-team", "T1.json"),
       `${JSON.stringify(
         {
-          schema: "adjutant.slack.user-cache.v1",
+          schema: "adjutant.slack.user-cache.v2",
           team_id: "T1",
-          users: { U333: "alice" },
+          users: {
+            U333: {
+              profile: {
+                display_name: "alice",
+              },
+            },
+          },
         },
         null,
         2
@@ -407,6 +413,297 @@ describe("SlackAdapter event handling", () => {
     assert.equal(parsed.channels?.C0AA05UDGU8, "テストチャンネル");
   });
 
+  it("cache/channels/info応答でteam別チャンネル名キャッシュを更新する", async () => {
+    const mock = createMockSlackClient();
+    mock.responseBodies["req-channels-info-1"] = {
+      base64Encoded: false,
+      body: JSON.stringify({
+        ok: true,
+        channels: [
+          {
+            id: "C0AA05UDGU8",
+            name: "テストチャンネルA",
+          },
+          {
+            id: "C0AA05UDGU9",
+            name: "テストチャンネルB",
+          },
+        ],
+      }),
+    };
+    const tempRoot = await mkdtemp(path.join(tmpdir(), "adjutant-channel-cache-"));
+    const cachePath = path.join(tempRoot, "_cache", "slack", "channel-names-by-team.json");
+    const adapter = new SlackAdapter({
+      client: mock.client,
+      now: () => new Date("2024-03-22T12:45:00Z"),
+      channelCachePath: cachePath,
+    });
+
+    await adapter.start(async () => {});
+
+    await mock.triggerNetwork("responseReceived", {
+      requestId: "req-channels-info-1",
+      type: "XHR",
+      response: {
+        url: "https://edgeapi.slack.com/cache/T0A93QQUMQW/channels/info?_x_app_name=client",
+        status: 200,
+        statusText: "OK",
+        headers: { "content-type": "application/json; charset=utf-8" },
+      },
+    });
+
+    const raw = await readFile(
+      path.join(tempRoot, "_cache", "slack", "channel-names-by-team", "T0A93QQUMQW.json"),
+      "utf8"
+    );
+    const parsed = JSON.parse(raw) as {
+      schema?: string;
+      team_id?: string;
+      channels?: Record<string, string>;
+    };
+    assert.equal(parsed.schema, "adjutant.slack.channel-cache.v1");
+    assert.equal(parsed.team_id, "T0A93QQUMQW");
+    assert.equal(parsed.channels?.C0AA05UDGU8, "テストチャンネルA");
+    assert.equal(parsed.channels?.C0AA05UDGU9, "テストチャンネルB");
+  });
+
+  it("cache/channels/search応答でteam別チャンネル名キャッシュを更新する", async () => {
+    const mock = createMockSlackClient();
+    mock.responseBodies["req-channels-search-1"] = {
+      base64Encoded: false,
+      body: JSON.stringify({
+        ok: true,
+        results: [
+          {
+            id: "C0AA05UDSX1",
+            name: "検索チャンネルA",
+          },
+          {
+            id: "C0AA05UDSX2",
+            name: "検索チャンネルB",
+          },
+        ],
+      }),
+    };
+    const tempRoot = await mkdtemp(path.join(tmpdir(), "adjutant-channel-cache-"));
+    const cachePath = path.join(tempRoot, "_cache", "slack", "channel-names-by-team.json");
+    const adapter = new SlackAdapter({
+      client: mock.client,
+      now: () => new Date("2024-03-22T12:45:00Z"),
+      channelCachePath: cachePath,
+    });
+
+    await adapter.start(async () => {});
+
+    await mock.triggerNetwork("responseReceived", {
+      requestId: "req-channels-search-1",
+      type: "XHR",
+      response: {
+        url: "https://edgeapi.slack.com/cache/T0A93QQUMQW/channels/search?_x_app_name=client",
+        status: 200,
+        statusText: "OK",
+        headers: { "content-type": "application/json; charset=utf-8" },
+      },
+    });
+
+    const raw = await readFile(
+      path.join(tempRoot, "_cache", "slack", "channel-names-by-team", "T0A93QQUMQW.json"),
+      "utf8"
+    );
+    const parsed = JSON.parse(raw) as {
+      schema?: string;
+      team_id?: string;
+      channels?: Record<string, string>;
+    };
+    assert.equal(parsed.schema, "adjutant.slack.channel-cache.v1");
+    assert.equal(parsed.team_id, "T0A93QQUMQW");
+    assert.equal(parsed.channels?.C0AA05UDSX1, "検索チャンネルA");
+    assert.equal(parsed.channels?.C0AA05UDSX2, "検索チャンネルB");
+  });
+
+  it("conversations.genericInfo応答でteam別チャンネル名キャッシュを更新する", async () => {
+    const mock = createMockSlackClient();
+    mock.responseBodies["req-conversations-generic-1"] = {
+      base64Encoded: false,
+      body: JSON.stringify({
+        ok: true,
+        results: [
+          {
+            id: "C0AA05UDH10",
+            name: "alerts",
+          },
+          {
+            id: "G0AA05UDH11",
+            name_normalized: "private-alerts",
+          },
+        ],
+      }),
+    };
+    const tempRoot = await mkdtemp(path.join(tmpdir(), "adjutant-channel-cache-"));
+    const cachePath = path.join(tempRoot, "_cache", "slack", "channel-names-by-team.json");
+    const adapter = new SlackAdapter({
+      client: mock.client,
+      now: () => new Date("2024-03-22T12:45:00Z"),
+      channelCachePath: cachePath,
+    });
+
+    await adapter.start(async () => {});
+
+    await mock.triggerNetwork("responseReceived", {
+      requestId: "req-conversations-generic-1",
+      type: "XHR",
+      response: {
+        url: "https://workspace.slack.com/api/conversations.genericInfo?slack_route=T0A93QQUMQW:T0A93QQUMQW",
+        status: 200,
+        statusText: "OK",
+        headers: { "content-type": "application/json; charset=utf-8" },
+      },
+    });
+
+    const raw = await readFile(
+      path.join(tempRoot, "_cache", "slack", "channel-names-by-team", "T0A93QQUMQW.json"),
+      "utf8"
+    );
+    const parsed = JSON.parse(raw) as {
+      schema?: string;
+      team_id?: string;
+      channels?: Record<string, string>;
+    };
+    assert.equal(parsed.schema, "adjutant.slack.channel-cache.v1");
+    assert.equal(parsed.team_id, "T0A93QQUMQW");
+    assert.equal(parsed.channels?.C0AA05UDH10, "alerts");
+    assert.equal(parsed.channels?.G0AA05UDH11, "private-alerts");
+  });
+
+  it("search.modules.channels応答でteam別チャンネル名キャッシュを更新する", async () => {
+    const mock = createMockSlackClient();
+    mock.responseBodies["req-search-modules-channels-1"] = {
+      base64Encoded: false,
+      body: JSON.stringify({
+        ok: true,
+        module: "channels",
+        items: [
+          {
+            id: "C0AA05UDH21",
+            name: "mkr-cyg-stage",
+          },
+          {
+            id: "C0AA05UDH22",
+            name: "pinball_alert",
+          },
+        ],
+      }),
+    };
+    const tempRoot = await mkdtemp(path.join(tmpdir(), "adjutant-channel-cache-"));
+    const cachePath = path.join(tempRoot, "_cache", "slack", "channel-names-by-team.json");
+    const adapter = new SlackAdapter({
+      client: mock.client,
+      now: () => new Date("2024-03-22T12:45:00Z"),
+      channelCachePath: cachePath,
+    });
+
+    await adapter.start(async () => {});
+
+    await mock.triggerNetwork("responseReceived", {
+      requestId: "req-search-modules-channels-1",
+      type: "XHR",
+      response: {
+        url: "https://workspace.slack.com/api/search.modules.channels?slack_route=T0A93QQUMQW",
+        status: 200,
+        statusText: "OK",
+        headers: { "content-type": "application/json; charset=utf-8" },
+      },
+    });
+
+    const raw = await readFile(
+      path.join(tempRoot, "_cache", "slack", "channel-names-by-team", "T0A93QQUMQW.json"),
+      "utf8"
+    );
+    const parsed = JSON.parse(raw) as {
+      schema?: string;
+      team_id?: string;
+      channels?: Record<string, string>;
+    };
+    assert.equal(parsed.schema, "adjutant.slack.channel-cache.v1");
+    assert.equal(parsed.team_id, "T0A93QQUMQW");
+    assert.equal(parsed.channels?.C0AA05UDH21, "mkr-cyg-stage");
+    assert.equal(parsed.channels?.C0AA05UDH22, "pinball_alert");
+  });
+
+  it("client.userBoot応答でteam別チャンネル名キャッシュを更新する", async () => {
+    const mock = createMockSlackClient();
+    mock.responseBodies["req-client-userboot-1"] = {
+      base64Encoded: false,
+      body: JSON.stringify({
+        ok: true,
+        default_workspace: { id: "T0A93QQUMQW" },
+        channels: [
+          {
+            id: "C0AA05UDUB1",
+            name: "boot-default-a",
+            context_team_id: "T0A93QQUMQW",
+          },
+          {
+            id: "C0AA05UDUB2",
+            name: "boot-default-b",
+          },
+          {
+            id: "C0AA05UDUB3",
+            name: "boot-cross-team",
+            context_team_id: "T1111111111",
+          },
+        ],
+      }),
+    };
+    const tempRoot = await mkdtemp(path.join(tmpdir(), "adjutant-channel-cache-"));
+    const cachePath = path.join(tempRoot, "_cache", "slack", "channel-names-by-team.json");
+    const adapter = new SlackAdapter({
+      client: mock.client,
+      now: () => new Date("2024-03-22T12:45:00Z"),
+      channelCachePath: cachePath,
+    });
+
+    await adapter.start(async () => {});
+
+    await mock.triggerNetwork("responseReceived", {
+      requestId: "req-client-userboot-1",
+      type: "XHR",
+      response: {
+        url: "https://workspace.slack.com/api/client.userBoot?_x_id=test",
+        status: 200,
+        statusText: "OK",
+        headers: { "content-type": "application/json; charset=utf-8" },
+      },
+    });
+
+    const rawDefaultTeam = await readFile(
+      path.join(tempRoot, "_cache", "slack", "channel-names-by-team", "T0A93QQUMQW.json"),
+      "utf8"
+    );
+    const parsedDefaultTeam = JSON.parse(rawDefaultTeam) as {
+      schema?: string;
+      team_id?: string;
+      channels?: Record<string, string>;
+    };
+    assert.equal(parsedDefaultTeam.schema, "adjutant.slack.channel-cache.v1");
+    assert.equal(parsedDefaultTeam.team_id, "T0A93QQUMQW");
+    assert.equal(parsedDefaultTeam.channels?.C0AA05UDUB1, "boot-default-a");
+    assert.equal(parsedDefaultTeam.channels?.C0AA05UDUB2, "boot-default-b");
+
+    const rawCrossTeam = await readFile(
+      path.join(tempRoot, "_cache", "slack", "channel-names-by-team", "T1111111111.json"),
+      "utf8"
+    );
+    const parsedCrossTeam = JSON.parse(rawCrossTeam) as {
+      schema?: string;
+      team_id?: string;
+      channels?: Record<string, string>;
+    };
+    assert.equal(parsedCrossTeam.schema, "adjutant.slack.channel-cache.v1");
+    assert.equal(parsedCrossTeam.team_id, "T1111111111");
+    assert.equal(parsedCrossTeam.channels?.C0AA05UDUB3, "boot-cross-team");
+  });
+
   it("users/list応答でteam別ユーザー名キャッシュを更新する", async () => {
     const mock = createMockSlackClient();
     mock.responseBodies["req-users-list-1"] = {
@@ -417,14 +714,26 @@ describe("SlackAdapter event handling", () => {
           {
             id: "U0AA05G77UY",
             team_id: "T0A93QQUMQW",
-            name: "masahide.y",
             real_name: "Masahide YAMASAKI",
+            profile: {
+              display_name: "masahide",
+              email: "masahide@example.com",
+              first_name: "Masahide",
+              last_name: "YAMASAKI",
+              image_original: "https://example.com/u0aa05g77uy.png",
+            },
           },
           {
             id: "U0A8ZEXKX27",
             team_id: "T0A93QQUMQW",
-            name: "junco823",
             real_name: "ジュンコ",
+            profile: {
+              display_name: "junco823",
+              email: "junco@example.com",
+              first_name: "ジュン",
+              last_name: "コ",
+              image_original: "https://example.com/u0a8zexkx27.png",
+            },
           },
         ],
       }),
@@ -457,11 +766,39 @@ describe("SlackAdapter event handling", () => {
     const parsed = JSON.parse(raw) as {
       schema?: string;
       team_id?: string;
-      users?: Record<string, string>;
+      users?: Record<
+        string,
+        {
+          real_name?: string;
+          profile?: {
+            display_name?: string;
+            email?: string;
+            first_name?: string;
+            last_name?: string;
+            image_original?: string;
+          };
+        }
+      >;
     };
-    assert.equal(parsed.schema, "adjutant.slack.user-cache.v1");
+    assert.equal(parsed.schema, "adjutant.slack.user-cache.v2");
     assert.equal(parsed.team_id, "T0A93QQUMQW");
-    assert.equal(parsed.users?.U0AA05G77UY, "masahide.y");
-    assert.equal(parsed.users?.U0A8ZEXKX27, "junco823");
+    assert.equal(parsed.users?.U0AA05G77UY?.real_name, "Masahide YAMASAKI");
+    assert.equal(parsed.users?.U0AA05G77UY?.profile?.display_name, "masahide");
+    assert.equal(parsed.users?.U0AA05G77UY?.profile?.email, "masahide@example.com");
+    assert.equal(parsed.users?.U0AA05G77UY?.profile?.first_name, "Masahide");
+    assert.equal(parsed.users?.U0AA05G77UY?.profile?.last_name, "YAMASAKI");
+    assert.equal(
+      parsed.users?.U0AA05G77UY?.profile?.image_original,
+      "https://example.com/u0aa05g77uy.png"
+    );
+    assert.equal(parsed.users?.U0A8ZEXKX27?.real_name, "ジュンコ");
+    assert.equal(parsed.users?.U0A8ZEXKX27?.profile?.display_name, "junco823");
+    assert.equal(parsed.users?.U0A8ZEXKX27?.profile?.email, "junco@example.com");
+    assert.equal(parsed.users?.U0A8ZEXKX27?.profile?.first_name, "ジュン");
+    assert.equal(parsed.users?.U0A8ZEXKX27?.profile?.last_name, "コ");
+    assert.equal(
+      parsed.users?.U0A8ZEXKX27?.profile?.image_original,
+      "https://example.com/u0a8zexkx27.png"
+    );
   });
 });

@@ -200,7 +200,7 @@ export class SlackIngressHandlers {
     if (this.deps.debugFetchHookEnabled) {
       await this.pushResponseDebugEvent(event);
     }
-    await this.refreshChannelNameFromConversationsView(event);
+    await this.refreshChannelNamesFromResponses(event);
     await this.refreshUserNameFromUsersList(event);
     if (!this.deps.slackApiRe.test(event.response.url)) return;
 
@@ -553,27 +553,71 @@ export class SlackIngressHandlers {
     });
   }
 
-  private async refreshChannelNameFromConversationsView(
-    event: ResponseReceivedEvent
-  ): Promise<void> {
+  private async refreshChannelNamesFromResponses(event: ResponseReceivedEvent): Promise<void> {
     const urlInfo = this.parseUrlInfo(event.response.url);
-    if (!urlInfo || urlInfo.pathname !== "/api/conversations.view") return;
+    if (!urlInfo) return;
+
+    const segments = urlInfo.pathSegments ?? [];
+    const looksLikeChannelsInfo =
+      segments.length >= 4 &&
+      segments[0] === "cache" &&
+      segments[2] === "channels" &&
+      segments[3] === "info";
+    const looksLikeChannelsSearch =
+      segments.length >= 4 &&
+      segments[0] === "cache" &&
+      segments[2] === "channels" &&
+      segments[3] === "search";
+    const looksLikeConversationsView = urlInfo.pathname === "/api/conversations.view";
+    const looksLikeGenericInfo = urlInfo.pathname === "/api/conversations.genericInfo";
+    const looksLikeSearchModulesChannels = urlInfo.pathname === "/api/search.modules.channels";
+    const looksLikeClientUserBoot = urlInfo.pathname === "/api/client.userBoot";
+    if (
+      !looksLikeChannelsInfo &&
+      !looksLikeChannelsSearch &&
+      !looksLikeConversationsView &&
+      !looksLikeGenericInfo &&
+      !looksLikeSearchModulesChannels &&
+      !looksLikeClientUserBoot
+    ) {
+      return;
+    }
+
     try {
       const json = await this.deps.responseBodyReader.readJson(event.requestId);
       if (!json.data || json.invalidJson) return;
-      const projected = this.deps.responseProjector.projectConversationsView(json.data);
-      if (!projected) return;
 
-      const changed = await this.deps.nameCacheRepository.updateChannel(
-        projected.teamId,
-        projected.channelId,
-        projected.channelName
-      );
-      if (changed) {
+      let projectedChannels: Array<{ teamId: string; channelId: string; channelName: string }> = [];
+      if (looksLikeConversationsView) {
+        const projected = this.deps.responseProjector.projectConversationsView(json.data);
+        if (projected) {
+          projectedChannels = [projected];
+        }
+      } else if (looksLikeChannelsInfo) {
+        projectedChannels = this.deps.responseProjector.projectChannelsInfo(json.data, urlInfo);
+      } else if (looksLikeChannelsSearch) {
+        projectedChannels = this.deps.responseProjector.projectChannelsSearch(json.data, urlInfo);
+      } else if (looksLikeGenericInfo) {
+        projectedChannels = this.deps.responseProjector.projectConversationsGenericInfo(
+          json.data,
+          urlInfo
+        );
+      } else if (looksLikeSearchModulesChannels) {
+        projectedChannels = this.deps.responseProjector.projectSearchModulesChannels(
+          json.data,
+          urlInfo
+        );
+      } else if (looksLikeClientUserBoot) {
+        projectedChannels = this.deps.responseProjector.projectClientUserBoot(json.data);
+      }
+      if (projectedChannels.length === 0) return;
+
+      const changes = await this.deps.nameCacheRepository.updateChannels(projectedChannels);
+      for (const changed of changes) {
         this.logCacheUpdate("channel", changed.teamId, changed.changed, changed.total);
       }
     } catch {
-      // ignore conversations.view parse errors
+      // ignore channel metadata parse errors
     }
   }
 
