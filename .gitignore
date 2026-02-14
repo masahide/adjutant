@@ -90,3 +90,5 @@ data/
 log
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+vendor/
