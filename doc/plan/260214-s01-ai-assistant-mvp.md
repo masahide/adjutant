@@ -73,6 +73,7 @@ OpenClaw のハートビート機構・メモリシステム・メッセージ�
 5. 簡易メモリ（`MEMORY.md` / `memory/YYYY-MM-DD.md`）の読み書き
 6. ワークスペースファイル反映（`SOUL.md` / `USER.md` / `AGENTS.md` / `HEARTBEAT.md`）
 7. assistant-ui 連携の 2 段 API（`POST /api/chat/messages` + `GET /api/chat/runs/:runId/stream`）
+8. Heartbeat API（`POST /api/heartbeat/run` + `GET /api/heartbeat/last`）+ 履歴取得 API（`GET /api/chat/sessions/:sessionId/messages`）
 
 **成果物:**
 
@@ -104,8 +105,6 @@ OpenClaw のハートビート機構・メモリシステム・メッセージ�
 
 **今回延期（MVP+）:**
 
-- `POST /api/heartbeat/run`（手動 Heartbeat 即時実行のデバッグ導線）
-- `GET /api/chat/sessions/:id/messages`（履歴取得 API）
 - セッション切り替え UI（初版は単一セッション固定で可）
 
 ### 2.3 ユースケース Use Cases
@@ -113,15 +112,16 @@ OpenClaw のハートビート機構・メモリシステム・メッセージ�
 **UC-1: ハートビートによるプロアクティブ通知**
 1. ハートビートタイマーが発火する（30 分間隔）
 2. `activeHours` 設定がある場合、現在時刻が時間外であればスキップする（quiet-hours）
-3. **全レーン**がアイドルであることを `isGlobalIdle()` で確認する（ハートビートは専用 sessionKey `"__heartbeat__"` を使用するが、ユーザー対話中の実行を避けるためグローバルチェックを行う）
-4. HEARTBEAT.md を読み込み、実質空であればモデル呼び出しなしでスキップする（AC-5）
-5. JSONL から「直近 N 分 + 上限件数」でイベント窓を読み込む
-6. HEARTBEAT.md のチェックリスト + systemPrompt（SOUL.md + USER.md + AGENTS.md）+ メモリファイルとイベントを AI に渡す
-7. AI が「注目すべきこと」を判断する
+3. Heartbeat 対象レーン（MVP既定: `sessionKey="main"`）がアイドルであることを `isIdle("main")` で確認する。ビジー時は `requests-in-flight` としてスキップし、1 秒後に再試行する
+4. `sessionKey` がグループセッションを指す場合は Heartbeat を実行しない（MVP では無効）
+5. HEARTBEAT.md を読み込み、実質空であればモデル呼び出しなしでスキップする（AC-09）
+6. JSONL から「直近 N 分 + 上限件数」でイベント窓を読み込む
+7. HEARTBEAT.md のチェックリスト + systemPrompt（SOUL.md + USER.md + AGENTS.md）+ メモリファイルとイベントを AI に渡す
+8. AI が「注目すべきこと」を判断する
    - 何もなければ `HEARTBEAT_OK` を返し、UI には通知しない（出力抑制）
    - 注目事項があればアラートテキストを生成し、API Server 経由で UI に SSE push する
-8. アラート生成時、チャットセッションの SystemEventQueue にアラート要約を投入する（UC-3 フォローアップ用）
-9. ハートビートの実行は内部的なものであり、セッションの「最終活動時刻」を更新しない
+9. アラート生成時、チャットセッションの SystemEventQueue にアラート要約を投入する（UC-3 フォローアップ用）
+10. ハートビートの実行は内部的なものであり、セッションの「最終活動時刻」を更新しない
 
 **UC-2: ユーザーからの対話クエリ**
 1. ユーザーが UI のチャット欄に「今日の #general で何が話されてた？」と入力する
@@ -152,105 +152,78 @@ OpenClaw のハートビート機構・メモリシステム・メッセージ�
 
 ### 2.4 受け入れ条件 Acceptance Criteria
 
-**AC-1: 起動**
-- Given: ソースコードがビルド可能である
-- When: `pnpm run assistant` を実行する（Phase 1 で `package.json` に `"assistant"` スクリプトを追加）
-- Then: API サーバーと Web UI が起動し、ブラウザでチャット画面が表示される
+この節の AC 番号は `doc/mvp-proactive-assistant-requirements.md` の `AC-01..AC-22` に一致させる。
 
-**AC-2: AI が Slack 文脈を参照**
-- Given: 直近の Slack イベントが JSONL に保存されている
-- When: ユーザーが assistant-ui から質問する
-- Then: AI は JSONL 由来コンテキストを入力に含めてストリーミングで応答する
+**AC-01: Slackイベント保存**
+- Slack イベントが `adjutant.event.v1.1` 形式で JSONL に追記保存される
 
-**AC-3: Heartbeat 正常時の抑制**
-- Given: Heartbeat が有効で、注目すべきイベントがない
-- When: Heartbeat タイマーが発火する
-- Then: AI は `HEARTBEAT_OK` を返し、UI には通知されない。結果は `HeartbeatRunResult { status: "ran", suppressReason: "ok-token" }` で記録される
+**AC-02: JSONL文脈注入**
+- AI 応答時に JSONL 由来のイベント窓が入力コンテキストへ取り込まれる
 
-**AC-4: Heartbeat 警告時の通知**
-- Given: Heartbeat が有効で、注目すべきイベントがある
-- When: Heartbeat タイマーが発火する
-- Then: アラートテキストが UI に SSE で通知される
+**AC-03: SDK実行手順準拠**
+- OpenClaw 準拠の SDK 実行手順（lock→open→create→subscribe→dispose）を満たす
 
-**AC-5: Heartbeat 空チェックリストのスキップ**
-- Given: `HEARTBEAT.md` が実質空である（下記「実質空」の定義を参照）
-- When: Heartbeat 実行タイミングになる
-- Then: モデル呼び出しなしで `skipped` として記録される
-- Note: 「実質空」の定義 — ファイル内の全行が以下のいずれかのみで構成される場合（OpenClaw `isHeartbeatContentEffectivelyEmpty()` 準拠）:
-  - 空行・空白のみの行
-  - Markdown ヘッダ行（`#` + スペースまたは行末。`#TODO` 等は対象外）
-  - 空のリストアイテム（`-`/`*`/`+` マーカー + 空チェックボックス `[ ]`/`[x]`/`[X]` または内容なし。例: `- [ ]`, `- [x]`, `* [ ]`, `+ `, `- ` 等）
-  - HEARTBEAT.md が存在しない場合は「実質空」とは見なさず、デフォルトプロンプトで実行する
+**AC-04: 同一sessionKey排他**
+- 同一 `sessionKey` で同時実行が発生しない
 
-**AC-6: 同一セッション排他**
-- Given: 同一 `sessionKey` で実行中の run が存在する
-- When: 新規メッセージが到着する
-- Then: 追加入力は同一レーンの待ち行列に積まれ、同時実行は発生しない
+**AC-05: sessionKey分離**
+- 異なる `sessionKey` 間でコンテキストが混線しない
 
-**AC-7: セッション分離（レーン分離）**
-- Given: `sessionKeyA` と `sessionKeyB` で同時に対話が進行している
-- When: 各セッションに system event や入力が到着する
-- Then: 互いのコンテキストは混線せず、それぞれのレーンで独立して処理される
+**AC-06: 失敗時再試行**
+- 一時失敗時に 1 回再試行/切り詰め再試行が機能する
 
-**AC-8: 一時失敗時の再試行**
-- Given: モデル呼び出しで一時的な通信エラーまたはコンテキスト超過が発生する
-- When: 回復処理が実行される
-- Then: 1 回再試行（コンテキスト超過の場合は切り詰めて再試行）され、回復不能時のみ失敗終了する
+**AC-07: HEARTBEAT_OK抑制**
+- `HEARTBEAT_OK` 抑制時は `HeartbeatRunResult.status: "ran"` を維持し、`HeartbeatEventPayload.status: "ok-token" | "ok-empty"` が記録される
 
-**AC-9: HEARTBEAT.md カスタマイズ**
-- Given: `HEARTBEAT.md` にチェック観点を記述している
-- When: Heartbeat が実行される
-- Then: AI のチェック観点に `HEARTBEAT.md` の内容が反映される
+**AC-08: Heartbeatアラート通知**
+- 注目イベント時に Heartbeat アラートが通知される
 
-**AC-10: SOUL.md / USER.md / AGENTS.md カスタマイズ**
-- Given: `SOUL.md` に口調・言語方針、`USER.md` にユーザー情報、`AGENTS.md` に運用ルールを記述している
-- When: 通常対話または Heartbeat を実行する
-- Then: 応答方針に `SOUL.md` / `USER.md` / `AGENTS.md` の内容が反映される
+**AC-09: 空HEARTBEATスキップ**
+- `HEARTBEAT.md` 実質空で `status: "skipped"` になる（モデル呼び出しなし）
 
-**AC-11: メモリ書き込みと再利用**
-- Given: ユーザーが「覚えておいて」と明示的に指示する
-- When: メモリ更新を実行する
-- Then: `memory/YYYY-MM-DD.md` または `MEMORY.md` に保存され、次回ターンで参照される
+**AC-10: トランスクリプト永続化**
+- セッショントランスクリプトが `sessionId/sessionKey/runId` 付きで JSONL 永続化される
 
-**AC-12: SystemEventQueue の注入**
-- Given: Slack イベント由来の system event がキューに蓄積されている
-- When: 次のターンでコンテキストを組み立てる
-- Then: キュー内容が前置き注入され、drain 後は同一イベントを重複注入しない
+**AC-11: メモリ書き込みガード**
+- 明示指示時のみメモリ書き込みされ、次回ターンで再利用される。Heartbeat 実行時は書き込まれない
 
-**AC-13: セッション永続化と復元**
-- Given: 1 つ以上のチャットターンが完了し、SDK セッションファイルと SessionStore JSONL に保存されている
-- When: プロセスを再起動する
-- Then: SDK SessionManager が会話コンテキストを復元し（LLM 向け source of truth）、SessionStore から UI 表示用の履歴が読み込まれる。両者は独立して機能する
+**AC-12: SOUL反映**
+- `SOUL.md` が通常対話/Heartbeat の応答方針に反映される
 
-**AC-14: SDK セッション後処理**
-- Given: エージェント実行中に例外が発生する
-- When: 後処理が実行される
-- Then: セッションの flush/dispose が確実に行われ、セッションファイルが破損しない
+**AC-13: SystemEventQueue注入/排出**
+- SystemEventQueue が `sessionKey` ごとに注入・drain される
 
-**AC-15: UI ストリーミングと履歴確定**
-- Given: assistant-ui が API Server に SSE 接続済みである
-- When: チャット要求を送信する
-- Then: 応答が text_delta としてストリーミング表示され、text_end で本文が確定し、run_end で run が完了して SessionStore へ保存される。致命的エラー時は error の後に run_end(status: "failed") で終端する。UI の終端判定は run_end のみを正とする
+**AC-14: UI表示とHeartbeat状態表示**
+- `assistant-ui` でストリーミング表示され、`run_end` で完了確定して履歴保存される。`text_delta` が 0 件でも `text_end.text` で本文表示を更新できる。`main` セッションの Heartbeat 状態は `GET /api/heartbeat/last` ポーリングで更新表示される
 
-**AC-16: 既存コードへの破壊なし**
-- Given: 既存の Slack 収集パイプラインが動作している
-- When: `pnpm run check` を実行する
-- Then: format, typecheck, test がすべてパスする
+**AC-15: メモリ参照（通常/Heartbeat）**
+- 通常対話/Heartbeat の両方で `MEMORY.md` と当日・前日メモが入力コンテキストへ取り込まれる
 
-**AC-17: メッセージ送信の冪等性**
-- Given: 同一 `sessionKey` で同一 `clientMessageId` のメッセージが送信済みである
-- When: 冪等 TTL（300 秒）以内に同じ `clientMessageId` で再送する
-- Then: 新規 run を作成せず、既存の `runId` を `deduplicated: true` で返す
+**AC-16: 重複通知抑制**
+- 24時間以内の同一 Heartbeat 本文は `reason: "duplicate"` で抑制され、`HeartbeatRunResult.status: "ran"` を維持する
 
-**AC-18: Heartbeat Current time 注入**
-- Given: Heartbeat が実行される
-- When: LLM への送信 Body を構築する
-- Then: Body 末尾に `Current time: <formattedTime> (<userTimezone>)` 行が注入され、同一実行で重複挿入されない
+**AC-17: トランスクリプト直近窓注入**
+- AI 実行時にセッショントランスクリプト直近窓が入力へ取り込まれ、再開時の文脈復元に利用される
 
-**AC-19: sessionKey 解決**
-- Given: `POST /api/chat/messages` が `sessionId` のみ、または `sessionKey` のみ、または両方、またはどちらも未指定で呼ばれる
-- When: リクエストを処理する
-- Then: §4.1 の sessionKey 解決ルール（4段階優先順）に従い、不整合時は `400 Bad Request` を返す
+**AC-18: readiness失敗の記録**
+- アラート配信前の readiness 失敗時に `HeartbeatRunResult.status: "skipped"` と `HeartbeatEventPayload.status: "skipped"` が記録される。`ok-token`/`ok-empty` の可視化判定側 readiness 失敗は `HeartbeatRunResult.status: "ran"` と `HeartbeatEventPayload.status: "ok-token" | "ok-empty"` を維持する
+
+**AC-19: 終端一意性**
+- 致命的エラー時は `error` を診断用に送出しつつ、最終的に `run_end(status: "failed")` で終端する（`run_end` は `runId` ごとに 1 回）
+
+**AC-20: Current time注入**
+- Heartbeat 送信 Body 末尾に `Current time: <formattedTime> (<userTimezone>)` 行が注入され、同一実行で重複挿入されない
+
+**AC-21: 冪等再送**
+- 同一 `sessionKey` + `clientMessageId` 再送時は冪等処理され、既存 `runId` を返して重複 run を作らない
+
+**AC-22: requests-in-flight再試行**
+- `requests-in-flight` 時は `status: "skipped"` で記録され、1秒後再試行が行われる
+
+**補助検証（トレーサビリティ外）**
+- P-01: `pnpm run assistant` で API サーバーと Web UI が起動し、チャット画面が表示される
+- P-02: `pnpm run check` が成功し、既存 Slack 収集パイプラインに破壊的変更がない
+- P-03: グループセッションを Heartbeat 対象に指定した場合、Heartbeat は実行されず `status: "skipped"`（`reason: "group-session-disabled"`）となる
 
 ### 2.5 既知の制約 Known Limitations
 
@@ -382,22 +355,25 @@ export function isSystemEventContextChanged(
 // src/assistant/context-builder.ts
 //
 // --- 責務境界 ---
-// ContextBuilder は「動的コンテキスト」（イベント + メモリ + SystemEvent）のみを組み立てる。
+// ContextBuilder は「動的コンテキスト」
+// （イベント + メモリ + SystemEvent + セッショントランスクリプト直近窓）を組み立てる。
 // 「静的ペルソナ」（SOUL.md / USER.md / AGENTS.md）は ContextBuilder の管轄外。
 // 静的ペルソナは呼び出し元が直接読み込み、AgentRunOptions.systemPrompt に渡す。
 // これにより ContextBuilder は純粋な「データ → プロンプトテキスト」変換に集中できる。
 //
 // --- フロー別の使い分け ---
-// ハートビートフロー: events = EventReader 結果, systemEvents = 空
+// ハートビートフロー: events = EventReader 結果, systemEvents = 空, recentTranscript = 空
 //   → HB が直接 EventReader を呼び、生イベントをコンテキストに含める
-// チャットフロー:     events = 空,             systemEvents = SEQ drain 結果
+// チャットフロー:     events = 空,             systemEvents = SEQ drain 結果, recentTranscript = SessionStore 直近窓
 //   → ChatHandler が EventReader → テンプレート整形 → SEQ 投入済み。
-//     呼び出し元（ChatHandler）が SEQ を drain し、結果を ContextBuilder に渡す
+//     呼び出し元（ChatHandler）が SEQ を drain し、SessionStore 直近窓と合わせて ContextBuilder に渡す
 // 両パラメータを同時に渡さないことで、イベント情報の重複注入を防ぐ。
 
 export type ContextBuildOptions = {
   events: NormalizedEvent[];         // ハートビートフロー用（チャットフローでは空配列）
   systemEvents?: SystemEvent[];     // チャットフロー用（ハートビートフローでは省略）
+  recentTranscript?: SessionTranscriptEvent[]; // FR-06: セッショントランスクリプト直近窓
+                                               // payload からの表示/要約用投影は ContextBuilder 側で行う
   memoryContent?: string;           // MEMORY.md の内容
   dailyMemoryContent?: string;      // memory/YYYY-MM-DD.md の内容 (today)
   yesterdayMemoryContent?: string;   // memory/YYYY-MM-DD.md の内容 (yesterday)
@@ -429,7 +405,7 @@ export type CommandQueueOptions = {
 export function enqueueCommand<T>(fn: CommandFn<T>, opts: CommandQueueOptions): Promise<T>;
 export function getQueueSize(sessionKey: string): number;
 export function isIdle(sessionKey: string): boolean;
-export function isGlobalIdle(): boolean;  // 全レーンがアイドルか
+export function isGlobalIdle(): boolean;  // 補助API（MVP Heartbeat 判定は isIdle("main") を使用）
 ```
 
 #### HeartbeatRunner
@@ -439,8 +415,8 @@ export function isGlobalIdle(): boolean;  // 全レーンがアイドルか
 export type HeartbeatConfig = {
   intervalMs: number;         // default: 1800000 (30m)
   timeoutMs?: number;         // default: 30000 (§2.8: HB 1 回あたりの LLM タイムアウト上限)
-  sessionKey?: string;        // default: "__heartbeat__"（専用レーン。チャットセッションと分離）
-  chatSessionKey?: string;    // default: "default"（アラート要約を投入する先のチャットセッション）
+  sessionKey?: string;        // default: "main"（MVP既定。グループセッションは無効）
+  chatSessionKey?: string;    // default: "main"（アラート要約を投入する先のチャットセッション）
   heartbeatFilePath: string;  // default: "HEARTBEAT.md"
   soulFilePath: string;       // default: "SOUL.md"
   userFilePath: string;       // default: "USER.md"
@@ -450,6 +426,9 @@ export type HeartbeatConfig = {
   retryDelayMs?: number;      // default: 1000 (requests-in-flight 時の短周期再試行)
   maxRetries?: number;        // default: 10 (requests-in-flight 再試行の上限回数。超過時は次周期待ち)
   ackMaxChars: number;        // default: 300 (HEARTBEAT_OK 判定閾値)
+  showOk?: boolean;           // default: false
+  showAlerts?: boolean;       // default: true
+  useIndicator?: boolean;     // default: true
   model?: string;             // ハートビート用モデル（省略時はデフォルトモデル）
                               // コスト最適化: 安価なモデルを指定可能
   activeHours?: {             // アクティブ時間帯設定（省略時は常時有効）
@@ -465,26 +444,56 @@ export type HeartbeatRunResult =
   | {
       status: "ran";
       durationMs: number;
-      suppressReason?: "ok-token" | "ok-empty" | "duplicate"; // 呼び出したが通知を抑制した理由
       alert?: string;        // アラートテキスト（抑制時は undefined）
       contentHash?: string;  // ログ・可観測性用（重複排除は lastHeartbeatText で行う）
       modelId?: string;      // 使用モデル ID（コスト分析用）
     }
   | {
       status: "skipped";
-      reason: "empty-heartbeat-file" | "requests-in-flight" | "quiet-hours";
+      reason: string;        // OpenClaw 準拠: alerts-disabled / readiness の詳細理由を含む
     }
   | {
       status: "failed";
       reason: string;
     };
 
+// HeartbeatEventPayload は通知・抑制種別のイベントログ型。
+// HeartbeatRunResult は「実行結果」、HeartbeatEventPayload は「通知/抑制の詳細ログ」として責務分離する。
+// to, channel, accountId, hasMedia, silent は OpenClaw マルチチャネル通知との互換用。
+// Adjutant MVP（Web UI のみ）では undefined のまま省略してよい。
+export type HeartbeatEventPayload = {
+  ts: number; // epoch ms
+  status: "sent" | "ok-empty" | "ok-token" | "skipped" | "failed";
+  reason?: string;
+  to?: string;
+  channel?: string;
+  accountId?: string;
+  preview?: string;
+  durationMs?: number;
+  hasMedia?: boolean;
+  silent?: boolean;
+  indicatorType?: "ok" | "alert" | "error";
+};
+
+// HeartbeatRunRecord は実行結果の監査用レコード。
+// HeartbeatEventPayload（通知/抑制ログ）とは別に保存し、モデル呼び出し回数の追跡に使う。
+export type HeartbeatRunRecord = {
+  schema: "adjutant.heartbeat.result.v1";
+  runAt: string;    // ISO8601
+  sessionId?: string;
+  sessionKey?: string;
+  result: HeartbeatRunResult;
+  modelId?: string;
+  preview?: string;
+};
+
 // --- 重複排除仕様 ---
 // - キー: 直前送達テキスト（セッションストアの lastHeartbeatText）
 // - ウィンドウ: 24 時間（lastHeartbeatSentAt との差分で判定）
 // - 保持: セッションストアに永続化（プロセス再起動後も有効）
 // - 判定タイミング: stripHeartbeatToken() 後、UI 送信前
-//   → モデルは呼び出し済みのため status: "ran"、suppressReason: "duplicate" で記録
+//   → モデルは呼び出し済みのため HeartbeatRunResult { status: "ran", durationMs: ... } を返し、
+//     HeartbeatEventPayload でも status: "skipped", reason: "duplicate" を記録
 //   （OpenClaw heartbeat-runner.ts:646 準拠: 重複検出時も status: "ran"）
 //
 // --- Current time 注入仕様 ---
@@ -510,6 +519,10 @@ export type HeartbeatRunResult =
 //   3. 先頭・末尾の Markdown 修飾文字 (*`~_) を除去 (**HEARTBEAT_OK** → HEARTBEAT_OK)
 // 正規化後のテキストから HEARTBEAT_OK を先頭/末尾で繰り返し除去し、
 // 残テキストが ackMaxChars 以下なら shouldSkip=true とする。
+//
+// --- 可視性設定 ---
+// showOk / showAlerts / useIndicator がすべて false の場合は、
+// Heartbeat 自体を実行しない（モデル呼び出しなし）。
 
 export function startHeartbeat(
   config: HeartbeatConfig,
@@ -523,10 +536,10 @@ AgentRunner は以下のサブ要件を満たす。各要件は受け入れ条�
 
 | サブ要件 | 内容 | 対応 AC |
 |----------|------|---------|
-| **FR-AG-1** | OpenClaw 準拠の SDK 利用手順（下記 6 ステップ）を遵守する | AC-14 |
-| **FR-AG-2** | 最終回答と途中イベント（ツール実行・推論メタ情報）を分離し、部分応答の順序保証を行う | AC-15 |
-| **FR-AG-3** | 一時失敗（通信/HTTP 系）は 2.5 秒待機後に 1 回再試行。コンテキスト超過時は切り詰めて再試行 | AC-8 |
-| **FR-AG-4** | セッションファイル破損を検知し修復/退避できる設計とする | AC-14 |
+| **FR-AG-1** | OpenClaw 準拠の SDK 利用手順（下記 6 ステップ）を遵守する | AC-03 |
+| **FR-AG-2** | 最終回答と途中イベント（ツール実行・推論メタ情報）を分離し、部分応答の順序保証を行う | AC-14 / AC-19 |
+| **FR-AG-3** | 一時失敗（通信/HTTP 系）は 2.5 秒待機後に 1 回再試行。コンテキスト超過時は切り詰めて再試行 | AC-06 |
+| **FR-AG-4** | セッションファイル破損を検知し修復/退避できる設計とする | AC-03 |
 
 ```typescript
 // src/assistant/agent-runner.ts
@@ -634,13 +647,26 @@ export type SessionEventType =
   | "tool_result"      // payload: { name: string, result: unknown }
   | "system_event";    // payload: { source: string }
 
+// 永続化する JSONL の 1 行（FR-06 要件準拠）。
+export type SessionTranscriptEvent = {
+  schema: "adjutant.session.event.v1";
+  sessionId: string;
+  sessionKey: string;
+  runId: string;
+  ts: string; // ISO8601
+  type: SessionEventType;
+  payload: Record<string, unknown>;
+};
+
+// UI 表示のために SessionTranscriptEvent から投影した表示モデル。
 export type SessionMessage = {
   type: SessionEventType;
   role: "user" | "assistant" | "system";  // 後方互換・簡易フィルタ用
   content: string;
   ts: string;
-  sessionId: string;     // 1 行で自己完結するため必須
-  runId?: string;        // AgentRunner の実行 ID（API レスポンスと紐付け）
+  sessionId: string;
+  sessionKey: string;
+  runId: string;
   isHeartbeat?: boolean;
   payload?: Record<string, unknown>;  // type 固有の構造化データ
 };
@@ -650,8 +676,15 @@ export type SessionStoreOptions = {
   sessionId: string;
 };
 
-export function appendMessage(msg: SessionMessage, opts: SessionStoreOptions): Promise<void>;
-export function loadSession(opts: SessionStoreOptions): Promise<SessionMessage[]>;
+export function appendEvent(
+  evt: SessionTranscriptEvent,
+  opts: SessionStoreOptions,
+): Promise<void>;
+export function loadSessionEvents(opts: SessionStoreOptions): Promise<SessionTranscriptEvent[]>;
+export function loadMessages(opts: SessionStoreOptions): Promise<SessionMessage[]>;
+export function loadRecentSessionEvents(
+  opts: SessionStoreOptions & { limit: number },
+): Promise<SessionTranscriptEvent[]>;
 export function listSessions(sessionDir: string): Promise<string[]>;
 ```
 
@@ -668,8 +701,8 @@ export function listSessions(sessionDir: string): Promise<string[]>;
 // --- チャット ---
 
 // POST /api/chat/messages — ユーザーメッセージ送信、run を作成
-// Request:  { message: string, sessionId?: string, sessionKey?: string, clientMessageId: string }
-// Response: { runId: string, sessionId: string, sessionKey: string, deduplicated: boolean }
+// Request:  { text: string, sessionId?: string, sessionKey?: string, clientMessageId: string }
+// Response: { runId: string, sessionId: string, sessionKey: string, accepted: true, deduplicated: boolean }
 //   → コマンドキュー経由で直列化。run は非同期で実行開始される。
 //   → clientMessageId は冪等キー。同一 (sessionKey, clientMessageId) の再送は
 //     冪等 TTL（既定 300 秒）内であれば既存 runId を返し、新規キュー投入しない。
@@ -682,18 +715,18 @@ export function listSessions(sessionDir: string): Promise<string[]>;
 //   1. sessionKey 指定時はそれを優先
 //   2. sessionId のみ指定時は sessionId → sessionKey を引いて解決
 //   3. 両方指定で不整合な場合は 400 Bad Request
-//   4. どちらも未指定時は "default" 用の既定 sessionKey を採用し、
+//   4. どちらも未指定時は "main" 用の既定 sessionKey を採用し、
 //      必要に応じて新規 sessionId を採番
 
 // GET /api/chat/runs/:runId/stream — 指定 run の SSE ストリーム
 // Response: SSE stream (text/event-stream)
 //   event: run_started  data: { runId: string, sessionId: string, sessionKey: string, seq: number }
-//   event: text_delta   data: { delta: string, seq: number }
-//   event: tool_call    data: { toolCallId: string, name: string, params: object, seq: number }
-//   event: tool_result  data: { toolCallId: string, name: string, isError: boolean, result: unknown, seq: number }
-//   event: text_end     data: { text: string, seq: number }
+//   event: text_delta   data: { runId: string, delta: string, seq: number }
+//   event: tool_call    data: { runId: string, toolCallId: string, name: string, params: object, seq: number }
+//   event: tool_result  data: { runId: string, toolCallId: string, name: string, isError: boolean, result: unknown, seq: number }
+//   event: text_end     data: { runId: string, text: string, seq: number }
 //   event: run_end      data: { runId: string, status: "completed" | "failed", seq: number }
-//   event: error        data: { message: string, seq: number }
+//   event: error        data: { runId: string, message: string, seq: number }
 //
 // --- 内部→公開 SSE 変換ルール（OpenClaw 参照）---
 // pi-coding-agent SDK の内部イベントを公開 SSE へ変換する規則:
@@ -717,7 +750,11 @@ export function listSessions(sessionDir: string): Promise<string[]>;
 // クライアントは seq の欠落・逆転を検知して順序保証の確認に使用できる。
 //
 // --- run 終了 ---
+// text_end は本文確定イベント。runId ごとに 1 回のみ送信する。
+// 非ストリーミングモデルでは text_delta が 0 件のまま text_end のみ到着しうるため、
+// クライアントは text_end.text 単独で本文表示を更新できること。
 // run_end が run の唯一の終端イベント。runId ごとに 1 回のみ送信する。
+// 重複終端を検出した場合、2 件目以降は公開 SSE へ送らず内部診断ログに記録する。
 // text_end は本文確定イベントであり、終端判定には使わない。
 // error は診断用イベントであり、終端判定には使わない。
 // 致命的エラー時は error を送出した後、必ず run_end(status: "failed") で終端する。
@@ -743,19 +780,24 @@ export function listSessions(sessionDir: string): Promise<string[]>;
 
 // --- ハートビート ---
 
-// GET /api/heartbeat/events — ハートビートアラート SSE ストリーム
-// Response: SSE stream
-//   event: alert       data: { text: string, ts: number, runId: string }
-//   event: heartbeat   data: { status: "ok", ts: number }
-
-// ※ POST /api/heartbeat/run（手動 Heartbeat）は MVP+ で追加予定
-// ※ GET /api/chat/sessions/:id/messages（履歴取得）は MVP+ で追加予定
+// POST /api/heartbeat/run — Heartbeat 実行（手動/定期）
+// Request:  { mode: "now" | "scheduled" }
+// Response: HeartbeatRunResult
+//
+// GET /api/heartbeat/last — 最新ハートビート結果取得（ポーリング）
+// Response: HeartbeatEventPayload | null
+//   - MVP は "main" セッションの最新イベントを返す
+//   - クライアントは 3 秒間隔でポーリングする（OpenClaw UI debug poll 準拠）
+//   - sessionKey 指定での取得は MVP 対象外（将来拡張）
+//
+// GET /api/chat/sessions/:sessionId/messages — 表示用履歴取得
+// Response: SessionMessage[]
 ```
 
 ### 4.2 データモデル
 
 既存の `NormalizedEvent` (`src/core/events.ts`) をそのまま使用する。
-新規の型定義は `SessionMessage`（`SessionEventType` 付き）、`SystemEvent`、`SystemEventEnqueueOptions`、`HeartbeatRunResult`、`ContextBuildResult`、`StreamEvent` など最小限に留める。
+新規の型定義は `SessionTranscriptEvent` / `SessionMessage`、`SystemEvent`、`SystemEventEnqueueOptions`、`HeartbeatRunResult`、`HeartbeatEventPayload`、`HeartbeatRunRecord`、`ContextBuildResult`、`StreamEvent` など最小限に留める。
 
 #### StreamEvent（SSE 公開イベントの union 型）
 
@@ -792,12 +834,13 @@ type StreamEvent =
 // 可観測性（§2.7）で求められる run 状態遷移のログ記録に使用する型。
 // 永続化対象: SessionStore のイベントログ / 診断ログ。
 export type AgentRunStatus = {
+  schema: "adjutant.agent.run-status.v1";
   sessionId: string;
+  sessionKey: string;
   runId: string;
   status: "queued" | "running" | "completed" | "failed";
   reason?: string;       // failed 時の理由
   updatedAt: string;     // ISO8601
-  isHeartbeat?: boolean; // ハートビート起因の run か
 };
 ```
 
@@ -825,8 +868,8 @@ export type AgentRunStatus = {
 # Step 1: メッセージ送信 → runId 取得
 curl -X POST http://localhost:3100/api/chat/messages \
   -H "Content-Type: application/json" \
-  -d '{"message": "今日の #general で何が話されてた？", "clientMessageId": "msg_001"}'
-# Response: {"runId": "run_abc123", "sessionId": "sess_default", "sessionKey": "default", "deduplicated": false}
+  -d '{"text": "今日の #general で何が話されてた？", "clientMessageId": "msg_001"}'
+# Response: {"runId": "run_abc123", "sessionId": "sess_main", "sessionKey": "main", "accepted": true, "deduplicated": false}
 
 # Step 2: runId で SSE ストリーム接続
 curl -N http://localhost:3100/api/chat/runs/run_abc123/stream
@@ -835,16 +878,16 @@ curl -N http://localhost:3100/api/chat/runs/run_abc123/stream
 **SSE レスポンス:**
 ```
 event: run_started
-data: {"runId": "run_abc123", "sessionId": "sess_default", "sessionKey": "default", "seq": 1}
+data: {"runId": "run_abc123", "sessionId": "sess_main", "sessionKey": "main", "seq": 1}
 
 event: text_delta
-data: {"delta": "今日の #general では主に", "seq": 2}
+data: {"runId": "run_abc123", "delta": "今日の #general では主に", "seq": 2}
 
 event: text_delta
-data: {"delta": "3つのトピックが議論されていました...", "seq": 3}
+data: {"runId": "run_abc123", "delta": "3つのトピックが議論されていました...", "seq": 3}
 
 event: text_end
-data: {"text": "今日の #general では主に3つのトピックが議論されていました...", "seq": 4}
+data: {"runId": "run_abc123", "text": "今日の #general では主に3つのトピックが議論されていました...", "seq": 4}
 
 event: run_end
 data: {"runId": "run_abc123", "status": "completed", "seq": 5}
@@ -877,7 +920,7 @@ data: {"runId": "run_abc123", "status": "completed", "seq": 5}
 
 ## メモリ管理
 - ユーザーが「覚えておいて」と言った情報は memory/YYYY-MM-DD.md に記録する
-- 重要な長期的事実（プロジェクト名、チームメンバー、好み）は MEMORY.md に記録する
+- 重要な長期的事実（プロジェクト名、チームメンバー、好み）は、ユーザーの明示指示がある場合のみ MEMORY.md に記録する
 ```
 
 **USER.md の例:**
@@ -973,12 +1016,12 @@ sequenceDiagram
     alt activeHours 設定あり & 時間外
         Timer->>Timer: skip (quiet-hours)
     else activeHours 未設定 or 時間内
-        Timer->>CQ: isGlobalIdle()?
+        Timer->>CQ: isIdle("main")?
 
-    alt いずれかのレーンがビジー
+    alt main レーンがビジー
         Timer->>Timer: skip (requests-in-flight)
-    else 全レーンアイドル
-        Timer->>CQ: enqueueCommand(heartbeatTask, {sessionKey: "__heartbeat__"})
+    else main レーンがアイドル
+        Timer->>CQ: enqueueCommand(heartbeatTask, {sessionKey: "main"})
 
         Note over Timer,AR: ── 以下は enqueue されたタスク関数内 ──
 
@@ -1027,7 +1070,7 @@ sequenceDiagram
     participant SS as SessionStore
 
     User->>UI: メッセージ入力
-    UI->>API: POST /api/chat/messages {message, sessionKey?, sessionId?, clientMessageId}
+    UI->>API: POST /api/chat/messages {text, sessionKey?, sessionId?, clientMessageId}
 
     Note over API: sessionKey 解決（§4.1 解決ルール）
     Note over API,SEQ: ChatHandler: 新規イベントを SEQ に投入（lastDrainTs から sinceMinutes を算出）
@@ -1036,7 +1079,7 @@ sequenceDiagram
     API->>SEQ: enqueue(テンプレート整形済みテキスト, sessionKey)
 
     API->>CQ: enqueueCommand(chatTask, {sessionKey})
-    API-->>UI: {runId, sessionId, sessionKey, deduplicated}
+    API-->>UI: {runId, sessionId, sessionKey, accepted, deduplicated}
     UI->>API: GET /api/chat/runs/:runId/stream
 
     Note over API,AR: ── 以下は enqueue されたタスク関数内 ──
@@ -1046,20 +1089,22 @@ sequenceDiagram
     SEQ-->>API: SystemEvent[]
     API->>MR: readMemoryFiles()
     MR-->>API: {longTerm, daily, yesterday}
-    API->>CB: buildEventContext(systemEvents + memory)
+    API->>SS: loadRecentSessionEvents(sessionId, limit)
+    SS-->>API: SessionTranscriptEvent[] (recent)
+    API->>CB: buildEventContext(systemEvents + memory + recentTranscript)
     CB-->>API: contextText
-    API->>AR: run(userMessage + contextText, systemPrompt)
+    API->>AR: run(userText + contextText, systemPrompt)
     AR->>LLM: stream request
     loop streaming
         LLM-->>AR: text_delta
         AR-->>API: text_delta
-        API-->>UI: SSE text_delta {seq}
+        API-->>UI: SSE text_delta {runId, seq}
         UI-->>User: リアルタイム表示
     end
     LLM-->>AR: done
     AR-->>API: AgentRunResult
-    API->>SS: appendMessage(user + assistant, runId)
-    API-->>UI: SSE text_end {seq}
+    API->>SS: appendEvent(user/assistant events, runId)
+    API-->>UI: SSE text_end {runId, seq}
     API-->>UI: SSE run_end {status, seq}
 ```
 
@@ -1067,9 +1112,9 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-    A["エージェント実行中"] --> B{AI がメモリ書き込みを判断}
-    B -->|"ユーザー指示 or 重要情報"| C["memory_write ツール呼び出し"]
-    B -->|"書き込み不要"| D["通常応答"]
+    A["エージェント実行中"] --> B{"ユーザーの明示指示があるか"}
+    B -->|"はい（例: 覚えておいて）"| C["memory_write ツール呼び出し"]
+    B -->|"いいえ"| D["通常応答"]
     C --> E{"書き込み先"}
     E -->|"日次メモ"| F["memory/YYYY-MM-DD.md に追記"]
     E -->|"長期記憶"| G["MEMORY.md を更新"]
@@ -1089,10 +1134,10 @@ stateDiagram-v2
     [*] --> Idle
 
     Idle --> Processing: ユーザーメッセージ受信
-    Idle --> Processing: ハートビート発火 (isGlobalIdle=true)
-    Idle --> Idle: ハートビート発火 (isGlobalIdle=false → skip)
+    Idle --> Processing: ハートビート発火 (isIdle(main)=true)
+    Idle --> Idle: ハートビート発火 (isIdle(main)=false → requests-in-flight)
 
-    note right of Idle : isGlobalIdle は全レーンを確認。\n当該レーンが Idle でも他レーンが\nビジーなら skip する
+    note right of Idle : MVP では Heartbeat 対象レーンを\nmain に固定し、isIdle(main) で判定する
 
     Processing --> ContextBuilding: コマンドdequeue
     ContextBuilding --> AgentRunning: コンテキスト構築完了
@@ -1115,13 +1160,13 @@ stateDiagram-v2
 | Unit | EventReader | JSONL パース、日付フィルタ、sinceMinutes/limit 切り詰め、空ファイル処理 |
 | Unit | SystemEventQueue | enqueue/drain/peek、MAX_EVENTS=20 上限、sessionKey 分離、連続重複排除、contextKey 変化検知、drain 後の cleanup |
 | Unit | ContextBuilder | トークン切り詰め、truncated フラグ、メモリ注入、SystemEvent 注入、フォーマット出力 |
-| Unit | CommandQueue | sessionKey レーン分離、直列実行、isIdle/isGlobalIdle 判定 |
-| Unit | HeartbeatRunner | タイマー制御、HEARTBEAT_OK 判定（stripHeartbeatToken + マークアップ正規化）、空ファイルスキップ（実質空判定）、requests-in-flight/quiet-hours スキップ、requests-in-flight 短周期再試行、重複排除（`lastHeartbeatText` + `lastHeartbeatSentAt`、24h）、modelId 記録、Current time 注入（重複防止含む） |
+| Unit | CommandQueue | sessionKey レーン分離、直列実行、isIdle 判定 |
+| Unit | HeartbeatRunner | タイマー制御、HEARTBEAT_OK 判定（stripHeartbeatToken + マークアップ正規化）、空ファイルスキップ（実質空判定）、requests-in-flight/quiet-hours/alerts-disabled/readiness-failed/group-session-disabled スキップ、requests-in-flight 短周期再試行、重複排除（`lastHeartbeatText` + `lastHeartbeatSentAt`、24h）、modelId 記録、Current time 注入（重複防止含む）、可視性設定（showOk/showAlerts/useIndicator） |
 | Unit | MemoryReader | timezone に基づく today/yesterday 日付計算、ファイル不在時の null 返却、正常読み込み |
 | Unit | MemoryWriter | ファイル追記・更新、日付パーティション |
-| Unit | SessionStore | JSONL 読み書き（SessionEventType 付き）、破損行スキップ |
-| Unit | AgentRunner | ハートビート時の memory_write ツール除外、SDK セッション後処理（例外時 flush/dispose）、コンテキスト超過時の切り詰め再試行 |
-| Integration | API Server | 2 段パターン（POST → runId → GET SSE）、seq 連番検証、run_end 終端保証、clientMessageId 冪等性、sessionKey 解決ルール（4段階）、tool_call/tool_result SSE 中継、SSE keepalive/reconnect、エラーレスポンス |
+| Unit | SessionStore | SessionTranscriptEvent JSONL 読み書き、必須項目（schema/sessionId/sessionKey/runId/type/ts/payload）検証、破損行スキップ、loadMessages への投影 |
+| Unit | AgentRunner | メモリ書き込みガード（明示トリガーありで memory_write 実行 / 明示トリガーなしで不実行 / ハートビート時は常に除外）、メモリ保存内容の次回ターン再利用、SDK セッション後処理（例外時 flush/dispose）、コンテキスト超過時の切り詰め再試行 |
+| Integration | API Server | 2 段パターン（POST → runId → GET SSE）、seq 連番検証、text_end 単発保証（text_delta 0 件ケース含む）、run_end 終端保証（重複run_endは公開SSEへ出さず内部診断ログへ記録）、clientMessageId 冪等性、sessionKey 解決ルール（4段階）、tool_call/tool_result SSE 中継、SSE keepalive/reconnect、エラーレスポンス |
 | Contract | NormalizedEvent | 既存スキーマとの整合性 |
 
 ### 6.2 モック境界
@@ -1138,7 +1183,7 @@ stateDiagram-v2
 ### Phase 1: 基盤準備
 
 - [ ] 要件定義レビュー・確定
-- [ ] `package.json` に `"assistant"` スクリプトを追加（AC-1 前提）
+- [ ] `package.json` に `"assistant"` スクリプトを追加（P-01 前提）
 - [ ] pi-coding-agent SDK の依存追加と接続確認
 - [ ] assistant-ui 基盤セットアップ（Vite + React）
 - [ ] HEARTBEAT.md テンプレート作成
@@ -1168,11 +1213,15 @@ stateDiagram-v2
 ### Phase 4: CommandQueue + HeartbeatRunner
 
 - [ ] Test: CommandQueue sessionKey 単位のレーン分離テスト (Red)
-- [ ] Impl: CommandQueue 実装（sessionKey レーン + isGlobalIdle）(Green)
+- [ ] Impl: CommandQueue 実装（sessionKey レーン + isIdle(main) 判定）(Green)
 - [ ] Test: HeartbeatRunner タイマー発火テスト (Red)
 - [ ] Impl: `startHeartbeat()` 実装 (Green)
 - [ ] Test: HEARTBEAT_OK 判定、空ファイルスキップ、requests-in-flight テスト (Red)
 - [ ] Test: requests-in-flight 時の短周期再試行テスト (Red)
+- [ ] Test: グループセッション指定時は Heartbeat を実行せず `status: "skipped"` / `reason: "group-session-disabled"` になるテスト (Red)
+- [ ] Test: readiness 失敗時に `status: "skipped"` とイベントログ `status: "skipped"` が記録されるテスト (Red)
+- [ ] Test: `ok-token`/`ok-empty` の可視化判定側 readiness 失敗では `ran + ok-*` を維持するテスト (Red)
+- [ ] Test: showOk/showAlerts/useIndicator が全falseのときモデル呼び出しなしテスト (Red)
 - [ ] Test: 重複排除（24h ウィンドウ + `lastHeartbeatText/lastHeartbeatSentAt`、ウィンドウ期限切れ後の再通知）(Red)
 - [ ] Test: Current time 注入テスト — Body 末尾に時刻行が付与され、既存時は重複挿入しない (Red)
 - [ ] Impl: stripHeartbeatToken、スキップロジック、重複排除、Current time 注入実装 (Green)
@@ -1180,25 +1229,31 @@ stateDiagram-v2
 
 ### Phase 5: SessionStore + AgentRunner
 
-- [ ] Test: SessionStore JSONL 読み書き（SessionEventType 付き）テスト (Red)
+- [ ] Test: SessionTranscriptEvent JSONL 読み書き + 必須項目（schema/sessionId/sessionKey/runId/type/ts/payload）検証テスト (Red)
 - [ ] Impl: SessionStore 実装 (Green)
 - [ ] Test: LLM ストリーミングのモックテスト (Red)
+- [ ] Test: セッショントランスクリプト直近窓が入力コンテキストへ注入されるテスト (Red)
 - [ ] Impl: AgentRunner 実装（SDK 利用手順: SessionManager → SettingsManager → createAgentSession → subscribe → dispose）(Green)
+- [ ] Test: メモリ書き込みガード — 明示トリガーありで memory_write が実行されるテスト (Red)
+- [ ] Test: メモリ書き込みガード — 明示トリガーなしでは memory_write が実行されないテスト (Red)
+- [ ] Test: メモリ再利用 — memory_write で保存した内容が次回ターンの入力コンテキストへ再注入されるテスト (Red)
 - [ ] Test: SDK セッション後処理テスト — 例外発生時も flush/dispose が確実に実行される (Red)
 - [ ] Test: コンテキスト超過時の切り詰め再試行テスト (Red)
 - [ ] Impl: 失敗回復ロジック（1 回再試行 + 切り詰め再試行）(Green)
-- [ ] Impl: memory_write ツール登録 (Green)
+- [ ] Impl: memory_write ツール登録 + 明示トリガー判定実装 (Green)
 - [ ] Integration: AgentRunner + SessionStore + MemoryWriter 結合テスト
 
 ### Phase 6: API Server
 
 - [ ] Test: 2 段パターン（POST → runId → GET SSE）基本フローテスト (Red)
+- [ ] Test: POST /api/chat/messages が `accepted: true` を返す契約テスト (Red)
 - [ ] Test: clientMessageId 冪等性テスト — TTL 内再送で既存 runId 返却 (Red)
-- [ ] Test: SSE seq 連番・run_end 終端保証テスト (Red)
+- [ ] Test: SSE seq 連番・text_end 単発保証（text_delta 0 件ケース含む）・run_end 終端保証テスト（重複run_endは公開SSEへ出さず内部診断ログへ記録）(Red)
 - [ ] Test: sessionKey 解決ルール（4段階優先順 + 不整合 400）テスト (Red)
 - [ ] Test: tool_call/tool_result SSE 中継テスト (Red)
+- [ ] Test: GET /api/chat/sessions/:id/messages / POST /api/heartbeat/run / GET /api/heartbeat/last（3秒ポーリング契約）テスト (Red)
 - [ ] Impl: API Server 実装（CommandQueue sessionKey レーン経由、sessionKey 解決、`127.0.0.1` バインド、冪等キー管理）(Green)
-- [ ] Impl: ハートビートアラート SSE ストリーム（runId 付き）
+- [ ] Impl: GET /api/chat/sessions/:id/messages / POST /api/heartbeat/run / GET /api/heartbeat/last 実装 (Green)
 - [ ] Impl: SSE keepalive + reconnect ポリシー
 - [ ] Integration: チャット → CommandQueue → AgentRunner → SSE の結合テスト
 
@@ -1225,27 +1280,34 @@ stateDiagram-v2
 
 ### 8.1 機能 DoD
 
-- [ ] AC-1: `pnpm run assistant` で起動しチャット画面が表示される
-- [ ] AC-2: Slack 文脈を含んだストリーミング応答が返る
-- [ ] AC-3: HEARTBEAT_OK 時はアラートが抑制される
-- [ ] AC-4: 注目イベント時にアラートが UI に通知される
-- [ ] AC-5: 空 HEARTBEAT.md でモデル呼び出しがスキップされる
-- [ ] AC-6: 同一セッション内で排他的に直列実行される
-- [ ] AC-7: 別セッション間でコンテキストが混線しない
-- [ ] AC-8: 一時失敗時にリトライ/切り詰め再試行が動作する
-- [ ] AC-9〜10: HEARTBEAT.md / SOUL.md / USER.md / AGENTS.md でカスタマイズできる
-- [ ] AC-11: メモリ書き出し・読み込みが動作する
-- [ ] AC-12: SystemEventQueue が正しく注入・drain される
-- [ ] AC-13: プロセス再起動後にセッションが復元される
-- [ ] AC-14: 例外時にも SDK セッションが正しく解放される
-- [ ] AC-15: UI ストリーミングが表示され、run_end で完了確定して履歴が保存される
-- [ ] AC-17: 同一 clientMessageId の再送が冪等処理される
-- [ ] AC-18: Heartbeat 送信 Body に Current time 行が注入される
-- [ ] AC-19: sessionKey 解決ルール（4段階）が正しく機能する
+- [ ] AC-01: Slack イベントが JSONL 追記保存される
+- [ ] AC-02: AI 応答に JSONL 由来コンテキストが取り込まれる
+- [ ] AC-03: OpenClaw 準拠の SDK 実行手順を満たす
+- [ ] AC-04: 同一 `sessionKey` で同時実行が発生しない
+- [ ] AC-05: 異なる `sessionKey` 間でコンテキストが混線しない
+- [ ] AC-06: 一時失敗時の再試行/切り詰め再試行が機能する
+- [ ] AC-07: HEARTBEAT_OK 抑制時に `ran` 維持 + `ok-*` ログが残る
+- [ ] AC-08: Heartbeat アラートが通知される
+- [ ] AC-09: `HEARTBEAT.md` 実質空で `skipped` になる
+- [ ] AC-10: セッショントランスクリプトが `sessionId/sessionKey/runId` 付きで永続化される
+- [ ] AC-11: 明示指示時のみメモリ書き込みされ、次回ターンで再利用される。Heartbeat 実行時は書き込まれない
+- [ ] AC-12: `SOUL.md` が通常対話/Heartbeat の応答方針に反映される
+- [ ] AC-13: SystemEventQueue が `sessionKey` ごとに注入・drain される
+- [ ] AC-14: UI ストリーミング完了 + `GET /api/heartbeat/last` 表示更新が機能する
+- [ ] AC-15: 通常対話/Heartbeat の両方で `MEMORY.md` と当日・前日メモを参照する
+- [ ] AC-16: 24h 同一 Heartbeat 本文が `duplicate` で抑制され `ran` を維持する
+- [ ] AC-17: セッショントランスクリプト直近窓が入力へ取り込まれる
+- [ ] AC-18: アラート配信前 readiness 失敗は `skipped` 記録、`ok-token`/`ok-empty` 側の可視化判定では `ran + ok-*` を維持する
+- [ ] AC-19: 致命的エラー時に `error` 後 `run_end(status: "failed")` で終端する
+- [ ] AC-20: Heartbeat 送信 Body に Current time 行が重複なく注入される
+- [ ] AC-21: 同一 `sessionKey` + `clientMessageId` 再送が冪等処理される
+- [ ] AC-22: `requests-in-flight` 時に `skipped` 記録 + 1 秒後再試行される
+- [ ] P-01: `pnpm run assistant` で起動しチャット画面が表示される
+- [ ] P-03: グループセッション指定時は Heartbeat が実行されず `group-session-disabled` でスキップされる
 
 ### 8.2 品質 DoD
 
-- [ ] AC-16: 全テストがパスし `pnpm run check` が成功する
+- [ ] P-02: 全テストがパスし `pnpm run check` が成功する
 - [ ] 既存の Slack 収集パイプラインに影響がない
 - [ ] API サーバーが `127.0.0.1` にのみバインドされている
 

@@ -275,7 +275,7 @@ OpenClaw参照仕様を、MVPに必要な範囲で採用する。
   - UIの終端判定は `run_end` のみを正とする（`error` は診断表示用）。
   - SSE契約としては `tool_call` / `tool_result` も流れるが、MVP UI では表示必須としない（受信して無視可）。
 - Heartbeat可視化の取得方式はMVPで固定する
-  - `GET /api/heartbeat/last` を `5s` 間隔でポーリングし、`main` セッションの最新状態をUI表示する
+  - `GET /api/heartbeat/last` を `3s` 間隔でポーリングし、`main` セッションの最新状態をUI表示する（OpenClaw UI debug poll準拠）
   - `system_event` の履歴表示は `GET /api/chat/sessions/:sessionId/messages` の結果を利用する（専用WebSocketは設けない）
 
 受け入れ条件:
@@ -364,7 +364,7 @@ OpenClaw参照仕様を、MVPに必要な範囲で採用する。
 5. `GET /api/heartbeat/last`
 - 入力: なし
 - 出力: `main` セッションの直近Heartbeatイベント（`HeartbeatEventPayload | null`）
-- UI契約: `assistant-ui` 側は `5s` 間隔ポーリングで利用する（MVP固定）
+- UI契約: `assistant-ui` 側は `3s` 間隔ポーリングで利用する（MVP固定、OpenClaw UI debug poll準拠）
 - 備考: `sessionKey` 指定での取得はMVP対象外（将来拡張）
 
 注記:
