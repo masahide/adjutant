@@ -576,6 +576,191 @@ function parseMemoryWriteArgs(
   return { scope: "daily", content };
 }
 
+type SessionStoreState = { path: string; store: SessionEntryStore };
+
+async function createSessionWithRecovery(params: {
+  runtime: AgentRunnerRuntime;
+  sessionKey: string;
+  sessionId?: string;
+  sessionEntriesPath: string;
+  sessionStoreState: SessionStoreState;
+  workspaceDir: string;
+  model?: string;
+  isHeartbeat?: boolean;
+  memoryWriteEnabled: boolean;
+}): Promise<{
+  created: { session: SessionLike };
+  sessionStoreState: SessionStoreState;
+  previousUpdatedAt: string | null;
+}> {
+  const createWithStore = async (storeState: SessionStoreState) => {
+    const sessionManager = params.runtime.openSessionManager({
+      sessionKey: params.sessionKey,
+      sessionId: params.sessionId,
+      sessionEntriesPath: params.sessionEntriesPath,
+      sessionEntryStore: storeState.store,
+      workspaceDir: params.workspaceDir,
+    });
+    return await params.runtime.createSession({
+      sessionManager,
+      model: params.model,
+      isHeartbeat: params.isHeartbeat,
+      memoryWriteEnabled: params.memoryWriteEnabled,
+      workspaceDir: params.workspaceDir,
+    });
+  };
+
+  let currentStoreState = params.sessionStoreState;
+  let previousUpdatedAt = getEntryUpdatedAt(currentStoreState.store, params.sessionKey);
+
+  try {
+    const created = await createWithStore(currentStoreState);
+    return { created, sessionStoreState: currentStoreState, previousUpdatedAt };
+  } catch (error) {
+    if (!isSessionCorruptionError(error)) {
+      throw error;
+    }
+    const repaired = await params.runtime.repairSessionData(
+      params.sessionKey,
+      params.sessionEntriesPath
+    );
+    if (!repaired) {
+      throw error;
+    }
+    currentStoreState = await params.runtime.loadSessionEntryStore(params.sessionEntriesPath);
+    previousUpdatedAt = getEntryUpdatedAt(currentStoreState.store, params.sessionKey);
+    const created = await createWithStore(currentStoreState);
+    return { created, sessionStoreState: currentStoreState, previousUpdatedAt };
+  }
+}
+
+function subscribeSessionEvents(params: {
+  session: SessionLike;
+  opts: AgentRunOptions;
+  runtime: AgentRunnerRuntime;
+  memoryWriteEnabled: boolean;
+  workspaceDir: string;
+  timezone: string;
+}): {
+  unsubscribe: () => void;
+  output: { text: string };
+  toolCalls: Array<{ name: string; result: unknown }>;
+  memoryWriteTasks: Promise<void>[];
+} {
+  const output = { text: "" };
+  const toolCalls: Array<{ name: string; result: unknown }> = [];
+  const memoryWriteTasks: Promise<void>[] = [];
+
+  const unsubscribe = params.session.subscribe((event) => {
+    const delta = tryGetTextDelta(event);
+    if (delta) {
+      output.text += delta;
+      params.opts.onTextDelta?.(delta);
+    }
+
+    const toolCall = tryGetToolCall(event);
+    if (toolCall) {
+      if (toolCall.name === "memory_write" && !params.memoryWriteEnabled) {
+        return;
+      }
+      if (toolCall.name === "memory_write") {
+        const parsed = parseMemoryWriteArgs(toolCall.args);
+        if (!parsed) {
+          return;
+        }
+        memoryWriteTasks.push(
+          (async () => {
+            if (parsed.scope === "daily") {
+              await params.runtime.appendDailyMemory(parsed.content, {
+                workspaceDir: params.workspaceDir,
+                timezone: params.timezone,
+              });
+            } else {
+              await params.runtime.updateLongTermMemory(parsed.content, {
+                workspaceDir: params.workspaceDir,
+                timezone: params.timezone,
+              });
+            }
+          })()
+        );
+      }
+      params.opts.onToolCall?.(toolCall.name, toolCall.args);
+    }
+
+    const toolResult = tryGetToolResult(event);
+    if (!toolResult) {
+      return;
+    }
+    if (toolResult.name === "memory_write" && !params.memoryWriteEnabled) {
+      return;
+    }
+    toolCalls.push(toolResult);
+  });
+
+  return { unsubscribe, output, toolCalls, memoryWriteTasks };
+}
+
+async function promptWithRetry(params: {
+  session: SessionLike;
+  prompt: string;
+  runtime: AgentRunnerRuntime;
+}): Promise<void> {
+  let prompt = params.prompt;
+  let attempts = 0;
+
+  for (;;) {
+    try {
+      await params.session.prompt(prompt);
+      return;
+    } catch (error) {
+      const category = classifyError(error);
+      if (category === "transient" && attempts < 1) {
+        attempts += 1;
+        await params.runtime.wait(2500);
+        continue;
+      }
+      if (category === "context_overflow" && attempts < 1) {
+        attempts += 1;
+        prompt = shrinkPrompt(prompt);
+        continue;
+      }
+      throw error;
+    }
+  }
+}
+
+async function persistSessionStore(params: {
+  runtime: AgentRunnerRuntime;
+  sessionStoreState: SessionStoreState;
+  sessionKey: string;
+  sessionMetadata: { sessionId?: string; sessionFile?: string };
+  explicitSessionId?: string;
+  nowIso: string;
+  isHeartbeat?: boolean;
+  previousUpdatedAt: string | null;
+}): Promise<void> {
+  const entry = upsertSessionEntry(params.sessionStoreState.store, params.sessionKey);
+  const sessionId = params.explicitSessionId || params.sessionMetadata.sessionId;
+  if (sessionId) {
+    entry.sessionId = sessionId;
+  }
+  if (params.sessionMetadata.sessionFile) {
+    entry.sessionFile = relativizeSessionFilePath(
+      params.sessionStoreState.path,
+      params.sessionMetadata.sessionFile
+    );
+  }
+  entry.updatedAt = resolveUpdatedAt({
+    nowIso: params.nowIso,
+    isHeartbeat: params.isHeartbeat,
+    previousUpdatedAt: params.previousUpdatedAt,
+  });
+  await params.runtime.saveSessionEntryStore(
+    params.sessionStoreState.store,
+    params.sessionStoreState.path
+  );
+}
+
 export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
   const runtime = getRuntime();
   const startedAtMs = runtime.nowMs();
@@ -605,156 +790,75 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
   let session: SessionLike | undefined;
   let unsubscribe: (() => void) | undefined;
   let output = "";
-  const toolCalls: Array<{ name: string; result: unknown }> = [];
-  const memoryWriteTasks: Promise<void>[] = [];
+  let toolCalls: Array<{ name: string; result: unknown }> = [];
+  let sessionMetadata: { sessionId?: string; sessionFile?: string; modelId?: string } | null = null;
   let previousUpdatedAt: string | null = null;
-  let sessionStoreState: { path: string; store: SessionEntryStore } | null = null;
+  let sessionStoreState: SessionStoreState | null = null;
 
   try {
     releaseLock = await runtime.acquireLock(toSessionStoreLockKey(sessionEntriesPath));
     sessionStoreState = await runtime.loadSessionEntryStore(sessionEntriesPath);
-    previousUpdatedAt = getEntryUpdatedAt(sessionStoreState.store, sessionKey);
-
-    let sessionManager = runtime.openSessionManager({
+    const createdState = await createSessionWithRecovery({
+      runtime,
       sessionKey,
       sessionId: opts.sessionId,
       sessionEntriesPath,
-      sessionEntryStore: sessionStoreState.store,
+      sessionStoreState,
       workspaceDir,
+      model: opts.model,
+      isHeartbeat: opts.isHeartbeat,
+      memoryWriteEnabled,
     });
-    let created: { session: SessionLike };
-    try {
-      created = await runtime.createSession({
-        sessionManager,
-        model: opts.model,
-        isHeartbeat: opts.isHeartbeat,
-        memoryWriteEnabled,
-        workspaceDir,
-      });
-    } catch (error) {
-      if (!isSessionCorruptionError(error)) {
-        throw error;
-      }
-      const repaired = await runtime.repairSessionData(sessionKey, sessionEntriesPath);
-      if (!repaired) {
-        throw error;
-      }
-      sessionStoreState = await runtime.loadSessionEntryStore(sessionEntriesPath);
-      previousUpdatedAt = getEntryUpdatedAt(sessionStoreState.store, sessionKey);
-      sessionManager = runtime.openSessionManager({
-        sessionKey,
-        sessionId: opts.sessionId,
-        sessionEntriesPath,
-        sessionEntryStore: sessionStoreState.store,
-        workspaceDir,
-      });
-      created = await runtime.createSession({
-        sessionManager,
-        model: opts.model,
-        isHeartbeat: opts.isHeartbeat,
-        memoryWriteEnabled,
-        workspaceDir,
-      });
-    }
+    sessionStoreState = createdState.sessionStoreState;
+    previousUpdatedAt = createdState.previousUpdatedAt;
+    const created = createdState.created;
     session = created.session;
 
-    unsubscribe = created.session.subscribe((event) => {
-      const delta = tryGetTextDelta(event);
-      if (delta) {
-        output += delta;
-        opts.onTextDelta?.(delta);
-      }
+    const subscribed = subscribeSessionEvents({
+      session: created.session,
+      opts,
+      runtime,
+      memoryWriteEnabled,
+      workspaceDir,
+      timezone,
+    });
+    unsubscribe = subscribed.unsubscribe;
 
-      const toolCall = tryGetToolCall(event);
-      if (toolCall) {
-        if (toolCall.name === "memory_write" && !memoryWriteEnabled) {
-          return;
-        }
-        if (toolCall.name === "memory_write") {
-          const parsed = parseMemoryWriteArgs(toolCall.args);
-          if (!parsed) {
-            return;
-          }
-          memoryWriteTasks.push(
-            (async () => {
-              if (parsed.scope === "daily") {
-                await runtime.appendDailyMemory(parsed.content, { workspaceDir, timezone });
-              } else {
-                await runtime.updateLongTermMemory(parsed.content, { workspaceDir, timezone });
-              }
-            })()
-          );
-        }
-        opts.onToolCall?.(toolCall.name, toolCall.args);
-      }
-
-      const toolResult = tryGetToolResult(event);
-      if (!toolResult) {
-        return;
-      }
-      if (toolResult.name === "memory_write" && !memoryWriteEnabled) {
-        return;
-      }
-      toolCalls.push(toolResult);
+    await promptWithRetry({
+      session: created.session,
+      prompt,
+      runtime,
     });
 
-    let attempts = 0;
-    for (;;) {
-      try {
-        await created.session.prompt(prompt);
-        break;
-      } catch (error) {
-        const category = classifyError(error);
-        if (category === "transient" && attempts < 1) {
-          attempts += 1;
-          await runtime.wait(2500);
-          continue;
-        }
-        if (category === "context_overflow" && attempts < 1) {
-          attempts += 1;
-          prompt = shrinkPrompt(prompt);
-          continue;
-        }
-        throw error;
-      }
-    }
-
-    if (memoryWriteTasks.length > 0) {
-      await Promise.all(memoryWriteTasks);
+    if (subscribed.memoryWriteTasks.length > 0) {
+      await Promise.all(subscribed.memoryWriteTasks);
     }
 
     const durationMs = Math.max(0, runtime.nowMs() - startedAtMs);
+    output = subscribed.output.text;
+    toolCalls = subscribed.toolCalls;
+    sessionMetadata = resolveSessionMetadata(created.session);
 
-    const sessionMetadata = resolveSessionMetadata(created.session);
-
-    if (sessionStoreState) {
-      const entry = upsertSessionEntry(sessionStoreState.store, sessionKey);
-      const explicitSessionId = opts.sessionId?.trim();
-      const sessionId = explicitSessionId || sessionMetadata.sessionId;
-      if (sessionId) {
-        entry.sessionId = sessionId;
-      }
-      if (sessionMetadata.sessionFile) {
-        entry.sessionFile = relativizeSessionFilePath(
-          sessionStoreState.path,
-          sessionMetadata.sessionFile
-        );
-      }
-      entry.updatedAt = resolveUpdatedAt({
+    if (sessionStoreState && sessionMetadata) {
+      await persistSessionStore({
+        runtime,
+        sessionStoreState,
+        sessionKey,
+        sessionMetadata,
+        explicitSessionId: opts.sessionId?.trim(),
         nowIso: new Date(runtime.nowMs()).toISOString(),
         isHeartbeat: opts.isHeartbeat,
         previousUpdatedAt,
       });
-      await runtime.saveSessionEntryStore(sessionStoreState.store, sessionStoreState.path);
     }
 
     return {
       runId: opts.runId,
       text: output.trim(),
       toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
-      sessionId: opts.sessionId?.trim() || sessionMetadata.sessionId,
+      sessionId: opts.sessionId?.trim() || sessionMetadata?.sessionId,
       durationMs,
-      modelId: sessionMetadata.modelId ?? opts.model,
+      modelId: sessionMetadata?.modelId ?? opts.model,
     };
   } finally {
     try {
