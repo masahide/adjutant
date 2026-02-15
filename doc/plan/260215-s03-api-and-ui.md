@@ -434,58 +434,58 @@ sequenceDiagram
 
 ### Phase 1 設計と準備
 
-- [ ] 要件と仕様の確定（AC-14/19/21 と P-01 の観測可能な完了条件を固定）
-- [ ] インターフェース契約確定（API schema、SSE schema、エラー契約、サンプル更新）
-- [ ] Mermaid 図作成更新（クラス図 + シーケンス図）
-- [ ] 型定義作成（API request/response 型。`StreamEvent` は s01 `types.ts` から import）
-- [ ] `package.json` に `"assistant"` スクリプトを追加（P-01 前提。マスタープラン Phase 1 準拠）
-- [ ] テスト基盤確認（`node --test` で HTTP/SSE テストユーティリティを整備）
+- [x] 要件と仕様の確定（AC-14/19/21 と P-01 の観測可能な完了条件を固定）
+- [x] インターフェース契約確定（API schema、SSE schema、エラー契約、サンプル更新）
+- [x] Mermaid 図作成更新（クラス図 + シーケンス図）
+- [x] 型定義作成（API request/response 型。`StreamEvent` は s01 `types.ts` から import）
+- [x] `package.json` に `"assistant"` スクリプトを追加（P-01 前提。マスタープラン Phase 1 準拠）
+- [x] テスト基盤確認（`node --test` で HTTP/SSE テストユーティリティを整備）
 
 ### Phase 2 API Server 基本フロー
 
-- [ ] Test: `POST /api/chat/messages` 新規受理ケース（Red）
-- [ ] Test: `sessionKey` 必須バリデーション（Red）
-- [ ] Impl: ChatHandler request validation（Green）
-- [ ] Test: タスク関数内で SEQ drain → MemoryReader → TranscriptReader 直近窓 → ContextBuilder でプロンプト構築（Red）
-- [ ] Impl: ChatHandler の SEQ drain → ContextBuilder パイプライン（Green）
-- [ ] Refactor: validation と handler 分離
-- [ ] Test: `GET /api/chat/runs/:runId/stream` 基本フロー（Red）
-- [ ] Impl: SSE 基本配信 + keepalive（15 秒間隔 `: ping\n\n`）（Green）
-- [ ] Refactor: stream 接続管理と close cleanup
+- [x] Test: `POST /api/chat/messages` 新規受理ケース（Red）
+- [x] Test: `sessionKey` 必須バリデーション（Red）
+- [x] Impl: ChatHandler request validation（Green）
+- [x] Test: タスク関数内で SEQ drain → MemoryReader → TranscriptReader 直近窓 → ContextBuilder でプロンプト構築（Red）
+- [x] Impl: ChatHandler の SEQ drain → ContextBuilder パイプライン（Green）
+- [x] Refactor: validation と handler 分離
+- [x] Test: `GET /api/chat/runs/:runId/stream` 基本フロー（Red）
+- [x] Impl: SSE 基本配信 + keepalive（15 秒間隔 `: ping\n\n`）（Green）
+- [x] Refactor: stream 接続管理と close cleanup
 
 ### Phase 3 API Server 拡張
 
-- [ ] Test: `seq` 単調増加、終端 state（`final`/`aborted`/`error`）一意（Red）
-- [ ] Test: `state: "error"` 終端保証（Red）
-- [ ] Test: `POST /api/chat/abort` — run 単位キャンセル / sessionKey 全件キャンセル / stop トリガー経路（Red）
-- [ ] Impl: StreamEventBridge + terminal guard（Green）
-- [ ] Impl: chat.abort ハンドラ（Green）
-- [ ] Refactor: SSE 変換レイヤー分離
-- [ ] Test: 冪等 TTL 内外の再送（Red）
-- [ ] Impl: IdempotencyRegistry（Map + TTL cleanup）（Green）
-- [ ] Test: AgentRunStatus 状態遷移記録 — コマンド実行前に `queued`/`running`、完了後に `completed`/`failed` が診断ログへ記録される（Red）
-- [ ] Impl: ChatHandler の AgentRunStatus 記録（コマンド実行前後で状態遷移を記録）（Green）
-- [ ] Test: 履歴 API と heartbeat API（Red）
-- [ ] Impl: `GET /api/chat/history`、`GET /api/events/stream`、`POST/GET /api/heartbeat/*`（Green）
-- [ ] Integration: API Server と s01/s02 実装の結合テスト
+- [x] Test: `seq` 単調増加、終端 state（`final`/`aborted`/`error`）一意（Red）
+- [x] Test: `state: "error"` 終端保証（Red）
+- [x] Test: `POST /api/chat/abort` — run 単位キャンセル / sessionKey 全件キャンセル / stop トリガー経路（Red）
+- [x] Impl: StreamEventBridge + terminal guard（Green）
+- [x] Impl: chat.abort ハンドラ（Green）
+- [x] Refactor: SSE 変換レイヤー分離
+- [x] Test: 冪等 TTL 内外の再送（Red）
+- [x] Impl: IdempotencyRegistry（Map + TTL cleanup）（Green）
+- [x] Test: AgentRunStatus 状態遷移記録 — コマンド実行前に `queued`/`running`、完了後に `completed`/`failed` が診断ログへ記録される（Red）
+- [x] Impl: ChatHandler の AgentRunStatus 記録（コマンド実行前後で状態遷移を記録）（Green）
+- [x] Test: 履歴 API と heartbeat API（Red）
+- [x] Impl: `GET /api/chat/history`、`GET /api/events/stream`、`POST/GET /api/heartbeat/*`（Green）
+- [x] Integration: API Server と s01/s02 実装の結合テスト
 
 ### Phase 4 Web UI 実装
 
-- [ ] Test: Runtime が delta 0 件時に final.message で本文更新（Red）
-- [ ] Test: Runtime の seq 欠落検知（Red）
-- [ ] Test: SSE 再接続バックオフ — initial=2s, max=30s, factor=1.8, jitter=25%, maxAttempts=12（Red）
-- [ ] Impl: SSE 再接続ロジック（指数バックオフ + jitter + 完了済み run 判定）（Green）
-- [ ] Impl: Thread + Composer + Runtime（Green）
-- [ ] Refactor: UI state と SSE parser の責務分離
-- [ ] Test: HeartbeatIndicator が `events/stream` の heartbeat push と `heartbeat/last` 初期復元を処理できる（Red）
-- [ ] Impl: HeartbeatIndicator + heartbeat snapshot 初期読み込み（Green）
+- [x] Test: Runtime が delta 0 件時に final.message で本文更新（Red）
+- [x] Test: Runtime の seq 欠落検知（Red）
+- [x] Test: SSE 再接続バックオフ — initial=2s, max=30s, factor=1.8, jitter=25%, maxAttempts=12（Red）
+- [x] Impl: SSE 再接続ロジック（指数バックオフ + jitter + 完了済み run 判定）（Green）
+- [x] Impl: Thread + Composer + Runtime（Green）
+- [x] Refactor: UI state と SSE parser の責務分離
+- [x] Test: HeartbeatIndicator が `events/stream` の heartbeat push と `heartbeat/last` 初期復元を処理できる（Red）
+- [x] Impl: HeartbeatIndicator + heartbeat snapshot 初期読み込み（Green）
 - [ ] Integration: Vite proxy 経由の送受信スモーク
 
 ### Phase 5 統合と検証
 
-- [ ] 全体テスト実行（`pnpm run check`）
-- [ ] エッジケース確認（完了後 stream 接続、再接続上限、重複終端）
-- [ ] ログと例外確認（不正入力、タイムアウト、AgentRunner 失敗）
+- [x] 全体テスト実行（`pnpm run check`）
+- [x] エッジケース確認（完了後 stream 接続、再接続上限、重複終端）
+- [x] ログと例外確認（不正入力、タイムアウト、AgentRunner 失敗）
 - [ ] ドキュメント更新（`README.md`、`CLAUDE.md`、本計画）
 - [ ] P-01 検証（`pnpm run assistant` で画面起動と 1 往復チャット成功）
 
