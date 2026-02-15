@@ -1,6 +1,6 @@
 # Adjutant
 
-Slack Desktop の Chrome DevTools Protocol (CDP) からイベントを収集し、正規化した JSONL を日付単位で保存する Node.js ツールです。
+Slack Desktop の Chrome DevTools Protocol (CDP) からイベントを収集し、正規化した JSONL を日付単位で保存する Node.js ツールです。収集したイベントを AI が読み込み、プロアクティブに動作するパーソナルアシスタント機能も提供します。
 
 ## 現在の実装範囲
 
@@ -10,17 +10,20 @@ Slack Desktop の Chrome DevTools Protocol (CDP) からイベントを収集し�
 - 日付パーティション JSONL 追記保存 (`src/io/jsonlWriter.ts`)
 - チャンネル名・ユーザー名の team 単位キャッシュ (`data/_cache/slack/`)
 - オプションの Debug UI (`ADJUTANT_DEBUG_UI=1`)
+- AI アシスタント: HTTP API + SSE ストリーミング + Web UI (`src/assistant/`, `src/ui/`)
 
 GitHub / ローカル Git 収集や日次要約は未実装で、仕様メモは `doc/spec.md` にあります。
 
 ## ディレクトリ構成
 
 ```text
-src/        # ランタイム本体 (TypeScript)
-scripts/    # 開発起動・運用起動ヘルパー
-hack/       # Slack/CDP 補助スクリプト
-doc/        # 設計仕様
-tests/      # node --test 用テスト
+src/            # ランタイム本体 (TypeScript)
+src/assistant/  # AI アシスタント基盤（API サーバー、チャットハンドラ、データ読み込み）
+src/ui/         # Web UI（@assistant-ui/react）
+scripts/        # 開発起動・運用起動ヘルパー
+hack/           # Slack/CDP 補助スクリプト
+doc/            # 設計仕様
+tests/          # node --test 用テスト
 ```
 
 ## セットアップ
@@ -36,6 +39,7 @@ pnpm start               # 収集プロセスを起動 (tsx src/index.ts)
 pnpm dev                 # CDP 利用可否を確認して pnpm start を起動
 pnpm run build:backend   # dist/backend/index.js をビルド
 pnpm run serve           # dist/backend/index.js を運用モード起動
+pnpm run assistant       # AI アシスタント起動（API :3100 + Web UI :5173）
 pnpm run typecheck
 pnpm run lint
 pnpm run format
@@ -64,6 +68,10 @@ pnpm check               # format -> typecheck -> test
 | `ADJUTANT_RAW_FETCH_LOG`                   | `0`                                 | `raw_fetch` デバッグイベントを JSONL へ保存（内部 fetch hook も有効化） |
 | `ADJUTANT_RAW_FETCH_LOG_PATH`              | `<dataDir>/_debug/raw-fetch.jsonl`  | `raw_fetch` イベントの出力先                                            |
 | `ADJUTANT_RAW_FETCH_LOG_MAX_PAYLOAD_CHARS` | `0`                                 | payload を文字列化して上限超過時に切り詰め (`0` は無制限)               |
+| `ADJUTANT_API_PORT`                        | `3100`                              | AI アシスタント API サーバーのポート                                    |
+| `ADJUTANT_API_HOST`                        | `127.0.0.1`                         | AI アシスタント API サーバーのバインドアドレス                          |
+| `ADJUTANT_VITE_PORT`                       | `5173`                              | AI アシスタント Web UI（Vite）のポート                                  |
+| `ADJUTANT_WORKSPACE_DIR`                   | `ADJUTANT_DATA_DIR` と同値          | アシスタントのワークスペースディレクトリ                                |
 
 ## 出力
 

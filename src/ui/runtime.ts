@@ -151,6 +151,72 @@ export function createRuntime(baseUrl: string = "") {
     connect();
   }
 
+  function extractUserMessage(text: string): string | null {
+    const marker = "## User Message\n";
+    const idx = text.lastIndexOf(marker);
+    if (idx >= 0) {
+      return text.slice(idx + marker.length).trim() || null;
+    }
+    // No marker means it's a context-only prompt, skip it
+    if (text.includes("## Recent Session Transcript") || text.includes("## Memory")) {
+      return null;
+    }
+    return text.trim() || null;
+  }
+
+  async function loadHistory(sessionKey = "main") {
+    try {
+      const res = await fetch(
+        `${baseUrl}/api/chat/history?sessionKey=${encodeURIComponent(sessionKey)}`
+      );
+      if (!res.ok) return;
+      const data = (await res.json()) as {
+        messages: Array<{
+          role?: string;
+          content?: string | Array<{ type?: string; text?: string }>;
+          timestamp?: number;
+        }>;
+      };
+      if (!Array.isArray(data.messages) || data.messages.length === 0) return;
+
+      const restored: RuntimeMessage[] = [];
+      for (const msg of data.messages) {
+        const role = msg.role === "user" ? "user" : msg.role === "assistant" ? "assistant" : null;
+        if (!role) continue;
+
+        let text = "";
+        if (typeof msg.content === "string") {
+          text = msg.content;
+        } else if (Array.isArray(msg.content)) {
+          text = msg.content
+            .filter((c) => c.type === "text" && c.text)
+            .map((c) => c.text!)
+            .join("");
+        }
+        if (!text.trim()) continue;
+
+        if (role === "user") {
+          const userText = extractUserMessage(text);
+          if (!userText) continue;
+          text = userText;
+        }
+
+        restored.push({
+          role,
+          content: text,
+          timestamp: typeof msg.timestamp === "number" ? msg.timestamp : Date.now(),
+        });
+      }
+      // Keep only last 50 messages to avoid overloading the UI
+      const trimmed = restored.slice(-50);
+      if (trimmed.length > 0) {
+        setState({ messages: trimmed });
+      }
+    } catch {
+      // ignore
+    }
+  }
+
   async function loadHeartbeatSnapshot() {
     try {
       const res = await fetch(`${baseUrl}/api/heartbeat/last`);
@@ -176,10 +242,25 @@ export function createRuntime(baseUrl: string = "") {
     return () => es.close();
   }
 
+  async function abort(sessionKey = "main") {
+    try {
+      await fetch(`${baseUrl}/api/chat/abort`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionKey }),
+      });
+      setState({ isStreaming: false });
+    } catch {
+      // ignore
+    }
+  }
+
   return {
     getState,
     subscribe,
     sendMessage,
+    abort,
+    loadHistory,
     loadHeartbeatSnapshot,
     subscribeEvents,
   };

@@ -87,17 +87,17 @@ describe("ChatHandler", () => {
       sessionKey: "main",
       idempotencyKey: "msg-001",
     });
-    assert.equal(res.runId, "main:msg-001");
+    assert.equal(res.runId, "msg-001");
     assert.equal(res.status, "started");
   });
 
-  it("runId は sessionKey:idempotencyKey 形式", () => {
+  it("runId は idempotencyKey と一致する", () => {
     const res = ChatHandler.acceptMessage({
       message: "hello",
       sessionKey: "main",
       idempotencyKey: "my-unique-key",
     });
-    assert.equal(res.runId, "main:my-unique-key");
+    assert.equal(res.runId, "my-unique-key");
   });
 
   it("同一 sessionKey + idempotencyKey の再送は冪等処理", () => {
@@ -129,7 +129,8 @@ describe("ChatHandler", () => {
       sessionKey: "session-b",
       idempotencyKey: "msg-001",
     });
-    assert.notEqual(a.runId, b.runId);
+    // runId = idempotencyKey なので同値だが、内部 storeKey が異なるため別 run として処理される
+    assert.equal(a.runId, b.runId);
     assert.equal(a.status, "started");
     assert.equal(b.status, "started");
   });
@@ -150,7 +151,7 @@ describe("ChatHandler", () => {
       idempotencyKey: "fail-001",
     });
 
-    const { events, unsubscribe } = StreamEventBridge.subscribe("main:fail-001");
+    const { events, unsubscribe } = StreamEventBridge.subscribe("fail-001");
     const collected: StreamEvent[] = [];
     for await (const ev of events) {
       collected.push(ev);
@@ -179,7 +180,7 @@ describe("ChatHandler", () => {
       idempotencyKey: "failed-001",
     });
 
-    const { events, unsubscribe } = StreamEventBridge.subscribe("main:failed-001");
+    const { events, unsubscribe } = StreamEventBridge.subscribe("failed-001");
     const collected: StreamEvent[] = [];
     for await (const ev of events) {
       collected.push(ev);
@@ -199,7 +200,7 @@ describe("ChatHandler", () => {
       idempotencyKey: "ok-001",
     });
 
-    const { events, unsubscribe } = StreamEventBridge.subscribe("main:ok-001");
+    const { events, unsubscribe } = StreamEventBridge.subscribe("ok-001");
     const collected: StreamEvent[] = [];
     for await (const ev of events) {
       collected.push(ev);
@@ -227,13 +228,13 @@ describe("ChatHandler", () => {
       idempotencyKey: "abort-001",
     });
 
-    const result = ChatHandler.abort({ sessionKey: "main", runId: "main:abort-001" });
+    const result = ChatHandler.abort({ sessionKey: "main", runId: "abort-001" });
     assert.equal(result.ok, true);
     assert.equal(result.aborted, 1);
-    assert.deepEqual(result.runIds, ["main:abort-001"]);
+    assert.deepEqual(result.runIds, ["abort-001"]);
 
     // Verify terminal event was emitted
-    const terminal = StreamEventBridge.getTerminal("main:abort-001");
+    const terminal = StreamEventBridge.getTerminal("abort-001");
     assert.notEqual(terminal, null);
     assert.equal(terminal?.state, "aborted");
     assert.equal(terminal?.errorMessage, "Aborted by user");

@@ -14,6 +14,7 @@ pnpm start                  # 収集プロセス起動 (tsx src/index.ts)
 pnpm dev                    # CDP 利用可否確認後に起動
 pnpm run build:backend      # tsc コンパイル → dist/backend/
 pnpm run serve              # dist/backend/index.js を運用モード起動（要 build:backend）
+pnpm run assistant          # AI アシスタント起動（API + Web UI）
 pnpm run typecheck          # 型チェック
 pnpm run lint               # ESLint
 pnpm run lint:fix           # ESLint 自動修正
@@ -32,6 +33,8 @@ node --import tsx --test tests/jsonlWriter.test.ts
 
 ## アーキテクチャ
 
+### Slack イベント収集パイプライン
+
 ```
 CDP endpoint (Slack Desktop)
     ↓
@@ -46,6 +49,25 @@ src/pipeline/slackIngestor.ts   ← パイプライン統合
 src/io/jsonlWriter.ts           ← data/YYYY/MM/DD/slack/events.jsonl へ追記保存
 ```
 
+### AI アシスタント（`src/assistant/` + `src/ui/`）
+
+```
+data/YYYY/MM/DD/slack/events.jsonl
+    ↓
+src/assistant/event-reader.ts        ← JSONL イベント読み込み
+src/assistant/system-event-queue.ts  ← 外部トリガ FIFO キュー
+src/assistant/memory-reader.ts       ← MEMORY.md / memory/YYYY-MM-DD.md 読み込み
+    ↓
+src/assistant/context-builder.ts     ← AI 向けプロンプト組み立て
+    ↓
+src/assistant/command-queue.ts       ← main + session レーン排他制御
+src/assistant/chat-handler.ts        ← チャット受理・冪等判定・パイプライン統合
+    ↓
+src/assistant/api-server.ts          ← HTTP API + SSE ストリーミング（:3100）
+    ↓
+src/ui/                              ← @assistant-ui/react ベース Web UI（Vite :5173）
+```
+
 ### 主要モジュール
 
 - **`src/index.ts`** — エントリポイント。セッション管理、シグナルハンドリング、リトライ（指数バックオフ）
@@ -54,6 +76,8 @@ src/io/jsonlWriter.ts           ← data/YYYY/MM/DD/slack/events.jsonl へ追記
 - **`src/runtime/config.ts`** — 設定解決（CDP エンドポイント、データディレクトリ、環境変数）
 - **`src/io/`** — JSONL ライター、CDP 生イベントログ、fetch デバッグログ
 - **`src/debug/debugUi.ts`** — SSE ベースのデバッグサーバー
+- **`src/assistant/`** — AI アシスタント基盤。データ読み込み、キュー制御、API サーバー、チャットハンドラ
+- **`src/ui/`** — Web UI。Thread + Composer + HeartbeatIndicator（`@assistant-ui/react`）
 
 ### イベント UID 規則
 
@@ -66,6 +90,24 @@ src/io/jsonlWriter.ts           ← data/YYYY/MM/DD/slack/events.jsonl へ追記
 - イベント: `data/YYYY/MM/DD/slack/events.jsonl`
 - キャッシュ: `data/_cache/slack/{channel,user}-names-by-team/<team_id>.json`
 - デバッグ: `data/_debug/{cdp-events,raw-fetch}.jsonl`
+
+### AI アシスタント環境変数
+
+| 変数名                           | デフォルト           | 説明                                   |
+| -------------------------------- | -------------------- | -------------------------------------- |
+| `ADJUTANT_API_PORT`              | `3100`               | API サーバーポート                     |
+| `ADJUTANT_API_HOST`              | `127.0.0.1`          | API サーバーホスト                     |
+| `ADJUTANT_DATA_DIR`              | `data`               | データディレクトリ                     |
+| `ADJUTANT_WORKSPACE_DIR`         | `$ADJUTANT_DATA_DIR` | ワークスペースディレクトリ             |
+| `ADJUTANT_TZ`                    | `Asia/Tokyo`         | タイムゾーン                           |
+| `ADJUTANT_MODEL`                 | (SDK デフォルト)     | LLM モデル指定 (`provider/model` 形式) |
+| `ADJUTANT_HEARTBEAT_INTERVAL_MS` | `1800000` (30分)     | ハートビート間隔                       |
+| `ADJUTANT_VITE_PORT`             | `5173`               | Vite dev server ポート                 |
+| `PI_CACHE_RETENTION`             | `long` (自動設定)    | プロンプトキャッシュ保持期間           |
+
+**モデル指定例:** `ADJUTANT_MODEL=openai/gpt-4o`, `ADJUTANT_MODEL=anthropic/claude-sonnet-4-20250514`
+
+**API 選択:** pi-coding-agent SDK がモデル定義に基づき自動選択（OpenAI は Responses API、Codex はセッションキャッシュ付き）。Codex モデル指定時は `sessionId` が自動伝搬される。
 
 ## テスト
 

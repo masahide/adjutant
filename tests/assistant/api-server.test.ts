@@ -66,7 +66,7 @@ describe("ApiServer", () => {
     });
     assert.equal(res.status, 200);
     const body = (await res.json()) as { runId: string; status: string };
-    assert.equal(body.runId, "main:test-001");
+    assert.equal(body.runId, "test-001");
     assert.equal(body.status, "started");
   });
 
@@ -131,8 +131,7 @@ describe("ApiServer", () => {
     // 少し待ってからstreamに接続
     await new Promise((r) => setTimeout(r, 100));
 
-    const runId = encodeURIComponent("main:stream-001");
-    const res = await fetch(url(`/api/chat/runs/${runId}/stream`));
+    const res = await fetch(url("/api/chat/runs/stream-001/stream"));
     assert.equal(res.status, 200);
     assert.equal(res.headers.get("content-type"), "text/event-stream");
 
@@ -267,8 +266,7 @@ describe("ApiServer", () => {
 
     await new Promise((r) => setTimeout(r, 100));
 
-    const runId = encodeURIComponent("main:seq-001");
-    const res = await fetch(url(`/api/chat/runs/${runId}/stream`));
+    const res = await fetch(url("/api/chat/runs/seq-001/stream"));
     const text = await res.text();
     const lines = text
       .split("\n")

@@ -1,0 +1,43 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+@import "@assistant-ui/react-markdown/styles/dot.css";
+
+@source "./";
+
+@theme {
+  /* shadcn-compatible dark theme tokens */
+  --color-background: #0a0a0a;
+  --color-foreground: #fafafa;
+  --color-muted: #262626;
+  --color-muted-foreground: #a1a1aa;
+  --color-primary: #fafafa;
+  --color-primary-foreground: #0a0a0a;
+  --color-accent: #262626;
+  --color-accent-foreground: #fafafa;
+  --color-destructive: #ef4444;
+  --color-destructive-foreground: #fafafa;
+  --color-border: #27272a;
+  --color-input: #27272a;
+  --color-ring: #3f3f46;
+}
+
+/* Markdown prose overrides for dark theme */
+.prose :where(code):not(:where(pre code)) {
+  background-color: #1e1e2e;
+  padding: 0.15em 0.35em;
+  border-radius: 0.25rem;
+  font-size: 0.875em;
+}
+
+.prose :where(pre) {
+  background-color: #1e1e2e;
+  border: 1px solid #27272a;
+}
+
+.prose :where(ul) {
+  list-style-type: disc;
+}
+
+.prose :where(ol) {
+  list-style-type: decimal;
+}

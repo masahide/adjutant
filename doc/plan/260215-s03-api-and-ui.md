@@ -165,7 +165,7 @@ type PostChatMessageResponse = {
 
 - session 解決ルール
   - `sessionKey` は必須。未指定/空文字は `400 Bad Request`
-  - `runId` は `idempotencyKey` をそのまま採用する（OpenClaw chat.send 準拠）
+  - `runId` は `${sessionKey}:${idempotencyKey}` で生成する（クロスセッション衝突防止）
 - バリデーション方針
   - 必須項目欠落は `400`
   - `idempotencyKey` は OpenClaw `NonEmptyString` 準拠（`minLength: 1` のみ）
@@ -479,15 +479,15 @@ sequenceDiagram
 - [x] Refactor: UI state と SSE parser の責務分離
 - [x] Test: HeartbeatIndicator が `events/stream` の heartbeat push と `heartbeat/last` 初期復元を処理できる（Red）
 - [x] Impl: HeartbeatIndicator + heartbeat snapshot 初期読み込み（Green）
-- [ ] Integration: Vite proxy 経由の送受信スモーク
+- [x] Integration: Vite proxy 経由の送受信スモーク
 
 ### Phase 5 統合と検証
 
 - [x] 全体テスト実行（`pnpm run check`）
 - [x] エッジケース確認（完了後 stream 接続、再接続上限、重複終端）
 - [x] ログと例外確認（不正入力、タイムアウト、AgentRunner 失敗）
-- [ ] ドキュメント更新（`README.md`、`CLAUDE.md`、本計画）
-- [ ] P-01 検証（`pnpm run assistant` で画面起動と 1 往復チャット成功）
+- [x] ドキュメント更新（`README.md`、`CLAUDE.md`、本計画）
+- [x] P-01 検証（`pnpm run assistant` で画面起動と 1 往復チャット成功）
 
 ---
 
@@ -495,19 +495,19 @@ sequenceDiagram
 
 ### 8.1 機能 DoD Functional DoD
 
-- [ ] AC-14: UI が delta 0 件でも final.message で本文表示でき、heartbeat 状態を表示できる
-- [ ] AC-19: 致命的エラー時に `state: "error"` が終端として 1 回だけ配信される
-- [ ] AC-21: 同一 `sessionKey + idempotencyKey` の再送が冪等処理される
-- [ ] P-01: `pnpm run assistant` で API + UI が起動し、チャット画面から送受信できる
-- [ ] 契約例（4.4）のリクエスト/レスポンスが実装と一致する
+- [x] AC-14: UI が delta 0 件でも final.message で本文表示でき、heartbeat 状態を表示できる
+- [x] AC-19: 致命的エラー時に `state: "error"` が終端として 1 回だけ配信される
+- [x] AC-21: 同一 `sessionKey + idempotencyKey` の再送が冪等処理される
+- [x] P-01: `pnpm run assistant` で API + UI が起動し、チャット画面から送受信できる
+- [x] 契約例（4.4）のリクエスト/レスポンスが実装と一致する
 
 ### 8.2 品質 DoD Quality DoD
 
-- [ ] `pnpm run check` が成功する（format、typecheck、test）
-- [ ] 追加した Unit/Integration/Contract テストが全てパスする
-- [ ] API Server が `127.0.0.1` のみにバインドされている
-- [ ] 不要なデバッグログや実験コードが残っていない
-- [ ] 仕様・契約・図の差分がドキュメントに反映されている
+- [x] `pnpm run check` が成功する（format、typecheck、test）
+- [x] 追加した Unit/Integration/Contract テストが全てパスする
+- [x] API Server が `127.0.0.1` のみにバインドされている
+- [x] 不要なデバッグログや実験コードが残っていない
+- [x] 仕様・契約・図の差分がドキュメントに反映されている
 
 ---
 

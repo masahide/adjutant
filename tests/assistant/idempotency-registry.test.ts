@@ -10,14 +10,16 @@ describe("IdempotencyRegistry", () => {
   it("新規キーは kind=new を返す", () => {
     const result = Registry.getOrCreate("main", "msg-001");
     assert.equal(result.kind, "new");
-    assert.equal(result.runId, "main:msg-001");
+    assert.equal(result.runId, "msg-001");
+    assert.equal(result.storeKey, "main:msg-001");
   });
 
   it("TTL 内の再送は kind=existing を返す", () => {
     Registry.getOrCreate("main", "msg-001");
     const result = Registry.getOrCreate("main", "msg-001");
     assert.equal(result.kind, "existing");
-    assert.equal(result.runId, "main:msg-001");
+    assert.equal(result.runId, "msg-001");
+    assert.equal(result.storeKey, "main:msg-001");
     if (result.kind === "existing") {
       assert.equal(result.status, "in_flight");
     }
@@ -25,7 +27,7 @@ describe("IdempotencyRegistry", () => {
 
   it("updateStatus で状態更新後の再送は更新後ステータスを返す", () => {
     const created = Registry.getOrCreate("main", "msg-001");
-    Registry.updateStatus(created.runId, "ok");
+    Registry.updateStatus(created.storeKey, "ok");
     const result = Registry.getOrCreate("main", "msg-001");
     assert.equal(result.kind, "existing");
     if (result.kind === "existing") {
@@ -43,7 +45,8 @@ describe("IdempotencyRegistry", () => {
     const a = Registry.getOrCreate("session-a", "msg-001");
     const b = Registry.getOrCreate("session-b", "msg-001");
     assert.equal(b.kind, "new");
-    assert.notEqual(a.runId, b.runId);
+    assert.equal(a.runId, b.runId); // runId = idempotencyKey なので同じ
+    assert.notEqual(a.storeKey, b.storeKey); // storeKey は異なる
   });
 
   it("cleanup で TTL 切れエントリを削除", () => {

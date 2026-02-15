@@ -12,18 +12,19 @@ export function getOrCreate(
   idempotencyKey: string,
   ttlSec: number = 300
 ): DedupResult {
-  const runId = `${sessionKey}:${idempotencyKey}`;
+  const storeKey = `${sessionKey}:${idempotencyKey}`;
+  const runId = idempotencyKey;
   const now = Date.now();
-  const existing = store.get(runId);
+  const existing = store.get(storeKey);
   if (existing && now - existing.createdAt < ttlSec * 1000) {
-    return { kind: "existing", runId, status: existing.status };
+    return { kind: "existing", runId, storeKey, status: existing.status };
   }
-  store.set(runId, { status: "in_flight", createdAt: now });
-  return { kind: "new", runId };
+  store.set(storeKey, { status: "in_flight", createdAt: now });
+  return { kind: "new", runId, storeKey };
 }
 
-export function updateStatus(runId: string, status: "ok" | "error"): void {
-  const entry = store.get(runId);
+export function updateStatus(storeKey: string, status: "ok" | "error"): void {
+  const entry = store.get(storeKey);
   if (entry) {
     entry.status = status;
   }

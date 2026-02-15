@@ -43,7 +43,7 @@ let config: ChatHandlerConfig | null = null;
 
 const activeRuns = new Map<
   string,
-  { sessionKey: string; abort: () => void; seqRef: { value: number } }
+  { sessionKey: string; storeKey: string; abort: () => void; seqRef: { value: number } }
 >();
 
 export function configure(userConfig: ChatHandlerConfig): void {
@@ -58,6 +58,7 @@ function getConfig(): ChatHandlerConfig {
 /** Emit terminal event (if not already emitted), update idempotency status, and log. */
 function finalizeRun(
   runId: string,
+  storeKey: string,
   sessionKey: string,
   seqRef: { value: number },
   terminal: StreamEvent["state"],
@@ -72,7 +73,7 @@ function finalizeRun(
       errorMessage,
     });
   }
-  IdempotencyRegistry.updateStatus(runId, terminal === "final" ? "ok" : "error");
+  IdempotencyRegistry.updateStatus(storeKey, terminal === "final" ? "ok" : "error");
   logRunStatus(runId, sessionKey, terminal === "final" ? "completed" : "failed", errorMessage);
 }
 
@@ -98,19 +99,20 @@ export function acceptMessage(req: PostChatMessageRequest): PostChatMessageRespo
     return { runId: dedup.runId, status: dedup.status };
   }
 
-  const { runId } = dedup;
+  const { runId, storeKey } = dedup;
 
-  startRun(runId, req.sessionKey, req.message);
+  startRun(runId, storeKey, req.sessionKey, req.message);
 
   return { runId, status: "started" };
 }
 
-function startRun(runId: string, sessionKey: string, message: string): void {
+function startRun(runId: string, storeKey: string, sessionKey: string, message: string): void {
   const cfg = getConfig();
   let aborted = false;
   const seqRef = { value: 0 };
   activeRuns.set(runId, {
     sessionKey,
+    storeKey,
     abort: () => {
       aborted = true;
     },
@@ -126,7 +128,14 @@ function startRun(runId: string, sessionKey: string, message: string): void {
         logRunStatus(runId, sessionKey, "running");
 
         if (aborted) {
-          finalizeRun(runId, sessionKey, seqRef, "aborted", "Run was aborted before execution");
+          finalizeRun(
+            runId,
+            storeKey,
+            sessionKey,
+            seqRef,
+            "aborted",
+            "Run was aborted before execution"
+          );
           return;
         }
 
@@ -166,18 +175,33 @@ function startRun(runId: string, sessionKey: string, message: string): void {
         });
 
         if (aborted) {
-          finalizeRun(runId, sessionKey, seqRef, "aborted", "Run was aborted during execution");
+          finalizeRun(
+            runId,
+            storeKey,
+            sessionKey,
+            seqRef,
+            "aborted",
+            "Run was aborted during execution"
+          );
           return;
         }
 
         if (result.status === "completed") {
-          finalizeRun(runId, sessionKey, seqRef, "final");
+          finalizeRun(runId, storeKey, sessionKey, seqRef, "final");
         } else {
-          finalizeRun(runId, sessionKey, seqRef, "error", result.reason ?? "Agent failed");
+          finalizeRun(
+            runId,
+            storeKey,
+            sessionKey,
+            seqRef,
+            "error",
+            result.reason ?? "Agent failed"
+          );
         }
       } catch (err) {
         finalizeRun(
           runId,
+          storeKey,
           sessionKey,
           seqRef,
           "error",
@@ -197,14 +221,21 @@ export function abort(req: PostChatAbortRequest): PostChatAbortResponse {
     const run = activeRuns.get(req.runId);
     if (run && run.sessionKey === req.sessionKey) {
       run.abort();
-      finalizeRun(req.runId, req.sessionKey, run.seqRef, "aborted", "Aborted by user");
+      finalizeRun(
+        req.runId,
+        run.storeKey,
+        req.sessionKey,
+        run.seqRef,
+        "aborted",
+        "Aborted by user"
+      );
       abortedIds.push(req.runId);
     }
   } else {
     for (const [runId, run] of activeRuns) {
       if (run.sessionKey === req.sessionKey) {
         run.abort();
-        finalizeRun(runId, req.sessionKey, run.seqRef, "aborted", "Aborted by user");
+        finalizeRun(runId, run.storeKey, req.sessionKey, run.seqRef, "aborted", "Aborted by user");
         abortedIds.push(runId);
       }
     }
