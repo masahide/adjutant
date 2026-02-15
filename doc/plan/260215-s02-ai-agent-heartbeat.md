@@ -587,78 +587,78 @@ flowchart TD
 
 ### Phase 1: AgentRunner
 
-- [ ] Test: SDK 利用手順 — lock → open → create → subscribe → dispose の順序が守られる (Red)
-- [ ] Impl: AgentRunner 基本実装（SDK 6 ステップ） (Green)
-- [ ] Test: メモリ書き込みガード — 明示トリガーありで memory_write が実行される (Red)
-- [ ] Test: メモリ書き込みガード — 明示トリガーなしでは memory_write が実行されない (Red)
-- [ ] Test: メモリ書き込みガード — `isHeartbeat=true` では memory_write がツールリストから常に除外される (Red)
-- [ ] Test: メモリ再利用 — memory_write で保存した内容が次回ターンの入力コンテキストへ再注入される (Red)
-- [ ] Test: ハートビート時の updatedAt 復元 — 実行後に元の値に戻る（並行更新時は Math.max） (Red)
-- [ ] Impl: isHeartbeat フラグ処理 + 明示トリガー判定 (Green)
-- [ ] Test: onTextDelta / onToolCall コールバック — ストリーミングイベントが正しく通知される (Red)
-- [ ] Impl: 購読層とコールバック整形 (Green)
-- [ ] Test: SDK セッション後処理 — 例外発生時も flush/dispose + ロック解放が確実に実行される (Red)
-- [ ] Impl: finally ブロックでの後処理 (Green)
-- [ ] Test: 一時失敗リトライ — 通信エラー時に 2.5 秒後 1 回再試行、成功/失敗の両方 (Red)
-- [ ] Test: コンテキスト超過時の切り詰め再試行 — 入力を切り詰めて 1 回再試行 (Red)
-- [ ] Impl: 失敗回復ロジック (Green)
-- [ ] Test: LLM モデル利用不可 — 即座に失敗を返す (Red)
-- [ ] Impl: モデル可用性チェック (Green)
-- [ ] Test: セッションファイル破損 — 修復試行 → 修復不能時はファイル退避 + 新規作成 (Red)
-- [ ] Impl: FR-AG-4 修復/退避ロジック (Green)
-- [ ] Impl: memory_write ツール登録 + 明示トリガー判定実装（MemoryWriter 連携） (Green)
-- [ ] Integration: AgentRunner + MemoryWriter 結合テスト
-- [ ] Refactor: SDK 呼び出しラッパーとエラーハンドリングの整理
+- [x] Test: SDK 利用手順 — lock → open → create → subscribe → dispose の順序が守られる (Red)
+- [x] Impl: AgentRunner 基本実装（SDK 6 ステップ） (Green)
+- [x] Test: メモリ書き込みガード — 明示トリガーありで memory_write が実行される (Red)
+- [x] Test: メモリ書き込みガード — 明示トリガーなしでは memory_write が実行されない (Red)
+- [x] Test: メモリ書き込みガード — `isHeartbeat=true` では memory_write がツールリストから常に除外される (Red)
+- [x] Test: メモリ再利用 — memory_write で保存した内容が次回ターンの入力コンテキストへ再注入される (Red)
+- [x] Test: ハートビート時の updatedAt 復元 — 実行後に元の値に戻る（並行更新時は Math.max） (Red)
+- [x] Impl: isHeartbeat フラグ処理 + 明示トリガー判定 (Green)
+- [x] Test: onTextDelta / onToolCall コールバック — ストリーミングイベントが正しく通知される (Red)
+- [x] Impl: 購読層とコールバック整形 (Green)
+- [x] Test: SDK セッション後処理 — 例外発生時も flush/dispose + ロック解放が確実に実行される (Red)
+- [x] Impl: finally ブロックでの後処理 (Green)
+- [x] Test: 一時失敗リトライ — 通信エラー時に 2.5 秒後 1 回再試行、成功/失敗の両方 (Red)
+- [x] Test: コンテキスト超過時の切り詰め再試行 — 入力を切り詰めて 1 回再試行 (Red)
+- [x] Impl: 失敗回復ロジック (Green)
+- [x] Test: LLM モデル利用不可 — 即座に失敗を返す (Red)
+- [x] Impl: モデル可用性チェック (Green)
+- [x] Test: セッションファイル破損 — 修復試行 → 修復不能時はファイル退避 + 新規作成 (Red)
+- [x] Impl: FR-AG-4 修復/退避ロジック (Green)
+- [x] Impl: memory_write ツール登録 + 明示トリガー判定実装（MemoryWriter 連携） (Green)
+- [x] Integration: AgentRunner + MemoryWriter 結合テスト
+- [x] Refactor: SDK 呼び出しラッパーとエラーハンドリングの整理
 
 ### Phase 2: HeartbeatRunner — 基本フロー
 
-- [ ] Test: タイマー発火 — intervalMs 後に heartbeat タスクが実行される (Red)
-- [ ] Impl: `startHeartbeat()` 基本ループ (Green)
-- [ ] Test: `runOnce()` — 単発実行で HeartbeatRunResult を返す（POST /api/heartbeat/run 契約）(Red)
-- [ ] Test: `runOnce()` — `reason` が HeartbeatRunRecord.triggerReason に記録される (Red)
-- [ ] Impl: `runOnce()` 実装（内部 runHeartbeatOnce の公開ラッパー） (Green)
-- [ ] Test: `onHeartbeatEvent()` — heartbeat payload を購読/解除できる (Red)
-- [ ] Impl: `onHeartbeatEvent()` 実装（購読ハンドラ管理） (Green)
-- [ ] Test: `getLastHeartbeatEvent()` — 直近の HeartbeatEventPayload を返す / 未実行時は null (Red)
-- [ ] Impl: `getLastHeartbeatEvent()` 実装（プロセス内スナップショット保持） (Green)
-- [ ] Test: 空ファイルスキップ — assistant/prompts/HEARTBEAT.md が実質空で `skipped(empty-heartbeat-file)` (Red)
-- [ ] Impl: 実質空判定ロジック (Green)
-- [ ] Test: HEARTBEAT_OK 判定 — stripHeartbeatToken でマークアップ正規化後、ackMaxChars 以下で `shouldSkip=true` (Red)
-- [ ] Test: stripHeartbeatToken — HTML タグ除去、`&nbsp;` 変換、Markdown 修飾除去 (Red)
-- [ ] Impl: stripHeartbeatToken + HEARTBEAT_OK 判定 (Green)
-- [ ] Test: アラート生成 — 注目イベント時にアラートテキストが返り、heartbeat event が配信される (Red)
-- [ ] Impl: アラート生成 + heartbeat event 配信 (Green)
-- [ ] Refactor: startHeartbeat 内部ロジック整理
+- [x] Test: タイマー発火 — intervalMs 後に heartbeat タスクが実行される (Red)
+- [x] Impl: `startHeartbeat()` 基本ループ (Green)
+- [x] Test: `runOnce()` — 単発実行で HeartbeatRunResult を返す（POST /api/heartbeat/run 契約）(Red)
+- [x] Test: `runOnce()` — `reason` が HeartbeatRunRecord.triggerReason に記録される (Red)
+- [x] Impl: `runOnce()` 実装（内部 runHeartbeatOnce の公開ラッパー） (Green)
+- [x] Test: `onHeartbeatEvent()` — heartbeat payload を購読/解除できる (Red)
+- [x] Impl: `onHeartbeatEvent()` 実装（購読ハンドラ管理） (Green)
+- [x] Test: `getLastHeartbeatEvent()` — 直近の HeartbeatEventPayload を返す / 未実行時は null (Red)
+- [x] Impl: `getLastHeartbeatEvent()` 実装（プロセス内スナップショット保持） (Green)
+- [x] Test: 空ファイルスキップ — assistant/prompts/HEARTBEAT.md が実質空で `skipped(empty-heartbeat-file)` (Red)
+- [x] Impl: 実質空判定ロジック (Green)
+- [x] Test: HEARTBEAT_OK 判定 — stripHeartbeatToken でマークアップ正規化後、ackMaxChars 以下で `shouldSkip=true` (Red)
+- [x] Test: stripHeartbeatToken — HTML タグ除去、`&nbsp;` 変換、Markdown 修飾除去 (Red)
+- [x] Impl: stripHeartbeatToken + HEARTBEAT_OK 判定 (Green)
+- [x] Test: アラート生成 — 注目イベント時にアラートテキストが返り、heartbeat event が配信される (Red)
+- [x] Impl: アラート生成 + heartbeat event 配信 (Green)
+- [x] Refactor: startHeartbeat 内部ロジック整理
 
 ### Phase 3: HeartbeatRunner — スキップ条件
 
-- [ ] Test: quiet-hours スキップ — activeHours 時間外で `skipped(quiet-hours)` (Red)
-- [ ] Test: activeHours 深夜跨ぎ（start > end）(Red)
-- [ ] Impl: activeHours 判定ロジック (Green)
-- [ ] Test: requests-in-flight スキップ — getQueueSize("main") > 0 で `skipped(requests-in-flight)` (Red)
-- [ ] Test: requests-in-flight 短周期再試行 — retryDelayMs 後に再試行 (Red)
-- [ ] Impl: requests-in-flight + 再試行ロジック (Green)
-- [ ] Test: readiness 失敗 — アラート配信前失敗時に `skipped(readiness-failed)` + EventPayload `skipped` (Red)
-- [ ] Test: ok-token/ok-empty 可視化判定側 readiness 失敗 — `ran` + `ok-*` を維持 (Red)
-- [ ] Impl: readiness 判定 + EventPayload 記録 (Green)
-- [ ] Test: `heartbeat.session` が無効/他 agent 指定時に main へフォールバックして継続 (Red)
-- [ ] Impl: heartbeat.session 解決 + main フォールバック (Green)
-- [ ] Test: channels から解決した showOk/showAlerts/useIndicator が全 false — `skipped(alerts-disabled)` でモデル呼び出しなし (Red)
-- [ ] Impl: channels 可視性解決 + alerts-disabled 判定 (Green)
-- [ ] Refactor: スキップ条件の判定チェーンと EventPayload 記録の整理
+- [x] Test: quiet-hours スキップ — activeHours 時間外で `skipped(quiet-hours)` (Red)
+- [x] Test: activeHours 深夜跨ぎ（start > end）(Red)
+- [x] Impl: activeHours 判定ロジック (Green)
+- [x] Test: requests-in-flight スキップ — getQueueSize("main") > 0 で `skipped(requests-in-flight)` (Red)
+- [x] Test: requests-in-flight 短周期再試行 — retryDelayMs 後に再試行 (Red)
+- [x] Impl: requests-in-flight + 再試行ロジック (Green)
+- [x] Test: readiness 失敗 — アラート配信前失敗時に `skipped(readiness-failed)` + EventPayload `skipped` (Red)
+- [x] Test: ok-token/ok-empty 可視化判定側 readiness 失敗 — `ran` + `ok-*` を維持 (Red)
+- [x] Impl: readiness 判定 + EventPayload 記録 (Green)
+- [x] Test: `heartbeat.session` が無効/他 agent 指定時に main へフォールバックして継続 (Red)
+- [x] Impl: heartbeat.session 解決 + main フォールバック (Green)
+- [x] Test: channels から解決した showOk/showAlerts/useIndicator が全 false — `skipped(alerts-disabled)` でモデル呼び出しなし (Red)
+- [x] Impl: channels 可視性解決 + alerts-disabled 判定 (Green)
+- [x] Refactor: スキップ条件の判定チェーンと EventPayload 記録の整理
 
 ### Phase 4: HeartbeatRunner — 重複排除 + Current time
 
-- [ ] Test: 重複排除 — 24h 以内の同一テキストで `HeartbeatRunResult.status: "ran"` 維持 + `HeartbeatEventPayload.status: "skipped", reason: "duplicate"` (Red)
-- [ ] Test: 重複排除 — ウィンドウ期限切れ後の再通知 (Red)
-- [ ] Test: 重複排除 — lastHeartbeatText / lastHeartbeatSentAt の `sessions.json` 永続化（プロセス再起動後も有効） (Red)
-- [ ] Impl: 重複排除ロジック (Green)
-- [ ] Test: Current time 注入 — Body 末尾に `Current time: <formattedTime> (<userTimezone>)` が付与される (Red)
-- [ ] Test: Current time 注入 — 既存 "Current time:" 行がある場合は重複挿入しない (Red)
-- [ ] Impl: Current time 注入ロジック (Green)
-- [ ] Test: HeartbeatRunRecord 記録 — 実行結果が監査用レコードとして保存される (Red)
-- [ ] Impl: HeartbeatRunRecord 記録 (Green)
-- [ ] Refactor: OpenClaw パターンとの整合確認
+- [x] Test: 重複排除 — 24h 以内の同一テキストで `HeartbeatRunResult.status: "ran"` 維持 + `HeartbeatEventPayload.status: "skipped", reason: "duplicate"` (Red)
+- [x] Test: 重複排除 — ウィンドウ期限切れ後の再通知 (Red)
+- [x] Test: 重複排除 — lastHeartbeatText / lastHeartbeatSentAt の `sessions.json` 永続化（プロセス再起動後も有効） (Red)
+- [x] Impl: 重複排除ロジック (Green)
+- [x] Test: Current time 注入 — Body 末尾に `Current time: <formattedTime> (<userTimezone>)` が付与される (Red)
+- [x] Test: Current time 注入 — 既存 "Current time:" 行がある場合は重複挿入しない (Red)
+- [x] Impl: Current time 注入ロジック (Green)
+- [x] Test: HeartbeatRunRecord 記録 — 実行結果が監査用レコードとして保存される (Red)
+- [x] Impl: HeartbeatRunRecord 記録 (Green)
+- [x] Refactor: OpenClaw パターンとの整合確認
 
 ---
 
@@ -666,26 +666,26 @@ flowchart TD
 
 ### 8.1 機能 DoD
 
-- [ ] AC-03: SDK 実行手順（lock→open→create→subscribe→dispose）を満たす
-- [ ] AC-06: 一時失敗時の再試行/切り詰め再試行が機能する
-- [ ] AC-07: HEARTBEAT_OK 抑制時に `ran` 維持 + `ok-*` ログが残る
-- [ ] AC-08: Heartbeat アラートが通知される
-- [ ] AC-09: assistant/prompts/HEARTBEAT.md 実質空で `skipped` になる
-- [ ] AC-11: 明示指示時のみメモリ書き込みされ、Heartbeat 実行時は書き込まれない
-- [ ] AC-12: assistant/prompts/SOUL.md が通常対話/Heartbeat の応答方針に反映される
-- [ ] AC-16: 24h 同一 Heartbeat 本文が `duplicate` で抑制され `ran` を維持する
-- [ ] AC-18: アラート配信前 readiness 失敗は `skipped` 記録、ok-token/ok-empty 側は `ran + ok-*` 維持
-- [ ] AC-20: Heartbeat 送信 Body に Current time 行が重複なく注入される
-- [ ] AC-22: requests-in-flight 時に skipped 記録 + 1 秒後再試行される
-- [ ] P-03: `heartbeat.session` の無効/他 agent 指定が main セッションへフォールバックされる
+- [x] AC-03: SDK 実行手順（lock→open→create→subscribe→dispose）を満たす
+- [x] AC-06: 一時失敗時の再試行/切り詰め再試行が機能する
+- [x] AC-07: HEARTBEAT_OK 抑制時に `ran` 維持 + `ok-*` ログが残る
+- [x] AC-08: Heartbeat アラートが通知される
+- [x] AC-09: assistant/prompts/HEARTBEAT.md 実質空で `skipped` になる
+- [x] AC-11: 明示指示時のみメモリ書き込みされ、Heartbeat 実行時は書き込まれない
+- [x] AC-12: assistant/prompts/SOUL.md が通常対話/Heartbeat の応答方針に反映される
+- [x] AC-16: 24h 同一 Heartbeat 本文が `duplicate` で抑制され `ran` を維持する
+- [x] AC-18: アラート配信前 readiness 失敗は `skipped` 記録、ok-token/ok-empty 側は `ran + ok-*` 維持
+- [x] AC-20: Heartbeat 送信 Body に Current time 行が重複なく注入される
+- [x] AC-22: requests-in-flight 時に skipped 記録 + 1 秒後再試行される
+- [x] P-03: `heartbeat.session` の無効/他 agent 指定が main セッションへフォールバックされる
 
 ### 8.2 品質 DoD
 
-- [ ] P-02: `pnpm run check` が成功し、既存 Slack 収集パイプラインに破壊的変更がない
-- [ ] 全ユニットテストがパスする
-- [ ] `pnpm run typecheck` がエラーなし
-- [ ] `pnpm run lint` がエラーなし
-- [ ] `pnpm run format` がエラーなし
+- [x] P-02: `pnpm run check` が成功し、既存 Slack 収集パイプラインに破壊的変更がない
+- [x] 全ユニットテストがパスする
+- [x] `pnpm run typecheck` がエラーなし
+- [x] `pnpm run lint` がエラーなし
+- [x] `pnpm run format` がエラーなし
 
 ---
 

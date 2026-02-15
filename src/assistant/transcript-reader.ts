@@ -1,5 +1,10 @@
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
+import {
+  getSessionEntry,
+  readSessionEntryStore,
+  type SessionEntryStore,
+} from "./session-entry-store.js";
 import type { PiTranscriptLine, SessionTranscriptEvent } from "./types.js";
 import { extractTranscriptMessageText, normalizeTranscriptRole } from "./transcript-utils.js";
 
@@ -7,16 +12,6 @@ export type TranscriptReadOptions = {
   sessionKey: string;
   limit?: number;
 };
-
-type SessionEntryStore = Record<string, { sessionId?: unknown; sessionFile?: unknown }>;
-
-function resolveSessionEntriesPath(): string {
-  const configured = process.env.ADJUTANT_SESSION_ENTRIES_PATH?.trim();
-  if (configured) {
-    return configured;
-  }
-  return join(process.cwd(), "data", "_assistant", "sessions.json");
-}
 
 function extractTimestamp(line: PiTranscriptLine, message: Record<string, unknown>): number {
   if (typeof line.timestamp === "string") {
@@ -44,40 +39,12 @@ function warnMalformedLine(lineNo: number): void {
   console.warn(`[TranscriptReader] malformed transcript line skipped at line=${lineNo}`);
 }
 
-async function readSessionEntryStore(sessionEntriesPath: string): Promise<SessionEntryStore> {
-  let raw: string;
-  try {
-    raw = await readFile(sessionEntriesPath, "utf8");
-  } catch (error) {
-    const errno = error as NodeJS.ErrnoException;
-    if (errno.code === "ENOENT") {
-      return {};
-    }
-    throw error;
-  }
-
-  try {
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return {};
-    }
-    return parsed as SessionEntryStore;
-  } catch {
-    return {};
-  }
-}
-
 function resolveSessionEntry(
   store: SessionEntryStore,
   sessionKey: string
 ): { sessionId: string; sessionFile?: string } | null {
-  const key = sessionKey.trim();
-  if (!key) {
-    return null;
-  }
-
-  const entry = store[key];
-  if (!entry || typeof entry !== "object") {
+  const entry = getSessionEntry(store, sessionKey);
+  if (!entry) {
     return null;
   }
 
@@ -155,8 +122,7 @@ function parseMessageLine(line: string, lineNo: number): PiTranscriptLine | null
 }
 
 export async function loadMessages(opts: TranscriptReadOptions): Promise<unknown[]> {
-  const sessionEntriesPath = resolveSessionEntriesPath();
-  const store = await readSessionEntryStore(sessionEntriesPath);
+  const { path: sessionEntriesPath, store } = await readSessionEntryStore();
   const entry = resolveSessionEntry(store, opts.sessionKey);
   if (!entry) {
     return [];
@@ -213,8 +179,7 @@ export async function loadMessages(opts: TranscriptReadOptions): Promise<unknown
 export async function loadRecentSessionEvents(
   opts: TranscriptReadOptions & { limit: number }
 ): Promise<SessionTranscriptEvent[]> {
-  const sessionEntriesPath = resolveSessionEntriesPath();
-  const store = await readSessionEntryStore(sessionEntriesPath);
+  const { path: sessionEntriesPath, store } = await readSessionEntryStore();
   const entry = resolveSessionEntry(store, opts.sessionKey);
   if (!entry) {
     return [];

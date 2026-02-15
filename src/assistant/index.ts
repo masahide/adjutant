@@ -34,3 +34,23 @@ export { appendDailyMemory, updateLongTermMemory } from "./memory-writer.js";
 
 export type { TranscriptReadOptions } from "./transcript-reader.js";
 export { loadMessages, loadRecentSessionEvents } from "./transcript-reader.js";
+
+export type { SessionEntryRecord, SessionEntryStore } from "./session-entry-store.js";
+export {
+  resolveSessionEntriesPath,
+  readSessionEntryStore,
+  writeSessionEntryStore,
+  getSessionEntry,
+  upsertSessionEntry,
+} from "./session-entry-store.js";
+
+export type { AgentRunOptions, AgentRunResult } from "./agent-runner.js";
+export { runAgent } from "./agent-runner.js";
+
+export type { HeartbeatConfig } from "./heartbeat-runner.js";
+export {
+  startHeartbeat,
+  runOnce,
+  onHeartbeatEvent,
+  getLastHeartbeatEvent,
+} from "./heartbeat-runner.js";
