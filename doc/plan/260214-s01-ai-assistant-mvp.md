@@ -531,6 +531,12 @@ export type HeartbeatRunRecord = {
 // Heartbeat 自体を実行しない（モデル呼び出しなし）。
 
 export function startHeartbeat(config: HeartbeatConfig): { stop: () => void };
+// 手動 heartbeat 実行（POST /api/heartbeat/run）向けの単発実行 API。
+// runHeartbeatOnce(reason) の公開契約。
+export function runOnce(
+  config: HeartbeatConfig,
+  opts?: { reason?: string },
+): Promise<HeartbeatRunResult>;
 export function onHeartbeatEvent(
   listener: (evt: HeartbeatEventPayload) => void,
 ): () => void;

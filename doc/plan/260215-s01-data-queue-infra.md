@@ -23,11 +23,11 @@ AI Assistant MVP のデータ I/O・キュー・コンテキスト組み立て�
 以下の 7 モジュールを TDD で実装し、上位レイヤーが mock 可能なインターフェースを提供する。
 
 - **EventReader** — JSONL からイベント窓を読み込む
-- **SystemEventQueue** — sessionKey 単位の FIFO キューで前置き注入パターンを実現
-- **CommandQueue** — sessionKey 単位レーンでの排他制御
+- **SystemEventQueue** — monitor/system/cron 由来イベントを sessionKey 単位 FIFO で保持し、次回実行時に前置き注入する
+- **CommandQueue** — OpenClaw 準拠の `main` + `session:<sessionKey>` レーンで排他制御
 - **ContextBuilder** — イベント + メモリ + SystemEvent + transcript → プロンプトテキスト
 - **MemoryReader / MemoryWriter** — メモリファイルの読み書き
-- **SessionStore** — UI 表示用イベントログの JSONL 永続化
+- **TranscriptReader** — SDK transcript JSONL + `sessions.json` を読み取り UI/直近窓へ投影
 
 ---
 
@@ -37,7 +37,7 @@ AI Assistant MVP のデータ I/O・キュー・コンテキスト組み立て�
 
 **今回やること:**
 
-- 7 モジュール（EventReader, SystemEventQueue, CommandQueue, ContextBuilder, MemoryReader, MemoryWriter, SessionStore）の実装
+- 7 モジュール（EventReader, SystemEventQueue, CommandQueue, ContextBuilder, MemoryReader, MemoryWriter, TranscriptReader）の実装
 - 全プラン共有の型定義ファイル `src/assistant/types.ts` の作成
 - ワークスペースファイルテンプレート（HEARTBEAT.md, SOUL.md, USER.md, AGENTS.md）の作成
 
@@ -46,12 +46,12 @@ AI Assistant MVP のデータ I/O・キュー・コンテキスト組み立て�
 | モジュール | ファイル | 責務 |
 |-----------|---------|------|
 | **EventReader** | `src/assistant/event-reader.ts` | JSONL からイベント窓を読み込み `NormalizedEvent[]` を返す |
-| **SystemEventQueue** | `src/assistant/system-event-queue.ts` | sessionKey 単位の FIFO キュー。前置き注入パターン |
-| **CommandQueue** | `src/assistant/command-queue.ts` | sessionKey 単位レーンでの排他制御 |
+| **SystemEventQueue** | `src/assistant/system-event-queue.ts` | sessionKey 単位 FIFO キュー。投入元は monitor/system/cron |
+| **CommandQueue** | `src/assistant/command-queue.ts` | `main` + `session:<sessionKey>` レーンでの排他制御 |
 | **ContextBuilder** | `src/assistant/context-builder.ts` | イベント + メモリ + SystemEvent + transcript → プロンプトテキスト |
 | **MemoryReader** | `src/assistant/memory-reader.ts` | MEMORY.md / memory/YYYY-MM-DD.md の読み込み |
 | **MemoryWriter** | `src/assistant/memory-writer.ts` | memory/YYYY-MM-DD.md 追記、MEMORY.md 更新 |
-| **SessionStore** | `src/assistant/session-store.ts` | UI 表示用イベントログの JSONL 永続化 |
+| **TranscriptReader** | `src/assistant/transcript-reader.ts` | SDK transcript JSONL + `sessions.json` を UI/直近窓向けに投影 |
 
 **制約:**
 
@@ -79,23 +79,23 @@ AI Assistant MVP のデータ I/O・キュー・コンテキスト組み立て�
 2. JSONL ファイルが存在しないため、空配列 `[]` を返す（エラーにしない）
 
 **UC-3: SystemEvent の前置き注入**
-1. ChatHandler が新規イベントをテンプレート整形して `enqueueSystemEvent()` で投入する
-2. AgentRunner が `drainSystemEvents()` でキューを排出し、コンテキストに前置きする
+1. monitor/system/cron 由来イベントが `enqueueSystemEvent()` で投入される
+2. ChatHandler が `drainSystemEvents()` でキューを排出し、コンテキストに前置きする
 3. drain 後はキューが空になり、次の run まで新たな投入を待つ
 
 **UC-4: コマンドの排他実行**
-1. Heartbeat とユーザーチャットが同一 sessionKey で同時到着する
+1. 同一 `session:<sessionKey>` レーンに 2 つのチャットタスクが同時到着する
 2. CommandQueue が先着を実行中に後着をキューイングする
-3. 先着完了後に後着が実行される（直列保証）
+3. 先着完了後に後着が実行される（同一レーン直列保証）
 
 **UC-5: メモリの読み書き**
 1. AgentRunner が `readMemoryFiles()` で長期メモリ + 当日・前日メモを取得する
 2. 対話中にユーザーが「覚えておいて」と指示すると、AgentRunner が `appendDailyMemory()` で書き込む
 3. 次回実行時に `readMemoryFiles()` で書き込んだ内容が読み込まれる
 
-**UC-6: セッション JSONL の破損行スキップ（異常系）**
+**UC-6: transcript JSONL の破損行スキップ（異常系）**
 1. プロセス異常終了で JSONL の末尾行が破損する
-2. `loadSessionEvents()` が破損行をスキップし、読める行だけを返す
+2. `loadMessages()` / `loadRecentSessionEvents()` が破損行をスキップし、読める行だけを返す
 3. 破損検知をログに記録する
 
 ### 2.4 受け入れ条件 Acceptance Criteria
@@ -122,10 +122,10 @@ AI Assistant MVP のデータ I/O・キュー・コンテキスト組み立て�
 - When: 各キューの状態を確認する
 - Then: 異なる sessionKey 間でコンテキスト・キューが混線しない
 
-**AC-10: トランスクリプト永続化**
-- Given: SessionTranscriptEvent が生成される
-- When: `appendEvent()` で永続化し `loadSessionEvents()` で読み込む
-- Then: sessionId/sessionKey/runId 付きで正しく復元される
+**AC-10: トランスクリプト投影**
+- Given: SDK transcript JSONL + `sessions.json` が存在する
+- When: `loadMessages()` / `loadRecentSessionEvents()` を呼ぶ
+- Then: OpenClaw 互換の履歴表示/直近窓として正しく投影される
 
 **AC-13: SystemEventQueue 注入/排出**
 - Given: sessionKey "main" に SystemEvent が 3 件投入されている
@@ -146,7 +146,7 @@ AI Assistant MVP のデータ I/O・キュー・コンテキスト組み立て�
 
 - JSONL は全行読み込み後にフィルタするため、1 日数千行を超えると I/O 性能が劣化する可能性がある
 - ContextBuilder のトークン概算は文字数ベースの概算であり、実際のトークン数との乖離がある（MVP 割り切り）
-- SessionStore の `loadMessages()` はファイル全読み込みのため、履歴が肥大化すると性能劣化する（MVP 割り切り）
+- TranscriptReader の `loadMessages()` はファイル全読み込みのため、履歴が肥大化すると性能劣化する（MVP 割り切り）
 - メモリファイルは全文読み込み（ベクトル検索なし）
 
 ---
@@ -172,13 +172,13 @@ AI Assistant MVP のデータ I/O・キュー・コンテキスト組み立て�
 
 | モジュール | 公開関数 | 消費先 |
 |-----------|---------|--------|
-| EventReader | `readEvents()` | s02: HeartbeatRunner, s03: ChatHandler |
-| SystemEventQueue | `enqueueSystemEvent()`, `drainSystemEvents()`, `peekSystemEvents()`, `hasSystemEvents()`, `isSystemEventContextChanged()` | s02: HeartbeatRunner, s03: ChatHandler |
-| CommandQueue | `enqueueCommand()`, `getQueueSize()`, `isIdle()`, `isGlobalIdle()` | s02: HeartbeatRunner, s03: API Server |
-| ContextBuilder | `buildEventContext()` | s02: HeartbeatRunner / AgentRunner, s03: ChatHandler |
+| EventReader | `readEvents()` | s02: HeartbeatRunner |
+| SystemEventQueue | `enqueueSystemEvent()`, `drainSystemEvents()`, `drainSystemEventEntries()`, `peekSystemEvents()`, `hasSystemEvents()`, `isSystemEventContextChanged()` | monitor/system/cron（enqueue）, s03: ChatHandler（drain） |
+| CommandQueue | `resolveSessionLane()`, `enqueueCommandInLane()`, `enqueueCommand()`, `getQueueSize()`, `isIdle()`, `isGlobalIdle()` | s02: HeartbeatRunner, s03: API Server |
+| ContextBuilder | `buildEventContext()` | s02: HeartbeatRunner, s03: ChatHandler |
 | MemoryReader | `readMemoryFiles()` | s02: HeartbeatRunner, s03: ChatHandler |
 | MemoryWriter | `appendDailyMemory()`, `updateLongTermMemory()` | s02: AgentRunner (ツール登録) |
-| SessionStore | `appendEvent()`, `loadSessionEvents()`, `loadMessages()`, `loadRecentSessionEvents()`, `listSessions()` | s03: API Server |
+| TranscriptReader | `loadMessages()`, `loadRecentSessionEvents()` | s03: API Server / ChatHandler |
 
 ### 4.2 データモデルとスキーマ
 
@@ -193,44 +193,46 @@ export type SystemEvent = {
   ts: number; // epoch ms
 };
 
-export type SessionEventType =
-  | "user_message"
-  | "assistant_message"
-  | "tool_call"
-  | "tool_result"
-  | "system_event";
-
-export type SessionTranscriptEvent = {
-  schema: "adjutant.session.event.v1";
-  sessionId: string;
-  sessionKey: string;
-  runId: string;
-  ts: string; // ISO8601
-  type: SessionEventType;
-  payload: Record<string, unknown>;
+// OpenClaw 準拠: SDK transcript JSONL の 1 行（生データ）。
+// `message` を持つ行が会話履歴として扱われる。
+export type PiTranscriptLine = {
+  type?: string;
+  timestamp?: string;
+  message?: Record<string, unknown>;
+  id?: string;
+  [key: string]: unknown;
 };
 
-export type SessionMessage = {
-  type: SessionEventType;
-  role: "user" | "assistant" | "system";
-  content: string;
-  ts: string;
-  sessionId: string;
+// SDK transcript から抽出した投影モデル。
+export type SessionTranscriptEvent = {
   sessionKey: string;
-  runId: string;
-  isHeartbeat?: boolean;
-  payload?: Record<string, unknown>;
+  sessionId: string;
+  messageId?: string;
+  ts: number; // epoch ms
+  role: "user" | "assistant" | "system" | "tool" | "other";
+  text?: string;
+  raw: PiTranscriptLine;
+};
+
+// UI 表示向け（OpenClaw chat.history 互換の投影）。
+export type SessionMessage = {
+  role: "user" | "assistant" | "system" | "tool" | "other";
+  content: string;
+  timestamp: number;
+  message?: Record<string, unknown>;
 };
 
 // --- SSE 公開イベント型（s03 API Server が使用）---
-export type StreamEvent =
-  | { type: "run_started"; runId: string; sessionId: string; sessionKey: string; seq: number }
-  | { type: "text_delta"; runId: string; delta: string; seq: number }
-  | { type: "tool_call"; runId: string; toolCallId: string; name: string; params: unknown; seq: number }
-  | { type: "tool_result"; runId: string; toolCallId: string; name: string; isError: boolean; result: unknown; seq: number }
-  | { type: "text_end"; runId: string; text: string; seq: number }
-  | { type: "run_end"; runId: string; status: "completed" | "failed"; seq: number }
-  | { type: "error"; runId: string; message: string; seq: number };
+export type StreamEvent = {
+  runId: string;
+  sessionKey: string;
+  seq: number; // integer >= 0（通常は 1 始まり。chat.inject 互換予約で 0 を許容）
+  state: "delta" | "final" | "aborted" | "error";
+  message?: unknown;
+  errorMessage?: string;
+  usage?: unknown;
+  stopReason?: string;
+};
 
 // --- 可観測性: run 状態遷移ログ型（マスタープラン §2.7 / §4.2）---
 export type AgentRunStatus = {
@@ -271,7 +273,7 @@ export type HeartbeatRunRecord = {
   sessionId?: string;
   sessionKey?: string;
   result: HeartbeatRunResult;
-  mode?: "now" | "scheduled";  // 実行トリガー種別
+  triggerReason?: string; // OpenClaw runHeartbeatOnce(reason) と整合
   modelId?: string;
   preview?: string;
 };
@@ -307,10 +309,12 @@ export type SystemEventEnqueueOptions = {
 // - sessionKey 単位 FIFO、MAX_EVENTS = 20、超過時は古い方を破棄
 // - 連続する同一テキストはドロップ（連続重複排除）
 // - drain 後はキューを空にし lastText をリセット
+// - OpenClaw 契約に合わせ、enqueue/drain は text ベースを基本とする
 
-export function enqueueSystemEvent(event: SystemEvent, opts: SystemEventEnqueueOptions): void;
-export function drainSystemEvents(sessionKey: string): SystemEvent[];
-export function peekSystemEvents(sessionKey: string): SystemEvent[];
+export function enqueueSystemEvent(text: string, opts: SystemEventEnqueueOptions): void;
+export function drainSystemEventEntries(sessionKey: string): SystemEvent[];
+export function drainSystemEvents(sessionKey: string): string[];
+export function peekSystemEvents(sessionKey: string): string[];
 export function hasSystemEvents(sessionKey: string): boolean;
 export function isSystemEventContextChanged(sessionKey: string, contextKey?: string): boolean;
 ```
@@ -321,12 +325,14 @@ export function isSystemEventContextChanged(sessionKey: string, contextKey?: str
 export type CommandFn<T> = () => Promise<T>;
 
 export type CommandQueueOptions = {
-  sessionKey: string;
+  lane?: string; // 省略時 "main"
 };
 
-export function enqueueCommand<T>(fn: CommandFn<T>, opts: CommandQueueOptions): Promise<T>;
-export function getQueueSize(sessionKey: string): number;
-export function isIdle(sessionKey: string): boolean;
+export function resolveSessionLane(sessionKey: string): string; // "session:<sessionKey>"
+export function enqueueCommandInLane<T>(lane: string, fn: CommandFn<T>): Promise<T>;
+export function enqueueCommand<T>(fn: CommandFn<T>, opts?: CommandQueueOptions): Promise<T>;
+export function getQueueSize(lane?: string): number; // 省略時 "main"
+export function isIdle(lane?: string): boolean;
 export function isGlobalIdle(): boolean;
 ```
 
@@ -335,7 +341,7 @@ export function isGlobalIdle(): boolean;
 ```typescript
 export type ContextBuildOptions = {
   events: NormalizedEvent[];
-  systemEvents?: SystemEvent[];
+  systemEvents?: string[];
   recentTranscript?: SessionTranscriptEvent[];
   memoryContent?: string;
   dailyMemoryContent?: string;
@@ -377,21 +383,19 @@ export function appendDailyMemory(content: string, opts: MemoryWriteOptions): Pr
 export function updateLongTermMemory(content: string, opts: MemoryWriteOptions): Promise<void>;
 ```
 
-#### SessionStore
+#### TranscriptReader
 
 ```typescript
-export type SessionStoreOptions = {
-  sessionDir: string;
-  sessionId: string;
+export type TranscriptReadOptions = {
+  sessionKey: string;
+  limit?: number;
 };
 
-export function appendEvent(evt: SessionTranscriptEvent, opts: SessionStoreOptions): Promise<void>;
-export function loadSessionEvents(opts: SessionStoreOptions): Promise<SessionTranscriptEvent[]>;
-export function loadMessages(opts: SessionStoreOptions): Promise<SessionMessage[]>;
+// OpenClaw chat.history 互換: sanitized transcript message objects を返す。
+export function loadMessages(opts: TranscriptReadOptions): Promise<unknown[]>;
 export function loadRecentSessionEvents(
-  opts: SessionStoreOptions & { limit: number },
+  opts: TranscriptReadOptions & { limit: number },
 ): Promise<SessionTranscriptEvent[]>;
-export function listSessions(sessionDir: string): Promise<string[]>;
 ```
 
 ### 4.3 エラーと例外 Error Handling
@@ -401,7 +405,7 @@ export function listSessions(sessionDir: string): Promise<string[]>;
 | JSONL ファイル不在 | 正常系 | 空配列を返す（エラーにしない） |
 | MEMORY.md 不在 | 正常系 | `null` を返す（初回起動時） |
 | memory/YYYY-MM-DD.md 不在 | 正常系 | `null` を返す |
-| セッション JSONL 破損行 | 準正常系 | 読める行だけ読み込み、破損行はスキップ。破損検知を `console.warn` でログ出力 |
+| transcript JSONL 破損行 | 準正常系 | 読める行だけ読み込み、破損行はスキップ。破損検知を `console.warn` でログ出力 |
 | JSONL パース失敗（個別行） | 準正常系 | その行をスキップし、残りを処理する |
 | ファイル書き込み失敗 | 異常系 | 例外をそのまま throw（上位で catch） |
 
@@ -431,13 +435,10 @@ const events = await readEvents({
 ```typescript
 import { enqueueSystemEvent, drainSystemEvents } from "./assistant/system-event-queue.js";
 
-enqueueSystemEvent(
-  { text: "[#general] alice: デプロイ完了しました", ts: Date.now() },
-  { sessionKey: "main" },
-);
+enqueueSystemEvent("[#general] alice: デプロイ完了しました", { sessionKey: "main" });
 
 const events = drainSystemEvents("main");
-// → [{ text: "[#general] alice: デプロイ完了しました", ts: ... }]
+// → ["[#general] alice: デプロイ完了しました"]
 // drain 後: drainSystemEvents("main") → []
 ```
 
@@ -448,7 +449,7 @@ import { buildEventContext } from "./assistant/context-builder.js";
 
 const result = buildEventContext({
   events,
-  systemEvents: [{ text: "[#general] alice: 重要な報告です", ts: Date.now() }],
+  systemEvents: ["[#general] alice: 重要な報告です"],
   memoryContent: "# Long-term Memory\n- alice は SRE チーム所属",
   dailyMemoryContent: "# 2026-02-15\n- 午前中にデプロイ作業あり",
   maxTokenEstimate: 8000,
@@ -477,9 +478,10 @@ classDiagram
         -queues: Map~string, SystemEvent[]~
         -lastTexts: Map~string, string~
         -contextKeys: Map~string, string~
-        +enqueueSystemEvent(event, opts) void
-        +drainSystemEvents(sessionKey) SystemEvent[]
-        +peekSystemEvents(sessionKey) SystemEvent[]
+        +enqueueSystemEvent(text, opts) void
+        +drainSystemEventEntries(sessionKey) SystemEvent[]
+        +drainSystemEvents(sessionKey) string[]
+        +peekSystemEvents(sessionKey) string[]
         +hasSystemEvents(sessionKey) boolean
         +isSystemEventContextChanged(sessionKey, contextKey?) boolean
     }
@@ -487,9 +489,11 @@ classDiagram
     class CommandQueue {
         -lanes: Map~string, Promise~void~~
         -sizes: Map~string, number~
-        +enqueueCommand~T~(fn, opts) Promise~T~
-        +getQueueSize(sessionKey) number
-        +isIdle(sessionKey) boolean
+        +resolveSessionLane(sessionKey) string
+        +enqueueCommandInLane~T~(lane, fn) Promise~T~
+        +enqueueCommand~T~(fn, opts?) Promise~T~
+        +getQueueSize(lane?) number
+        +isIdle(lane?) boolean
         +isGlobalIdle() boolean
     }
 
@@ -506,18 +510,15 @@ classDiagram
         +updateLongTermMemory(content, opts) Promise~void~
     }
 
-    class SessionStore {
-        +appendEvent(evt, opts) Promise~void~
-        +loadSessionEvents(opts) Promise~SessionTranscriptEvent[]~
-        +loadMessages(opts) Promise~SessionMessage[]~
+    class TranscriptReader {
+        +loadMessages(opts) Promise~unknown[]~
         +loadRecentSessionEvents(opts) Promise~SessionTranscriptEvent[]~
-        +listSessions(sessionDir) Promise~string[]~
     }
 
     ContextBuilder ..> EventReader : events input (caller provides)
     ContextBuilder ..> SystemEventQueue : systemEvents input (caller provides)
     ContextBuilder ..> MemoryReader : memory input (caller provides)
-    ContextBuilder ..> SessionStore : recentTranscript input (caller provides)
+    ContextBuilder ..> TranscriptReader : recentTranscript input (caller provides)
 ```
 
 ### 5.3 コンポーネント図（上位レイヤーとの関係）
@@ -531,7 +532,7 @@ graph TB
         CB[ContextBuilder]
         MR[MemoryReader]
         MW[MemoryWriter]
-        SS[SessionStore]
+        TR[TranscriptReader]
     end
 
     subgraph "s02: AI 実行層"
@@ -542,6 +543,7 @@ graph TB
     subgraph "s03: API + Web UI 層"
         API[API Server]
         CH[ChatHandler]
+        MON[monitor/system/cron]
     end
 
     subgraph "既存パイプライン"
@@ -557,18 +559,17 @@ graph TB
     HR --> CB
     HR --> MR
     HR --> CQ
-    HR --> SEQ
+    MON --> SEQ
 
-    AR --> CB
     AR --> MW
 
-    CH --> ER
     CH --> SEQ
     CH --> CB
     CH --> MR
+    CH --> TR
 
     API --> CQ
-    API --> SS
+    API --> TR
 ```
 
 ---
@@ -583,11 +584,11 @@ graph TB
 |------|----------|--------------|
 | EventReader | テスト用 JSONL フィクスチャ | パース、日付フィルタ、sinceMinutes/limit 切り詰め、空ファイル処理、kinds/channels フィルタ |
 | SystemEventQueue | なし（インメモリ） | enqueue/drain/peek、MAX_EVENTS=20 上限、sessionKey 分離、連続重複排除、contextKey 変化検知、drain 後 cleanup |
-| CommandQueue | なし（インメモリ） | sessionKey レーン分離、直列実行、isIdle/isGlobalIdle 判定、getQueueSize |
+| CommandQueue | なし（インメモリ） | `main` + `session:<sessionKey>` レーン分離、同一レーン直列実行、isIdle/isGlobalIdle 判定、getQueueSize |
 | ContextBuilder | なし（純粋関数） | トークン切り詰め、truncated フラグ、メモリ注入、SystemEvent 注入、recentTranscript 注入、フォーマット出力 |
 | MemoryReader | テスト用 tmpdir | timezone 日付計算、ファイル不在時 null、正常読み込み |
 | MemoryWriter | テスト用 tmpdir | ファイル追記・更新、日付パーティション |
-| SessionStore | テスト用 tmpdir | JSONL 読み書き、必須項目検証、破損行スキップ、loadMessages 投影、loadRecentSessionEvents |
+| TranscriptReader | テスト用 tmpdir | SDK transcript + `sessions.json` 読み取り、破損行スキップ、loadMessages 投影、loadRecentSessionEvents |
 
 **Contract テスト:**
 
@@ -598,7 +599,7 @@ graph TB
 **Integration テスト:**
 
 本プランのモジュールはすべてローカルファイル I/O またはインメモリのため、外部依存の統合テストは不要。
-ファイル I/O を伴うモジュール（EventReader, MemoryReader/Writer, SessionStore）は tmpdir を使った Unit テストでカバーする。
+ファイル I/O を伴うモジュール（EventReader, MemoryReader/Writer, TranscriptReader）は tmpdir を使った Unit テストでカバーする。
 
 ### 6.2 カバレッジ対象
 
@@ -613,7 +614,7 @@ graph TB
 ### Phase 1: 設計と準備
 
 - [ ] 要件と仕様の確定（本プラン §2.4 受け入れ条件の確認）
-- [ ] `src/assistant/types.ts` に全プラン共有の型定義を作成（NormalizedEvent re-export、SystemEvent、SessionTranscriptEvent、SessionMessage、StreamEvent、AgentRunStatus、HeartbeatRunResult、HeartbeatEventPayload、HeartbeatRunRecord）。s02/s03 はこのファイルから import する
+- [ ] `src/assistant/types.ts` に全プラン共有の型定義を作成（NormalizedEvent re-export、PiTranscriptLine、SessionTranscriptEvent、SessionMessage、SystemEvent、StreamEvent、AgentRunStatus、HeartbeatRunResult、HeartbeatEventPayload、HeartbeatRunRecord）。s02/s03 はこのファイルから import する
 - [ ] HEARTBEAT.md テンプレート作成
 - [ ] SOUL.md テンプレート作成
 - [ ] USER.md / AGENTS.md テンプレート作成
@@ -673,16 +674,14 @@ graph TB
 - [ ] Impl: `buildEventContext()` 実装 (Green)
 - [ ] Refactor: トークン概算と切り詰めロジック整理
 
-### Phase 7: SessionStore の実装
+### Phase 7: TranscriptReader の実装
 
-- [ ] Test: appendEvent + loadSessionEvents — 基本 JSONL 読み書き (Red)
-- [ ] Test: 必須項目（schema/sessionId/sessionKey/runId/type/ts/payload）検証 (Red)
-- [ ] Test: loadMessages — SessionTranscriptEvent → SessionMessage 投影 (Red)
+- [ ] Test: `sessions.json` から sessionKey → sessionId を解決できる (Red)
+- [ ] Test: loadMessages — SDK transcript JSONL から chat.history 互換形式へ投影 (Red)
 - [ ] Test: loadRecentSessionEvents — limit 指定での直近 N 件取得 (Red)
 - [ ] Test: 破損行スキップ — 壊れた行を含む JSONL でも読める行だけ返す (Red)
-- [ ] Test: listSessions — セッション一覧取得 (Red)
-- [ ] Impl: SessionStore 実装 (Green)
-- [ ] Refactor: JSONL 読み書きユーティリティの整理
+- [ ] Impl: TranscriptReader 実装 (Green)
+- [ ] Refactor: transcript 解析ユーティリティの整理
 
 ### Phase 8: 統合と検証
 
@@ -702,7 +701,7 @@ graph TB
 - [ ] AC-02: ContextBuilder が JSONL 由来イベントをプロンプトテキストに変換できる
 - [ ] AC-04: CommandQueue が同一 sessionKey の同時実行を防止する
 - [ ] AC-05: CommandQueue / SystemEventQueue が異なる sessionKey 間で分離される
-- [ ] AC-10: SessionStore が sessionId/sessionKey/runId 付きで JSONL 永続化する
+- [ ] AC-10: TranscriptReader が SDK transcript/sessions.json を正しく投影する
 - [ ] AC-13: SystemEventQueue の enqueue/drain が sessionKey 単位で正しく動作する
 - [ ] AC-15: MemoryReader が MEMORY.md + 当日・前日メモを正しく読み込む
 - [ ] AC-17: ContextBuilder が recentTranscript を入力コンテキストに注入する
@@ -726,11 +725,11 @@ graph TB
 
 - JSONL が 1 日数千行を超える場合の EventReader の I/O 性能とメモリ使用量。ストリーミング読み込みへの変更が将来必要になる可能性
 - ContextBuilder のトークン概算精度（文字数ベースの概算 vs tiktoken 等）。MVP では文字数ベースで割り切る
-- SessionStore の JSONL が肥大化した場合の loadMessages 性能。MVP ではファイル全読み込みで割り切る
+- TranscriptReader の JSONL が肥大化した場合の loadMessages 性能。MVP ではファイル全読み込みで割り切る
 
 ### 仕様が曖昧で決定が必要な事項
 
-- `AgentRunStatus` の記録責務: 型は s01 の types.ts で定義するが、実際の記録（SessionStore への書き込み）は s02 AgentRunner または s03 ChatHandler の責務。MVP では s03 の ChatHandler がコマンド実行前後に記録する方針とする
+- `AgentRunStatus` の記録責務: 型は s01 の types.ts で定義するが、実際の記録は SDK transcript/sessions.json と診断ログに委譲する。MVP では s03 の ChatHandler が状態遷移イベントを記録する方針とする
 
 ### プロトタイプとして許容するリスク
 
@@ -740,4 +739,4 @@ graph TB
 ### 将来的な拡張に伴うリスク
 
 - EventReader をストリーミング読み込みに変更する場合、インターフェース（`Promise<NormalizedEvent[]>` → `AsyncIterable`）の変更が必要
-- SessionStore にインデックスを追加する場合、JSONL → SQLite への移行が必要
+- TranscriptReader にインデックスを追加する場合、SDK 永続化互換を壊さない設計（別インデックスストア）を検討する必要がある

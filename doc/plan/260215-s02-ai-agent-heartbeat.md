@@ -56,7 +56,7 @@ AI Assistant MVP の「頭脳」に相当するレイヤー。
 
 ### 2.2 非スコープ Non Scope
 
-- EventReader / ContextBuilder / MemoryReader / MemoryWriter / CommandQueue / SystemEventQueue / SessionStore の実装（→ s01）
+- EventReader / ContextBuilder / MemoryReader / MemoryWriter / CommandQueue / SystemEventQueue / TranscriptReader の実装（→ s01）
 - API サーバー / Web UI（→ s03）
 - ベクトル検索・SQLite インデックス
 - セッションコンパクション
@@ -68,13 +68,13 @@ AI Assistant MVP の「頭脳」に相当するレイヤー。
 
 1. HeartbeatRunner のタイマーが発火する（30 分間隔）
 2. `activeHours` 時間外であればスキップ（quiet-hours）
-3. showOk / showAlerts / useIndicator が全 false ならスキップ（alerts-disabled）
-4. グループセッション指定時はスキップ（group-session-disabled）
-5. `isIdle("main")` でビジー判定。ビジー時は requests-in-flight スキップ + 短周期再試行（最大 maxRetries 回）
+3. `heartbeat.session` 指定は OpenClaw 解決規則で canonical 化し、無効/他 agent 指定は `main` にフォールバックする
+4. channels 設定から解決した heartbeat 可視性（showOk/showAlerts/useIndicator）が全 false ならスキップ（alerts-disabled）
+5. `getQueueSize("main")` でビジー判定。ビジー時は requests-in-flight スキップ + 短周期再試行（OpenClaw heartbeat-wake 準拠）
 6. HEARTBEAT.md 読み込み、実質空ならスキップ（empty-heartbeat-file）
 7. EventReader → MemoryReader → ContextBuilder でコンテキスト構築
 8. AgentRunner 経由で LLM に送信（`isHeartbeat=true`）
-9. HEARTBEAT_OK 判定 → 抑制（ok-token / ok-empty）or アラート生成 → 重複排除判定 → SystemEventQueue に要約投入
+9. HEARTBEAT_OK 判定 → 抑制（ok-token / ok-empty）or アラート生成 → 重複排除判定 → heartbeat イベント配信（HeartbeatRunner 自体は SystemEventQueue へ enqueue しない）
 
 **UC-AG: AgentRunner による LLM 実行**（マスタープラン UC-2 の実行部分）
 
@@ -105,7 +105,7 @@ AI Assistant MVP の「頭脳」に相当するレイヤー。
 - Given HeartbeatRunner が LLM 応答を受け取る When 応答に HEARTBEAT_OK トークンを含む Then `HeartbeatRunResult.status: "ran"` を維持し `HeartbeatEventPayload.status: "ok-token" | "ok-empty"` が記録される
 
 **AC-08: Heartbeat アラート通知**
-- Given HeartbeatRunner が LLM 応答を受け取る When 応答が注目イベントを含む Then アラートテキストが生成され onAlert コールバックが呼ばれ、SystemEventQueue にチャットセッション向け要約が投入される
+- Given HeartbeatRunner が LLM 応答を受け取る When 応答が注目イベントを含む Then アラートテキストが生成され heartbeat イベントとして配信される
 
 **AC-09: 空 HEARTBEAT スキップ**
 - Given HEARTBEAT.md が実質空である When HeartbeatRunner がファイルを読み込む Then モデル呼び出しなしで `status: "skipped"` となる
@@ -129,16 +129,16 @@ AI Assistant MVP の「頭脳」に相当するレイヤー。
 - Given Body に既に "Current time:" 行が存在する When HeartbeatRunner が注入を試みる Then 重複挿入しない
 
 **AC-22: requests-in-flight 再試行**
-- Given `isIdle("main")` が false である When HeartbeatRunner がタイマー発火する Then `status: "skipped"` で記録し、retryDelayMs 後に再試行する。maxRetries 超過時は次周期待ち
+- Given `getQueueSize("main")` が 0 より大きい When HeartbeatRunner がタイマー発火する Then `status: "skipped"` で記録し、retryDelayMs 後に再試行する
 
-**P-03: グループセッション無効化**
-- Given sessionKey がグループセッションを指す When HeartbeatRunner が実行判定する Then `status: "skipped"`, `reason: "group-session-disabled"` となる
+**P-03: heartbeat.session フォールバック**
+- Given `heartbeat.session` が無効/他 agent セッションを指す When HeartbeatRunner が実行判定する Then `main` セッションへフォールバックして継続する
 
 ### 2.5 既知の制約 Known Limitations
 
 - pi-coding-agent SDK のバージョンに強く依存する。SDK の API 変更時にこのプランのモジュールが直接影響を受ける
 - FR-AG-4（セッションファイル破損修復）は SDK 内部の保存フォーマットに依存するため、修復ロジックの精度は SDK バージョンに左右される
-- 重複排除の `lastHeartbeatText` / `lastHeartbeatSentAt` は専用ファイル `data/_cache/heartbeat-state.json` に永続化する（プロセス再起動後も有効）。SessionStore のインターフェースには HeartbeatRunner 固有のフィールドを持たせず、責務を分離する
+- 重複排除の `lastHeartbeatText` / `lastHeartbeatSentAt` は Session Entry（`sessions.json`）に永続化する（プロセス再起動後も有効）。表示専用の投影層（TranscriptReader）には HeartbeatRunner 固有のフィールドを持たせず、責務を分離する
 
 ---
 
@@ -211,19 +211,15 @@ export type HeartbeatConfig = {
   intervalMs: number;         // default: 1800000 (30m)
   timeoutMs?: number;         // default: 30000
   sessionKey?: string;        // default: "main"
-  chatSessionKey?: string;    // default: "main"
   heartbeatFilePath: string;  // default: "HEARTBEAT.md"
   soulFilePath: string;       // default: "SOUL.md"
   userFilePath: string;       // default: "USER.md"
   agentsFilePath: string;     // default: "AGENTS.md"
   dataDir: string;
-  timezone: string;
+  userTimezone?: string;      // default: agents.defaults.userTimezone（未設定時はホスト環境）
   retryDelayMs?: number;      // default: 1000
-  maxRetries?: number;        // default: 10
   ackMaxChars: number;        // default: 300
-  showOk?: boolean;           // default: false
-  showAlerts?: boolean;       // default: true
-  useIndicator?: boolean;     // default: true
+  // 可視性設定（showOk/showAlerts/useIndicator）は channels 設定から解決する
   model?: string;
   activeHours?: {
     start: string;            // "HH:MM"
@@ -270,39 +266,30 @@ export type HeartbeatRunRecord = {
   sessionId?: string;
   sessionKey?: string;
   result: HeartbeatRunResult;
-  mode?: "now" | "scheduled";  // 実行トリガー種別（s03 POST /api/heartbeat/run の mode に対応）
+  triggerReason?: string; // OpenClaw runHeartbeatOnce(reason) と整合
   modelId?: string;
   preview?: string;
 };
 
-export function startHeartbeat(
-  config: HeartbeatConfig,
-  onAlert: (result: HeartbeatRunResult) => void,
-): { stop: () => void };
-
-// --- s03 Heartbeat API 向け公開契約 ---
-// POST /api/heartbeat/run が呼ぶ手動実行 API。
-// startHeartbeat のタイマーループとは別に、単発で 1 回だけ heartbeat を実行する。
-// mode: "now" はオンデマンド手動実行、"scheduled" は定期タイマー経由（デフォルト "now"）。
+export function startHeartbeat(config: HeartbeatConfig): { stop: () => void };
+// 手動実行 API（POST /api/heartbeat/run）向けの単発実行フック。
+// 内部の runHeartbeatOnce(reason) を公開契約化したもの。
 export function runOnce(
   config: HeartbeatConfig,
-  opts?: { mode: "now" | "scheduled" },
+  opts?: { reason?: string },
 ): Promise<HeartbeatRunResult>;
-
-// GET /api/heartbeat/last が呼ぶ最新結果取得 API。
-// 直近の HeartbeatEventPayload を返す（未実行時は null）。
-// 内部的には永続化ファイル (data/_cache/heartbeat-state.json) から読み込む。
-export function getLastResult(): HeartbeatEventPayload | null;
+export function onHeartbeatEvent(listener: (evt: HeartbeatEventPayload) => void): () => void;
+export function getLastHeartbeatEvent(): HeartbeatEventPayload | null;
 ```
 
 **HeartbeatRunner 内部仕様（マスタープラン §4.1 より）:**
 
 - **stripHeartbeatToken**: HTML タグ除去 → `&nbsp;` 空白変換 → Markdown 修飾除去 → HEARTBEAT_OK 除去 → 残テキスト ≤ ackMaxChars なら `shouldSkip=true`
-- **重複排除**: 直前送達テキスト（`lastHeartbeatText`）と 24h ウィンドウ（`lastHeartbeatSentAt`）で判定。重複時は `HeartbeatRunResult.status: "ran"` を維持し、`HeartbeatEventPayload.status: "skipped", reason: "duplicate"` を記録
+- **重複排除**: 直前送達テキスト（`lastHeartbeatText`）と 24h ウィンドウ（`lastHeartbeatSentAt`）で判定。Session Entry（`sessions.json`）に保持。重複時は `HeartbeatRunResult.status: "ran"` を維持し、`HeartbeatEventPayload.status: "skipped", reason: "duplicate"` を記録
 - **Current time 注入**: Body 末尾に `Current time: <formattedTime> (<userTimezone>)` を注入。既存時は重複挿入しない
-- **requests-in-flight 再試行**: `retryDelayMs` 間隔で最大 `maxRetries` 回再試行。超過時は次周期待ち
-- **可視性設定（alerts-disabled）**: showOk / showAlerts / useIndicator が全 false の場合は `reason: "alerts-disabled"` でスキップ（モデル呼び出しなし）
-- **グループセッション**: sessionKey がグループセッションの場合は `reason: "group-session-disabled"` でスキップ
+- **requests-in-flight 再試行**: `retryDelayMs` 間隔で再試行し、wake ハンドラが coalesce/retry を管理する
+- **可視性設定（alerts-disabled）**: channels から解決した showOk / showAlerts / useIndicator が全 false の場合は `reason: "alerts-disabled"` でスキップ（モデル呼び出しなし）
+- **heartbeat.session 解決**: 無効/他 agent セッション指定は `main` へフォールバックして継続する
 
 ### 4.2 依存モジュール契約（s01 から消費）
 
@@ -315,8 +302,7 @@ export function getLastResult(): HeartbeatEventPayload | null;
 | `ContextBuilder.buildEventContext()` | HeartbeatRunner | プロンプト組み立て |
 | `MemoryReader.readMemoryFiles()` | HeartbeatRunner | メモリ読み込み |
 | `MemoryWriter.appendDailyMemory()` / `updateLongTermMemory()` | AgentRunner | memory_write ツール |
-| `CommandQueue.enqueueCommand()` / `isIdle()` | HeartbeatRunner | 排他制御 + アイドル判定 |
-| `SystemEventQueue.enqueueSystemEvent()` | HeartbeatRunner | アラート要約をチャットセッションに投入 |
+| `CommandQueue.getQueueSize("main")` | HeartbeatRunner | main レーンの混雑判定（requests-in-flight） |
 
 ### 4.3 エラーと例外 Error Handling
 
@@ -388,7 +374,7 @@ const chatResult = await runAgent({
   prompt: "今日の #general で何が話されてた？\n\n" + contextText,
   systemPrompt: soulText + "\n\n" + userText + "\n\n" + agentsText,
   sessionKey: "main",
-  onTextDelta: (delta) => sseEmitter.emit("text_delta", delta),
+  onTextDelta: (delta) => sseEmitter.emit("chat", { state: "delta", delta }),
   onToolCall: (name, params) => sseEmitter.emit("tool_call", { name, params }),
 });
 
@@ -421,9 +407,10 @@ classDiagram
     }
 
     class HeartbeatRunner {
-        +startHeartbeat(config, onAlert) stopHandle
+        +startHeartbeat(config) stopHandle
         +runOnce(config, opts?) Promise~HeartbeatRunResult~
-        +getLastResult() HeartbeatEventPayload?
+        +onHeartbeatEvent(listener) unsubscribe
+        +getLastHeartbeatEvent() HeartbeatEventPayload?
     }
 
     class EventReader {
@@ -449,14 +436,7 @@ classDiagram
 
     class CommandQueue {
         <<interface>>
-        +enqueueCommand(fn, opts)
-        +isIdle(sessionKey)
-    }
-
-    class SystemEventQueue {
-        <<interface>>
-        +enqueueSystemEvent(event, opts)
-        +drainSystemEvents(sessionKey)
+        +getQueueSize(lane?)
     }
 
     class SDK["pi-coding-agent SDK"] {
@@ -472,8 +452,7 @@ classDiagram
     HeartbeatRunner --> EventReader : readEvents
     HeartbeatRunner --> ContextBuilder : buildEventContext
     HeartbeatRunner --> MemoryReader : readMemoryFiles
-    HeartbeatRunner --> CommandQueue : isIdle / enqueueCommand
-    HeartbeatRunner --> SystemEventQueue : enqueueSystemEvent
+    HeartbeatRunner --> CommandQueue : getQueueSize("main")
 ```
 
 ### 5.3 AgentRunner 実行シーケンス
@@ -551,15 +530,14 @@ flowchart TD
 flowchart TD
     A["タイマー発火<br/>(intervalMs)"] --> B{"activeHours<br/>時間内？"}
     B -->|No| C["skipped(quiet-hours)"]
-    B -->|"Yes or 未設定"| D{"showOk/showAlerts/<br/>useIndicator<br/>いずれか true？"}
+    B -->|"Yes or 未設定"| X{"heartbeat.session 解決<br/>無効/他 agent ?"}
+    X -->|Yes| X2["main へフォールバック"]
+    X -->|No| D{"channels から解決した<br/>heartbeat 可視性が<br/>有効？"}
+    X2 --> D
     D -->|全 false| E["skipped(alerts-disabled)<br/>モデル呼び出しなし"]
-    D -->|Yes| F{"グループ<br/>セッション？"}
-    F -->|Yes| G["skipped(group-session-disabled)"]
-    F -->|No| H{"isIdle(main)？"}
+    D -->|Yes| H{"getQueueSize(main)==0？"}
     H -->|No| I["skipped(requests-in-flight)"]
-    I --> J{"retry ≤<br/>maxRetries？"}
-    J -->|Yes| K["retryDelayMs 待機"] --> H
-    J -->|No| L["次周期待ち"]
+    I --> K["retryDelayMs 待機"] --> H
     H -->|Yes| M{"HEARTBEAT.md<br/>実質空？"}
     M -->|Yes| N["skipped(empty-heartbeat-file)"]
     M -->|No| O["EventReader + MemoryReader<br/>+ ContextBuilder"]
@@ -569,7 +547,7 @@ flowchart TD
     R -->|Yes| S["stripHeartbeatToken<br/>→ ran(ok-token / ok-empty)"]
     R -->|No| T{"24h 重複？"}
     T -->|Yes| U["ran + EventPayload<br/>skipped(duplicate)"]
-    T -->|No| V["アラート送信<br/>+ SEQ 投入<br/>+ onAlert"]
+    T -->|No| V["アラート送信<br/>+ heartbeat event emit"]
 ```
 
 ---
@@ -581,14 +559,14 @@ flowchart TD
 | 種類 | 対象 | モック境界 | 方針 |
 |------|------|----------|------|
 | Unit | AgentRunner | SDK (SessionManager / createAgentSession)、LLM API | SDK 利用手順（6 ステップ）、メモリ書き込みガード（明示トリガーありで memory_write 実行 / 明示トリガーなしで不実行 / ハートビート時は常に除外）、メモリ保存内容の次回ターン再利用、updatedAt 復元、SDK セッション後処理（例外時 flush/dispose）、コンテキスト超過時の切り詰め再試行、一時失敗リトライ |
-| Unit | HeartbeatRunner | EventReader / ContextBuilder / MemoryReader / CommandQueue / SystemEventQueue（s01 実装に依存しない）、AgentRunner、タイマー (`node:timers/promises` mock)、ファイルシステム（テスト用 tmpdir） | タイマー制御、HEARTBEAT_OK 判定（stripHeartbeatToken + マークアップ正規化）、空ファイルスキップ（実質空判定）、requests-in-flight/quiet-hours/alerts-disabled/readiness-failed/group-session-disabled スキップ、requests-in-flight 短周期再試行、重複排除（24h + lastHeartbeatText/lastHeartbeatSentAt）、modelId 記録、Current time 注入（重複防止含む）、可視性設定（showOk/showAlerts/useIndicator）、ok-token/ok-empty 側 readiness 判定 |
+| Unit | HeartbeatRunner | EventReader / ContextBuilder / MemoryReader / CommandQueue（s01 実装に依存しない）、AgentRunner、タイマー (`node:timers/promises` mock)、ファイルシステム（テスト用 tmpdir） | タイマー制御、HEARTBEAT_OK 判定（stripHeartbeatToken + マークアップ正規化）、空ファイルスキップ（実質空判定）、requests-in-flight/quiet-hours/alerts-disabled/readiness-failed スキップ、requests-in-flight 短周期再試行、重複排除（24h + lastHeartbeatText/lastHeartbeatSentAt）、modelId 記録、Current time 注入（重複防止含む）、channels からの可視性設定解決、heartbeat.session の main フォールバック、ok-token/ok-empty 側 readiness 判定 |
 | Integration | AgentRunner + MemoryWriter | LLM API | memory_write ツール経由でメモリファイルが書き出される |
 
 ### 6.2 カバレッジ対象
 
 - **重要ロジック**: SDK 6 ステップ順序（lock → open → create → subscribe → dispose）、stripHeartbeatToken（HTML/Markdown 正規化）、重複排除 24h ウィンドウ（lastHeartbeatText + lastHeartbeatSentAt）
 - **エラー分岐**: 一時失敗リトライ（2.5 秒待機 + 1 回再試行）、コンテキスト超過切り詰め、モデル利用不可（即時失敗）
-- **境界条件**: ackMaxChars 閾値（残テキスト ≤ ackMaxChars で shouldSkip=true）、maxRetries 上限（超過で次周期待ち）、activeHours 深夜跨ぎ（start > end）
+- **境界条件**: ackMaxChars 閾値（残テキスト ≤ ackMaxChars で shouldSkip=true）、activeHours 深夜跨ぎ（start > end）
 
 ---
 
@@ -623,43 +601,44 @@ flowchart TD
 
 - [ ] Test: タイマー発火 — intervalMs 後に heartbeat タスクが実行される (Red)
 - [ ] Impl: `startHeartbeat()` 基本ループ (Green)
-- [ ] Test: `runOnce()` — 単発実行で HeartbeatRunResult を返す (Red)
-- [ ] Test: `runOnce()` — `mode: "now"` / `mode: "scheduled"` が HeartbeatRunRecord に記録される (Red)
-- [ ] Impl: `runOnce()` 実装（startHeartbeat 内部ロジックを共有、mode パラメータ伝搬） (Green)
-- [ ] Test: `getLastResult()` — 直近の HeartbeatEventPayload を返す / 未実行時は null (Red)
-- [ ] Impl: `getLastResult()` 実装（heartbeat-state.json から読み込み） (Green)
+- [ ] Test: `runOnce()` — 単発実行で HeartbeatRunResult を返す（POST /api/heartbeat/run 契約）(Red)
+- [ ] Test: `runOnce()` — `reason` が HeartbeatRunRecord.triggerReason に記録される (Red)
+- [ ] Impl: `runOnce()` 実装（内部 runHeartbeatOnce の公開ラッパー） (Green)
+- [ ] Test: `onHeartbeatEvent()` — heartbeat payload を購読/解除できる (Red)
+- [ ] Impl: `onHeartbeatEvent()` 実装（購読ハンドラ管理） (Green)
+- [ ] Test: `getLastHeartbeatEvent()` — 直近の HeartbeatEventPayload を返す / 未実行時は null (Red)
+- [ ] Impl: `getLastHeartbeatEvent()` 実装（プロセス内スナップショット保持） (Green)
 - [ ] Test: 空ファイルスキップ — HEARTBEAT.md が実質空で `skipped(empty-heartbeat-file)` (Red)
 - [ ] Impl: 実質空判定ロジック (Green)
 - [ ] Test: HEARTBEAT_OK 判定 — stripHeartbeatToken でマークアップ正規化後、ackMaxChars 以下で `shouldSkip=true` (Red)
 - [ ] Test: stripHeartbeatToken — HTML タグ除去、`&nbsp;` 変換、Markdown 修飾除去 (Red)
 - [ ] Impl: stripHeartbeatToken + HEARTBEAT_OK 判定 (Green)
-- [ ] Test: アラート生成 — 注目イベント時にアラートテキストが返り、onAlert が呼ばれる (Red)
-- [ ] Test: アラート生成時に SystemEventQueue にチャットセッション向け要約が投入される (Red)
-- [ ] Impl: アラート生成 + SEQ 投入 (Green)
-- [ ] Refactor: startHeartbeat / runOnce の共通ロジック抽出
+- [ ] Test: アラート生成 — 注目イベント時にアラートテキストが返り、heartbeat event が配信される (Red)
+- [ ] Impl: アラート生成 + heartbeat event 配信 (Green)
+- [ ] Refactor: startHeartbeat 内部ロジック整理
 
 ### Phase 3: HeartbeatRunner — スキップ条件
 
 - [ ] Test: quiet-hours スキップ — activeHours 時間外で `skipped(quiet-hours)` (Red)
 - [ ] Test: activeHours 深夜跨ぎ（start > end）(Red)
 - [ ] Impl: activeHours 判定ロジック (Green)
-- [ ] Test: requests-in-flight スキップ — isIdle("main") が false で `skipped(requests-in-flight)` (Red)
-- [ ] Test: requests-in-flight 短周期再試行 — retryDelayMs 後に再試行、maxRetries 超過で次周期待ち (Red)
+- [ ] Test: requests-in-flight スキップ — getQueueSize("main") > 0 で `skipped(requests-in-flight)` (Red)
+- [ ] Test: requests-in-flight 短周期再試行 — retryDelayMs 後に再試行 (Red)
 - [ ] Impl: requests-in-flight + 再試行ロジック (Green)
 - [ ] Test: readiness 失敗 — アラート配信前失敗時に `skipped(readiness-failed)` + EventPayload `skipped` (Red)
 - [ ] Test: ok-token/ok-empty 可視化判定側 readiness 失敗 — `ran` + `ok-*` を維持 (Red)
 - [ ] Impl: readiness 判定 + EventPayload 記録 (Green)
-- [ ] Test: グループセッション指定時 — `skipped(group-session-disabled)` (Red)
-- [ ] Impl: グループセッション判定 (Green)
-- [ ] Test: showOk/showAlerts/useIndicator が全 false — `skipped(alerts-disabled)` でモデル呼び出しなし (Red)
-- [ ] Impl: 可視性設定チェック（alerts-disabled） (Green)
+- [ ] Test: `heartbeat.session` が無効/他 agent 指定時に main へフォールバックして継続 (Red)
+- [ ] Impl: heartbeat.session 解決 + main フォールバック (Green)
+- [ ] Test: channels から解決した showOk/showAlerts/useIndicator が全 false — `skipped(alerts-disabled)` でモデル呼び出しなし (Red)
+- [ ] Impl: channels 可視性解決 + alerts-disabled 判定 (Green)
 - [ ] Refactor: スキップ条件の判定チェーンと EventPayload 記録の整理
 
 ### Phase 4: HeartbeatRunner — 重複排除 + Current time
 
 - [ ] Test: 重複排除 — 24h 以内の同一テキストで `HeartbeatRunResult.status: "ran"` 維持 + `HeartbeatEventPayload.status: "skipped", reason: "duplicate"` (Red)
 - [ ] Test: 重複排除 — ウィンドウ期限切れ後の再通知 (Red)
-- [ ] Test: 重複排除 — lastHeartbeatText / lastHeartbeatSentAt の `data/_cache/heartbeat-state.json` 永続化（プロセス再起動後も有効） (Red)
+- [ ] Test: 重複排除 — lastHeartbeatText / lastHeartbeatSentAt の `sessions.json` 永続化（プロセス再起動後も有効） (Red)
 - [ ] Impl: 重複排除ロジック (Green)
 - [ ] Test: Current time 注入 — Body 末尾に `Current time: <formattedTime> (<userTimezone>)` が付与される (Red)
 - [ ] Test: Current time 注入 — 既存 "Current time:" 行がある場合は重複挿入しない (Red)
@@ -685,7 +664,7 @@ flowchart TD
 - [ ] AC-18: アラート配信前 readiness 失敗は `skipped` 記録、ok-token/ok-empty 側は `ran + ok-*` 維持
 - [ ] AC-20: Heartbeat 送信 Body に Current time 行が重複なく注入される
 - [ ] AC-22: requests-in-flight 時に skipped 記録 + 1 秒後再試行される
-- [ ] P-03: グループセッション指定時は Heartbeat が group-session-disabled でスキップされる
+- [ ] P-03: `heartbeat.session` の無効/他 agent 指定が main セッションへフォールバックされる
 
 ### 8.2 品質 DoD
 
@@ -706,7 +685,7 @@ flowchart TD
 
 ### 仕様が曖昧で決定が必要な事項
 
-- ~~重複排除の永続化先~~: 確定済み。`data/_cache/heartbeat-state.json` に永続化する（§2.5 参照）
+- ~~重複排除の永続化先~~: 確定済み。Session Entry（`sessions.json`）に永続化する（§2.5 参照）
 
 ### プロトタイプとして許容するリスク
 
