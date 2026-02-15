@@ -25,6 +25,7 @@ pnpm run check              # format → typecheck → test（PR 前に必ず実
 ```
 
 単一テストの実行:
+
 ```bash
 node --import tsx --test tests/jsonlWriter.test.ts
 ```

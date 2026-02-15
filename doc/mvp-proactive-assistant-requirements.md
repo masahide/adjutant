@@ -96,6 +96,7 @@ MVPでは、次を最短で成立させる。
 - 破損行の混入を防ぐため、1行1JSONを厳守
 
 受け入れ条件:
+
 - AC-01: Slackイベントが `adjutant.event.v1.1` 形式で追記保存される。
 
 ### FR-02 AIコンテキストローダー
@@ -111,6 +112,7 @@ MVPでは、次を最短で成立させる。
 - メモリ文脈（`MEMORY.md` と当日/前日メモ）を同時に組み込み、Heartbeatと通常対話の両方で参照可能にする
 
 受け入れ条件:
+
 - AC-02: AI応答時にJSONL由来文脈が入力へ取り込まれる。
 - AC-13: SystemEventQueueの注入とdrainが正しく機能する。
 
@@ -190,6 +192,7 @@ MVPでは、次を最短で成立させる。
 - 失敗後もセッションファイル破損を検知/修復できる設計とする。
 
 受け入れ条件:
+
 - AC-03: OpenClaw準拠のSDK実行手順で後処理まで必ず完了する。
 - AC-04: 同一 `sessionKey` で同時実行が発生しない。
 - AC-05: 異なる `sessionKey` 間で混線しない。
@@ -253,6 +256,7 @@ OpenClaw参照仕様を、MVPに必要な範囲で採用する。
 - `duplicate` 抑制時も `status: "ran"` を維持する
 
 受け入れ条件:
+
 - AC-07: `HEARTBEAT_OK`/ACK短文時は通知抑制され、`HeartbeatRunResult.status: "ran"` と `HeartbeatEventPayload.status: "ok-token" | "ok-empty"` が記録され、`GET /api/heartbeat/last` で確認できる。
 - AC-08: 注意喚起テキストはユーザーに通知される。
 - AC-09: `HEARTBEAT.md` 実質空ではモデル呼び出しなしで `status: "skipped"` になる。
@@ -279,6 +283,7 @@ OpenClaw参照仕様を、MVPに必要な範囲で採用する。
   - `system_event` の履歴表示は `GET /api/chat/sessions/:sessionId/messages` の結果を利用する（専用WebSocketは設けない）
 
 受け入れ条件:
+
 - AC-14: `assistant-ui` でストリーミング表示され、`run_end` 到着で完了確定して履歴へ保存され、`main` セッションのHeartbeat状態は `GET /api/heartbeat/last` のポーリングで更新表示される。
 
 ### FR-06 セッショントランスクリプト管理（OpenClaw準拠MVP）
@@ -294,6 +299,7 @@ OpenClaw参照仕様を、MVPに必要な範囲で採用する。
 - `GET /api/chat/sessions/:sessionId/messages` は表示/履歴取得専用であり、キュー制御には関与しない
 
 受け入れ条件:
+
 - AC-10: セッショントランスクリプトがJSONLに追記保存される。
 - AC-17: AI実行時にセッショントランスクリプトの直近窓が入力へ取り込まれ、再開時の文脈復元に利用される。
 
@@ -311,6 +317,7 @@ OpenClaw参照仕様を、MVPに必要な範囲で採用する。
 - ベクトル検索やSQLite索引は使わず、ファイル読み書きのみを実装する
 
 受け入れ条件:
+
 - AC-11: 明示指示時にのみメモリへ保存され次回ターンで再利用され、`isHeartbeat=true` 実行ではメモリ書き込みが発生しない。
 - AC-15: 通常対話とHeartbeatの両方で `MEMORY.md` と当日・前日メモが入力コンテキストへ取り込まれる。
 
@@ -321,6 +328,7 @@ OpenClaw参照仕様を、MVPに必要な範囲で採用する。
 - ファイル未存在時はデフォルト方針（日本語・簡潔）で動作する
 
 受け入れ条件:
+
 - AC-12: `SOUL.md` の内容が通常対話/Heartbeatの応答方針へ反映される。
 
 ### FR-09 SystemEventQueue（MVP）
@@ -337,6 +345,7 @@ OpenClaw参照仕様を、MVPに必要な範囲で採用する。
 - キュー上限を設定し（例: 20件）、超過時は古いイベントから破棄する
 
 受け入れ条件:
+
 - AC-13: SystemEventQueueが `sessionKey` ごとに分離され、注入後drainされる。
 
 ## 5. インターフェース要件（MVP案）
@@ -344,39 +353,47 @@ OpenClaw参照仕様を、MVPに必要な範囲で採用する。
 ### 5.1 バックエンドAPI
 
 1. `POST /api/chat/messages`
+
 - 入力: `{ sessionId?, sessionKey?, text, clientMessageId }`
 - 解決規則: `§2.3` の優先順を適用し、実行キュー投入は必ず `sessionKey` で行う
 - `clientMessageId` は冪等キーとして必須。`(sessionKey, clientMessageId)` が同一であれば、冪等TTL（既定300秒）内は既存 `runId` を返し新規キュー投入しない。
 - 出力: 受理応答（`{ runId, sessionId, sessionKey, accepted: true, deduplicated: boolean }`）
 
 2. `GET /api/chat/runs/:runId/stream`
+
 - 入力: `runId`
 - 出力: SSEストリーム（`run_started` / `text_delta` / `tool_call` / `tool_result` / `text_end` / `run_end` / `error`）
 
 3. `GET /api/chat/sessions/:sessionId/messages`
+
 - 入力: `sessionId`（表示・履歴取得専用）
 - 出力: メッセージ履歴（表示用）
 
 4. `POST /api/heartbeat/run`
+
 - 入力: `{ mode: "now" | "scheduled" }`
 - 出力: 実行結果（`HeartbeatRunResult`）
 
 5. `GET /api/heartbeat/last`
+
 - 入力: なし
 - 出力: `main` セッションの直近Heartbeatイベント（`HeartbeatEventPayload | null`）
 - UI契約: `assistant-ui` 側は `3s` 間隔ポーリングで利用する（MVP固定、OpenClaw UI debug poll準拠）
 - 備考: `sessionKey` 指定での取得はMVP対象外（将来拡張）
 
 注記:
+
 - `chat.abort` 相当の実行中断APIはMVPでは提供しない（`§2.2`）。
 
 ### 5.2 内部I/O契約
 
 1. Event Store（既存）
+
 - ファイル: `data/YYYY/MM/DD/slack/events.jsonl`
 - 1行1イベント、追記専用
 
 2. Heartbeat設定
+
 - 設定キー例:
   - `heartbeat.every`
   - `heartbeat.prompt`
@@ -386,21 +403,26 @@ OpenClaw参照仕様を、MVPに必要な範囲で採用する。
   - `heartbeat.useIndicator`
 
 3. Heartbeat指示ファイル
+
 - `HEARTBEAT.md` をワークスペース内の規定位置に配置
 
 4. ペルソナファイル
+
 - `SOUL.md` をワークスペース内の規定位置に配置
 
 5. メモリファイル
+
 - `MEMORY.md`
 - `memory/YYYY-MM-DD.md`
 
 6. セッショントランスクリプト
+
 - ファイル: `<dataDir>/_sessions/<sessionId>.jsonl`
 - `user_message` / `assistant_message` / `tool_call` / `tool_result` / `system_event` を追記保存
 - 各行は `sessionId`, `sessionKey`, `runId`, `type`, `ts` を必須とする
 
 7. SystemEventQueue（エフェメラル）
+
 - `sessionKey` 単位のインメモリFIFO
 - enqueue入力は `sessionKey` 必須、キュー格納要素は `text` / `ts(epoch ms)`（OpenClaw準拠）
 - `contextKey` は enqueue オプションとして受け取り、`SessionQueue` の補助状態としてのみ保持して連続重複抑制や文脈変化判定に利用する（`SystemEvent` には格納しない）
@@ -562,25 +584,31 @@ type StreamEvent =
 ## 7. 非機能要件（MVP）
 
 1. 可用性
+
 - Slack切断時に既存再接続ロジックで自動復帰する
 
 2. 性能
+
 - 通常チャット応答の初回トークン開始を5秒以内目標（ローカル開発環境）
 
 3. 監査性
+
 - Heartbeat実行ログと結果ステータスを記録し、あとから追跡可能にする
 
 4. セキュリティ
+
 - Slackトークンや個人情報をUIログに平文表示しない
 - JSONLの外部共有前にマスキング手順を用意する
 - APIサーバーは既定で `127.0.0.1` にのみバインドし、外部公開を前提にしない
 - 副作用ツールを有効化する場合は、実行先を制限したサンドボックス（例: Docker）を推奨する
 
 5. 順序保証
+
 - 同一セッション内イベントは、保存順とUI表示順が一致すること
 - followup キュー投入時も先着順を維持すること
 
 6. 可観測性
+
 - セッション単位で `queued/running/completed/failed` を内部ログとして記録する（外部API公開はMVP対象外）
 - Heartbeat結果、再試行発生、SystemEventQueueのdrain件数をイベントログに残す
 
@@ -588,30 +616,30 @@ type StreamEvent =
 
 受け入れ条件の詳細は `§4` 各FR直下を正とし、本節は追跡用の一覧とする。
 
-| AC | 対応FR | 検証観点 |
-|---|---|---|
-| AC-01 | FR-01 | Slackイベントが `adjutant.event.v1.1` でJSONL追記される |
-| AC-02 | FR-02 | AI応答時にJSONL由来コンテキストが入力される |
-| AC-03 | FR-03 | OpenClaw準拠のSDK実行手順（lock→open→create→subscribe→dispose）を満たす |
-| AC-04 | FR-03 | 同一 `sessionKey` で同時実行が発生しない |
-| AC-05 | FR-03 | 異なる `sessionKey` 間でコンテキストが混線しない |
-| AC-06 | FR-03 | 一時失敗時の1回再試行/切り詰め再試行が機能する |
-| AC-07 | FR-04 | `HEARTBEAT_OK` 抑制時は `HeartbeatRunResult.status: "ran"` と `HeartbeatEventPayload.status` で記録され、`GET /api/heartbeat/last` で確認できる |
-| AC-08 | FR-04 | Heartbeatアラートが通知される |
-| AC-09 | FR-04 | `HEARTBEAT.md` 実質空で `status: "skipped"` になる |
-| AC-10 | FR-06 | セッショントランスクリプトが `sessionId/sessionKey/runId` 付きで永続化される |
-| AC-11 | FR-07 | 明示指示時のみメモリ書き込みされ、Heartbeat実行時は書き込まれない |
-| AC-12 | FR-08 | `SOUL.md` が通常対話/Heartbeatの応答方針に反映される |
-| AC-13 | FR-02/FR-09 | SystemEventQueueが `sessionKey` ごとに注入・drainされる |
-| AC-14 | FR-05 | `assistant-ui` でストリーミング表示され、`run_end` で完了確定して履歴保存され、`main` セッションのHeartbeat状態が `GET /api/heartbeat/last` ポーリングで表示更新される |
-| AC-15 | FR-07 | 通常対話/Heartbeatの両方で `MEMORY.md` と当日・前日メモが入力コンテキストへ取り込まれる |
-| AC-16 | FR-04 | 24時間以内の同一Heartbeat本文は `reason: "duplicate"` で抑制され、`HeartbeatRunResult.status: "ran"` を維持する |
-| AC-17 | FR-06 | AI実行時にセッショントランスクリプト直近窓が入力へ取り込まれ、再開時の文脈復元に利用される |
-| AC-18 | FR-04 | アラート配信前の配信チャネルreadiness失敗時は `HeartbeatRunResult.status: "skipped"` と `HeartbeatEventPayload.status: "skipped"` が記録される |
-| AC-19 | FR-03 | 致命的エラー時は `error` を診断用に送出しつつ、最終的に `run_end(status: "failed")` で終端してUI終端判定を一意にできる（`run_end` は `runId` ごとに1回のみ） |
-| AC-20 | FR-04 | Heartbeat実行時の送信Body末尾に `Current time: <formattedTime> (<userTimezone>)` 行が注入され、同一実行で重複挿入されない |
-| AC-21 | FR-03 | 同一 `sessionKey` + `clientMessageId` 再送時は冪等処理され、既存 `runId` を返して重複runを作らない |
-| AC-22 | FR-04 | `requests-in-flight` 時は `status: "skipped"` で記録され、1秒後再試行が行われる |
+| AC    | 対応FR      | 検証観点                                                                                                                                                               |
+| ----- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| AC-01 | FR-01       | Slackイベントが `adjutant.event.v1.1` でJSONL追記される                                                                                                                |
+| AC-02 | FR-02       | AI応答時にJSONL由来コンテキストが入力される                                                                                                                            |
+| AC-03 | FR-03       | OpenClaw準拠のSDK実行手順（lock→open→create→subscribe→dispose）を満たす                                                                                                |
+| AC-04 | FR-03       | 同一 `sessionKey` で同時実行が発生しない                                                                                                                               |
+| AC-05 | FR-03       | 異なる `sessionKey` 間でコンテキストが混線しない                                                                                                                       |
+| AC-06 | FR-03       | 一時失敗時の1回再試行/切り詰め再試行が機能する                                                                                                                         |
+| AC-07 | FR-04       | `HEARTBEAT_OK` 抑制時は `HeartbeatRunResult.status: "ran"` と `HeartbeatEventPayload.status` で記録され、`GET /api/heartbeat/last` で確認できる                        |
+| AC-08 | FR-04       | Heartbeatアラートが通知される                                                                                                                                          |
+| AC-09 | FR-04       | `HEARTBEAT.md` 実質空で `status: "skipped"` になる                                                                                                                     |
+| AC-10 | FR-06       | セッショントランスクリプトが `sessionId/sessionKey/runId` 付きで永続化される                                                                                           |
+| AC-11 | FR-07       | 明示指示時のみメモリ書き込みされ、Heartbeat実行時は書き込まれない                                                                                                      |
+| AC-12 | FR-08       | `SOUL.md` が通常対話/Heartbeatの応答方針に反映される                                                                                                                   |
+| AC-13 | FR-02/FR-09 | SystemEventQueueが `sessionKey` ごとに注入・drainされる                                                                                                                |
+| AC-14 | FR-05       | `assistant-ui` でストリーミング表示され、`run_end` で完了確定して履歴保存され、`main` セッションのHeartbeat状態が `GET /api/heartbeat/last` ポーリングで表示更新される |
+| AC-15 | FR-07       | 通常対話/Heartbeatの両方で `MEMORY.md` と当日・前日メモが入力コンテキストへ取り込まれる                                                                                |
+| AC-16 | FR-04       | 24時間以内の同一Heartbeat本文は `reason: "duplicate"` で抑制され、`HeartbeatRunResult.status: "ran"` を維持する                                                        |
+| AC-17 | FR-06       | AI実行時にセッショントランスクリプト直近窓が入力へ取り込まれ、再開時の文脈復元に利用される                                                                             |
+| AC-18 | FR-04       | アラート配信前の配信チャネルreadiness失敗時は `HeartbeatRunResult.status: "skipped"` と `HeartbeatEventPayload.status: "skipped"` が記録される                         |
+| AC-19 | FR-03       | 致命的エラー時は `error` を診断用に送出しつつ、最終的に `run_end(status: "failed")` で終端してUI終端判定を一意にできる（`run_end` は `runId` ごとに1回のみ）           |
+| AC-20 | FR-04       | Heartbeat実行時の送信Body末尾に `Current time: <formattedTime> (<userTimezone>)` 行が注入され、同一実行で重複挿入されない                                              |
+| AC-21 | FR-03       | 同一 `sessionKey` + `clientMessageId` 再送時は冪等処理され、既存 `runId` を返して重複runを作らない                                                                     |
+| AC-22 | FR-04       | `requests-in-flight` 時は `status: "skipped"` で記録され、1秒後再試行が行われる                                                                                        |
 
 ## 9. 既知の制約
 

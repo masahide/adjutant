@@ -36,10 +36,10 @@ AI Assistant MVP の「頭脳」に相当するレイヤー。
 
 **実装モジュール:**
 
-| モジュール | ファイル | 責務 |
-|-----------|---------|------|
-| **AgentRunner** | `src/assistant/agent-runner.ts` | pi-coding-agent SDK を使った LLM 実行。セッション管理、ストリーミング、ツール登録、失敗回復 |
-| **HeartbeatRunner** | `src/assistant/heartbeat-runner.ts` | 定期ポーリング、HEARTBEAT_OK 判定、重複排除、スキップ制御、Current time 注入 |
+| モジュール          | ファイル                            | 責務                                                                                        |
+| ------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------- |
+| **AgentRunner**     | `src/assistant/agent-runner.ts`     | pi-coding-agent SDK を使った LLM 実行。セッション管理、ストリーミング、ツール登録、失敗回復 |
+| **HeartbeatRunner** | `src/assistant/heartbeat-runner.ts` | 定期ポーリング、HEARTBEAT_OK 判定、重複排除、スキップ制御、Current time 注入                |
 
 **成果物:**
 
@@ -95,43 +95,55 @@ AI Assistant MVP の「頭脳」に相当するレイヤー。
 ### 2.4 受け入れ条件 Acceptance Criteria
 
 **AC-03: SDK 実行手順準拠**
+
 - Given AgentRunner が `runAgent()` で呼び出される When SDK セッションを使用する Then lock → open → create → subscribe → dispose の順序で実行される
 
 **AC-06: 失敗時再試行**
+
 - Given LLM API が一時エラーを返す When AgentRunner が失敗を検知する Then 2.5 秒待機後に 1 回再試行する
 - Given LLM がコンテキスト超過エラーを返す When AgentRunner が失敗を検知する Then イベント/履歴入力を切り詰めて 1 回再試行する
 
 **AC-07: HEARTBEAT_OK 抑制**
+
 - Given HeartbeatRunner が LLM 応答を受け取る When 応答に HEARTBEAT_OK トークンを含む Then `HeartbeatRunResult.status: "ran"` を維持し `HeartbeatEventPayload.status: "ok-token" | "ok-empty"` が記録される
 
 **AC-08: Heartbeat アラート通知**
+
 - Given HeartbeatRunner が LLM 応答を受け取る When 応答が注目イベントを含む Then アラートテキストが生成され heartbeat イベントとして配信される
 
 **AC-09: 空 HEARTBEAT スキップ**
+
 - Given HEARTBEAT.md が実質空である When HeartbeatRunner がファイルを読み込む Then モデル呼び出しなしで `status: "skipped"` となる
 
 **AC-11: メモリ書き込みガード**
+
 - Given ユーザーが明示的に記憶を指示する When AgentRunner が実行する Then memory_write ツールが実行され、次回ターンで再利用される
 - Given `isHeartbeat=true` When AgentRunner が実行する Then memory_write がツールリストから除外される
 
 **AC-12: SOUL 反映**
+
 - Given SOUL.md / USER.md / AGENTS.md が存在する When AgentRunner が実行する Then systemPrompt にこれらの内容が反映される
 
 **AC-16: 重複通知抑制**
+
 - Given 24h 以内に同一テキストのアラートが送信済みである When HeartbeatRunner が同一テキストを生成する Then `HeartbeatRunResult.status: "ran"` を維持し `HeartbeatEventPayload.status: "skipped", reason: "duplicate"` が記録される
 
 **AC-18: readiness 失敗の記録**
+
 - Given アラート配信前に readiness チェックが失敗する When HeartbeatRunner が結果を記録する Then `HeartbeatRunResult.status: "skipped"` と `HeartbeatEventPayload.status: "skipped"` が記録される
 - Given ok-token/ok-empty の可視化判定側で readiness が失敗する When HeartbeatRunner が結果を記録する Then `HeartbeatRunResult.status: "ran"` と `HeartbeatEventPayload.status: "ok-token" | "ok-empty"` を維持する
 
 **AC-20: Current time 注入**
+
 - Given HeartbeatRunner がプロンプトを構築する When Body 末尾に Current time 行がない Then `Current time: <formattedTime> (<userTimezone>)` が注入される
 - Given Body に既に "Current time:" 行が存在する When HeartbeatRunner が注入を試みる Then 重複挿入しない
 
 **AC-22: requests-in-flight 再試行**
+
 - Given `getQueueSize("main")` が 0 より大きい When HeartbeatRunner がタイマー発火する Then `status: "skipped"` で記録し、retryDelayMs 後に再試行する
 
 **P-03: heartbeat.session フォールバック**
+
 - Given `heartbeat.session` が無効/他 agent セッションを指す When HeartbeatRunner が実行判定する Then `main` セッションへフォールバックして継続する
 
 ### 2.5 既知の制約 Known Limitations
@@ -176,11 +188,11 @@ AI Assistant MVP の「頭脳」に相当するレイヤー。
 export type AgentRunOptions = {
   runId: string;
   prompt: string;
-  systemPrompt?: string;       // SOUL.md + USER.md + AGENTS.md 結合テキスト
+  systemPrompt?: string; // SOUL.md + USER.md + AGENTS.md 結合テキスト
   sessionKey: string;
   sessionId?: string;
-  isHeartbeat?: boolean;       // true → updatedAt 復元 + memory_write 無効化
-  model?: string;              // モデルカスケード用
+  isHeartbeat?: boolean; // true → updatedAt 復元 + memory_write 無効化
+  model?: string; // モデルカスケード用
   onTextDelta?: (delta: string) => void;
   onToolCall?: (name: string, params: unknown) => void;
 };
@@ -196,35 +208,35 @@ export function runAgent(opts: AgentRunOptions): Promise<AgentRunResult>;
 
 **サブ要件:**
 
-| サブ要件 | 内容 | 対応 AC |
-|----------|------|---------|
-| FR-AG-1 | OpenClaw 準拠の SDK 利用手順 | AC-03 |
-| FR-AG-2 | 最終回答と途中イベントの分離、部分応答の順序保証 | AC-14 / AC-19 |
-| FR-AG-3 | 一時失敗は 2.5 秒待機後に 1 回再試行。コンテキスト超過時は切り詰め再試行 | AC-06 |
-| FR-AG-4 | セッションファイル破損の検知・修復/退避 | AC-03 |
+| サブ要件 | 内容                                                                     | 対応 AC       |
+| -------- | ------------------------------------------------------------------------ | ------------- |
+| FR-AG-1  | OpenClaw 準拠の SDK 利用手順                                             | AC-03         |
+| FR-AG-2  | 最終回答と途中イベントの分離、部分応答の順序保証                         | AC-14 / AC-19 |
+| FR-AG-3  | 一時失敗は 2.5 秒待機後に 1 回再試行。コンテキスト超過時は切り詰め再試行 | AC-06         |
+| FR-AG-4  | セッションファイル破損の検知・修復/退避                                  | AC-03         |
 
 #### HeartbeatRunner
 
 ```typescript
 // src/assistant/heartbeat-runner.ts
 export type HeartbeatConfig = {
-  intervalMs: number;         // default: 1800000 (30m)
-  timeoutMs?: number;         // default: 30000
-  sessionKey?: string;        // default: "main"
-  heartbeatFilePath: string;  // default: "HEARTBEAT.md"
-  soulFilePath: string;       // default: "SOUL.md"
-  userFilePath: string;       // default: "USER.md"
-  agentsFilePath: string;     // default: "AGENTS.md"
+  intervalMs: number; // default: 1800000 (30m)
+  timeoutMs?: number; // default: 30000
+  sessionKey?: string; // default: "main"
+  heartbeatFilePath: string; // default: "HEARTBEAT.md"
+  soulFilePath: string; // default: "SOUL.md"
+  userFilePath: string; // default: "USER.md"
+  agentsFilePath: string; // default: "AGENTS.md"
   dataDir: string;
-  userTimezone?: string;      // default: agents.defaults.userTimezone（未設定時はホスト環境）
-  retryDelayMs?: number;      // default: 1000
-  ackMaxChars: number;        // default: 300
+  userTimezone?: string; // default: agents.defaults.userTimezone（未設定時はホスト環境）
+  retryDelayMs?: number; // default: 1000
+  ackMaxChars: number; // default: 300
   // 可視性設定（showOk/showAlerts/useIndicator）は channels 設定から解決する
   model?: string;
   activeHours?: {
-    start: string;            // "HH:MM"
-    end: string;              // "HH:MM"（"24:00" 可、start > end で深夜跨ぎ）
-    timezone?: string;        // "user" | "local" | IANA タイムゾーン名
+    start: string; // "HH:MM"
+    end: string; // "HH:MM"（"24:00" 可、start > end で深夜跨ぎ）
+    timezone?: string; // "user" | "local" | IANA タイムゾーン名
   };
 };
 
@@ -239,7 +251,7 @@ export type HeartbeatRunResult =
     }
   | {
       status: "skipped";
-      reason: string;        // OpenClaw 準拠: alerts-disabled / readiness の詳細理由を含む
+      reason: string; // OpenClaw 準拠: alerts-disabled / readiness の詳細理由を含む
     }
   | {
       status: "failed";
@@ -250,19 +262,19 @@ export type HeartbeatEventPayload = {
   ts: number;
   status: "sent" | "ok-empty" | "ok-token" | "skipped" | "failed";
   reason?: string;
-  to?: string;               // OpenClaw互換, MVP省略可
-  channel?: string;           // OpenClaw互換, MVP省略可
-  accountId?: string;         // OpenClaw互換, MVP省略可
+  to?: string; // OpenClaw互換, MVP省略可
+  channel?: string; // OpenClaw互換, MVP省略可
+  accountId?: string; // OpenClaw互換, MVP省略可
   preview?: string;
   durationMs?: number;
-  hasMedia?: boolean;         // OpenClaw互換, MVP省略可
-  silent?: boolean;           // OpenClaw互換, MVP省略可
+  hasMedia?: boolean; // OpenClaw互換, MVP省略可
+  silent?: boolean; // OpenClaw互換, MVP省略可
   indicatorType?: "ok" | "alert" | "error";
 };
 
 export type HeartbeatRunRecord = {
   schema: "adjutant.heartbeat.result.v1";
-  runAt: string;    // ISO8601
+  runAt: string; // ISO8601
   sessionId?: string;
   sessionKey?: string;
   result: HeartbeatRunResult;
@@ -276,7 +288,7 @@ export function startHeartbeat(config: HeartbeatConfig): { stop: () => void };
 // 内部の runHeartbeatOnce(reason) を公開契約化したもの。
 export function runOnce(
   config: HeartbeatConfig,
-  opts?: { reason?: string },
+  opts?: { reason?: string }
 ): Promise<HeartbeatRunResult>;
 export function onHeartbeatEvent(listener: (evt: HeartbeatEventPayload) => void): () => void;
 export function getLastHeartbeatEvent(): HeartbeatEventPayload | null;
@@ -296,25 +308,25 @@ export function getLastHeartbeatEvent(): HeartbeatEventPayload | null;
 本プランのモジュールは s01（データ・キュー基盤層）のインターフェースに依存する。
 開発中はこれらをモックして先行実装可能。
 
-| 消費モジュール | 使用箇所 | 用途 |
-|-------------|---------|------|
-| `EventReader.readEvents()` | HeartbeatRunner | イベント窓の読み込み |
-| `ContextBuilder.buildEventContext()` | HeartbeatRunner | プロンプト組み立て |
-| `MemoryReader.readMemoryFiles()` | HeartbeatRunner | メモリ読み込み |
-| `MemoryWriter.appendDailyMemory()` / `updateLongTermMemory()` | AgentRunner | memory_write ツール |
-| `CommandQueue.getQueueSize("main")` | HeartbeatRunner | main レーンの混雑判定（requests-in-flight） |
+| 消費モジュール                                                | 使用箇所        | 用途                                        |
+| ------------------------------------------------------------- | --------------- | ------------------------------------------- |
+| `EventReader.readEvents()`                                    | HeartbeatRunner | イベント窓の読み込み                        |
+| `ContextBuilder.buildEventContext()`                          | HeartbeatRunner | プロンプト組み立て                          |
+| `MemoryReader.readMemoryFiles()`                              | HeartbeatRunner | メモリ読み込み                              |
+| `MemoryWriter.appendDailyMemory()` / `updateLongTermMemory()` | AgentRunner     | memory_write ツール                         |
+| `CommandQueue.getQueueSize("main")`                           | HeartbeatRunner | main レーンの混雑判定（requests-in-flight） |
 
 ### 4.3 エラーと例外 Error Handling
 
-| エラー | 分類 | 対応 |
-|--------|------|------|
-| LLM API 一時エラー（通信/HTTP 系） | リトライ可 | 2.5 秒待機後にリトライ 1 回。失敗時はエラーイベントを返す |
-| LLM コンテキスト超過エラー | リトライ可（切り詰め） | イベント/履歴入力を新しい順に切り詰めて再試行（1 回） |
-| LLM モデル利用不可 | 即時失敗 | 即座に失敗を返す |
-| HEARTBEAT.md 不在 | フォールバック | デフォルトプロンプトで実行 |
-| SOUL.md / USER.md / AGENTS.md 不在 | フォールバック | デフォルト設定で動作 |
-| SDK セッションファイル破損 | 修復/退避 | 修復試行 → 修復不能時はファイル退避 + 新規作成 |
-| SDK セッション解放失敗 | ログ記録 | finally で flush/dispose + ロック解放。失敗をログに記録 |
+| エラー                             | 分類                   | 対応                                                      |
+| ---------------------------------- | ---------------------- | --------------------------------------------------------- |
+| LLM API 一時エラー（通信/HTTP 系） | リトライ可             | 2.5 秒待機後にリトライ 1 回。失敗時はエラーイベントを返す |
+| LLM コンテキスト超過エラー         | リトライ可（切り詰め） | イベント/履歴入力を新しい順に切り詰めて再試行（1 回）     |
+| LLM モデル利用不可                 | 即時失敗               | 即座に失敗を返す                                          |
+| HEARTBEAT.md 不在                  | フォールバック         | デフォルトプロンプトで実行                                |
+| SOUL.md / USER.md / AGENTS.md 不在 | フォールバック         | デフォルト設定で動作                                      |
+| SDK セッションファイル破損         | 修復/退避              | 修復試行 → 修復不能時はファイル退避 + 新規作成            |
+| SDK セッション解放失敗             | ログ記録               | finally で flush/dispose + ロック解放。失敗をログに記録   |
 
 ### 4.4 代表的な例 Examples
 
@@ -381,7 +393,8 @@ const chatResult = await runAgent({
 // ハートビートフロー（memory_write 無効化 + updatedAt 復元）
 const hbResult = await runAgent({
   runId: "hb_run_001",
-  prompt: heartbeatPrompt + "\n\n" + contextText + "\n\nCurrent time: 2026-02-15 14:30 (Asia/Tokyo)",
+  prompt:
+    heartbeatPrompt + "\n\n" + contextText + "\n\nCurrent time: 2026-02-15 14:30 (Asia/Tokyo)",
   systemPrompt: soulText,
   sessionKey: "main",
   isHeartbeat: true,
@@ -556,11 +569,11 @@ flowchart TD
 
 ### 6.1 テストの種類
 
-| 種類 | 対象 | モック境界 | 方針 |
-|------|------|----------|------|
-| Unit | AgentRunner | SDK (SessionManager / createAgentSession)、LLM API | SDK 利用手順（6 ステップ）、メモリ書き込みガード（明示トリガーありで memory_write 実行 / 明示トリガーなしで不実行 / ハートビート時は常に除外）、メモリ保存内容の次回ターン再利用、updatedAt 復元、SDK セッション後処理（例外時 flush/dispose）、コンテキスト超過時の切り詰め再試行、一時失敗リトライ |
-| Unit | HeartbeatRunner | EventReader / ContextBuilder / MemoryReader / CommandQueue（s01 実装に依存しない）、AgentRunner、タイマー (`node:timers/promises` mock)、ファイルシステム（テスト用 tmpdir） | タイマー制御、HEARTBEAT_OK 判定（stripHeartbeatToken + マークアップ正規化）、空ファイルスキップ（実質空判定）、requests-in-flight/quiet-hours/alerts-disabled/readiness-failed スキップ、requests-in-flight 短周期再試行、重複排除（24h + lastHeartbeatText/lastHeartbeatSentAt）、modelId 記録、Current time 注入（重複防止含む）、channels からの可視性設定解決、heartbeat.session の main フォールバック、ok-token/ok-empty 側 readiness 判定 |
-| Integration | AgentRunner + MemoryWriter | LLM API | memory_write ツール経由でメモリファイルが書き出される |
+| 種類        | 対象                       | モック境界                                                                                                                                                                   | 方針                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ----------- | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Unit        | AgentRunner                | SDK (SessionManager / createAgentSession)、LLM API                                                                                                                           | SDK 利用手順（6 ステップ）、メモリ書き込みガード（明示トリガーありで memory_write 実行 / 明示トリガーなしで不実行 / ハートビート時は常に除外）、メモリ保存内容の次回ターン再利用、updatedAt 復元、SDK セッション後処理（例外時 flush/dispose）、コンテキスト超過時の切り詰め再試行、一時失敗リトライ                                                                                                                                             |
+| Unit        | HeartbeatRunner            | EventReader / ContextBuilder / MemoryReader / CommandQueue（s01 実装に依存しない）、AgentRunner、タイマー (`node:timers/promises` mock)、ファイルシステム（テスト用 tmpdir） | タイマー制御、HEARTBEAT_OK 判定（stripHeartbeatToken + マークアップ正規化）、空ファイルスキップ（実質空判定）、requests-in-flight/quiet-hours/alerts-disabled/readiness-failed スキップ、requests-in-flight 短周期再試行、重複排除（24h + lastHeartbeatText/lastHeartbeatSentAt）、modelId 記録、Current time 注入（重複防止含む）、channels からの可視性設定解決、heartbeat.session の main フォールバック、ok-token/ok-empty 側 readiness 判定 |
+| Integration | AgentRunner + MemoryWriter | LLM API                                                                                                                                                                      | memory_write ツール経由でメモリファイルが書き出される                                                                                                                                                                                                                                                                                                                                                                                            |
 
 ### 6.2 カバレッジ対象
 

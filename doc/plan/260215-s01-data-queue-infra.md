@@ -43,15 +43,15 @@ AI Assistant MVP のデータ I/O・キュー・コンテキスト組み立て�
 
 **成果物:**
 
-| モジュール | ファイル | 責務 |
-|-----------|---------|------|
-| **EventReader** | `src/assistant/event-reader.ts` | JSONL からイベント窓を読み込み `NormalizedEvent[]` を返す |
-| **SystemEventQueue** | `src/assistant/system-event-queue.ts` | sessionKey 単位 FIFO キュー。投入元は monitor/system/cron |
-| **CommandQueue** | `src/assistant/command-queue.ts` | `main` + `session:<sessionKey>` レーンでの排他制御 |
-| **ContextBuilder** | `src/assistant/context-builder.ts` | イベント + メモリ + SystemEvent + transcript → プロンプトテキスト |
-| **MemoryReader** | `src/assistant/memory-reader.ts` | MEMORY.md / memory/YYYY-MM-DD.md の読み込み |
-| **MemoryWriter** | `src/assistant/memory-writer.ts` | memory/YYYY-MM-DD.md 追記、MEMORY.md 更新 |
-| **TranscriptReader** | `src/assistant/transcript-reader.ts` | SDK transcript JSONL + `sessions.json` を UI/直近窓向けに投影 |
+| モジュール           | ファイル                              | 責務                                                              |
+| -------------------- | ------------------------------------- | ----------------------------------------------------------------- |
+| **EventReader**      | `src/assistant/event-reader.ts`       | JSONL からイベント窓を読み込み `NormalizedEvent[]` を返す         |
+| **SystemEventQueue** | `src/assistant/system-event-queue.ts` | sessionKey 単位 FIFO キュー。投入元は monitor/system/cron         |
+| **CommandQueue**     | `src/assistant/command-queue.ts`      | `main` + `session:<sessionKey>` レーンでの排他制御                |
+| **ContextBuilder**   | `src/assistant/context-builder.ts`    | イベント + メモリ + SystemEvent + transcript → プロンプトテキスト |
+| **MemoryReader**     | `src/assistant/memory-reader.ts`      | MEMORY.md / memory/YYYY-MM-DD.md の読み込み                       |
+| **MemoryWriter**     | `src/assistant/memory-writer.ts`      | memory/YYYY-MM-DD.md 追記、MEMORY.md 更新                         |
+| **TranscriptReader** | `src/assistant/transcript-reader.ts`  | SDK transcript JSONL + `sessions.json` を UI/直近窓向けに投影     |
 
 **制約:**
 
@@ -70,30 +70,36 @@ AI Assistant MVP のデータ I/O・キュー・コンテキスト組み立て�
 ### 2.3 ユースケース Use Cases
 
 **UC-1: イベント窓の読み込み（正常系）**
+
 1. 上位モジュール（HeartbeatRunner 等）が `readEvents({ dataDir, sinceMinutes: 60, limit: 200 })` を呼び出す
 2. EventReader が `data/YYYY/MM/DD/slack/events.jsonl` を読み込み、時刻・kinds・channels フィルタを適用する
 3. 新しい順に limit 件で切り詰めた `NormalizedEvent[]` を返す
 
 **UC-2: イベント窓の読み込み（異常系 — ファイル不在）**
+
 1. データ未収集の日付で `readEvents()` が呼ばれる
 2. JSONL ファイルが存在しないため、空配列 `[]` を返す（エラーにしない）
 
 **UC-3: SystemEvent の前置き注入**
+
 1. monitor/system/cron 由来イベントが `enqueueSystemEvent()` で投入される
 2. ChatHandler が `drainSystemEvents()` でキューを排出し、コンテキストに前置きする
 3. drain 後はキューが空になり、次の run まで新たな投入を待つ
 
 **UC-4: コマンドの排他実行**
+
 1. 同一 `session:<sessionKey>` レーンに 2 つのチャットタスクが同時到着する
 2. CommandQueue が先着を実行中に後着をキューイングする
 3. 先着完了後に後着が実行される（同一レーン直列保証）
 
 **UC-5: メモリの読み書き**
+
 1. AgentRunner が `readMemoryFiles()` で長期メモリ + 当日・前日メモを取得する
 2. 対話中にユーザーが「覚えておいて」と指示すると、AgentRunner が `appendDailyMemory()` で書き込む
 3. 次回実行時に `readMemoryFiles()` で書き込んだ内容が読み込まれる
 
 **UC-6: transcript JSONL の破損行スキップ（異常系）**
+
 1. プロセス異常終了で JSONL の末尾行が破損する
 2. `loadMessages()` / `loadRecentSessionEvents()` が破損行をスキップし、読める行だけを返す
 3. 破損検知をログに記録する
@@ -103,41 +109,49 @@ AI Assistant MVP のデータ I/O・キュー・コンテキスト組み立て�
 マスタープラン AC 番号に対応させる。
 
 **AC-01: Slack イベント JSONL 保存**
+
 - Given: 既存 JSONL ファイルが `data/YYYY/MM/DD/slack/events.jsonl` に存在する
 - When: `readEvents()` を日付指定で呼び出す
 - Then: `NormalizedEvent[]` として正しくパースされる
 
 **AC-02: JSONL 文脈注入**
+
 - Given: JSONL 由来のイベント配列がある
 - When: `buildEventContext()` にイベントを渡す
 - Then: AI が理解可能なプロンプトテキストに変換される
 
 **AC-04: 同一 sessionKey 排他**
+
 - Given: 同一 sessionKey で 2 つのコマンドが投入される
 - When: 1 つ目が実行中に 2 つ目が投入される
 - Then: 2 つ目は 1 つ目の完了後に実行される（同時実行は発生しない）
 
 **AC-05: sessionKey 分離**
+
 - Given: 異なる sessionKey ("main", "other") でコマンド/イベントが投入される
 - When: 各キューの状態を確認する
 - Then: 異なる sessionKey 間でコンテキスト・キューが混線しない
 
 **AC-10: トランスクリプト投影**
+
 - Given: SDK transcript JSONL + `sessions.json` が存在する
 - When: `loadMessages()` / `loadRecentSessionEvents()` を呼ぶ
 - Then: OpenClaw 互換の履歴表示/直近窓として正しく投影される
 
 **AC-13: SystemEventQueue 注入/排出**
+
 - Given: sessionKey "main" に SystemEvent が 3 件投入されている
 - When: `drainSystemEvents("main")` を呼ぶ
 - Then: 投入順に 3 件取得でき、drain 後のキューは空になる
 
 **AC-15: メモリ参照（通常/Heartbeat）**
+
 - Given: MEMORY.md と memory/2026-02-15.md が存在する
 - When: `readMemoryFiles()` を呼ぶ
 - Then: longTerm, daily, yesterday が正しく読み込まれる（不在時は null）
 
 **AC-17: トランスクリプト直近窓注入**
+
 - Given: SessionTranscriptEvent が 10 件保存されている
 - When: `buildEventContext()` に recentTranscript を渡す
 - Then: 入力コンテキストにトランスクリプト直近窓が含まれる
@@ -170,15 +184,15 @@ AI Assistant MVP のデータ I/O・キュー・コンテキスト組み立て�
 
 本プランは HTTP API / CLI を持たない。上位モジュール（s02, s03）向けの TypeScript モジュールインターフェースを提供する。
 
-| モジュール | 公開関数 | 消費先 |
-|-----------|---------|--------|
-| EventReader | `readEvents()` | s02: HeartbeatRunner |
+| モジュール       | 公開関数                                                                                                                                               | 消費先                                                    |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------- |
+| EventReader      | `readEvents()`                                                                                                                                         | s02: HeartbeatRunner                                      |
 | SystemEventQueue | `enqueueSystemEvent()`, `drainSystemEvents()`, `drainSystemEventEntries()`, `peekSystemEvents()`, `hasSystemEvents()`, `isSystemEventContextChanged()` | monitor/system/cron（enqueue）, s03: ChatHandler（drain） |
-| CommandQueue | `resolveSessionLane()`, `enqueueCommandInLane()`, `enqueueCommand()`, `getQueueSize()`, `isIdle()`, `isGlobalIdle()` | s02: HeartbeatRunner, s03: API Server |
-| ContextBuilder | `buildEventContext()` | s02: HeartbeatRunner, s03: ChatHandler |
-| MemoryReader | `readMemoryFiles()` | s02: HeartbeatRunner, s03: ChatHandler |
-| MemoryWriter | `appendDailyMemory()`, `updateLongTermMemory()` | s02: AgentRunner (ツール登録) |
-| TranscriptReader | `loadMessages()`, `loadRecentSessionEvents()` | s03: API Server / ChatHandler |
+| CommandQueue     | `resolveSessionLane()`, `enqueueCommandInLane()`, `enqueueCommand()`, `getQueueSize()`, `isIdle()`, `isGlobalIdle()`                                   | s02: HeartbeatRunner, s03: API Server                     |
+| ContextBuilder   | `buildEventContext()`                                                                                                                                  | s02: HeartbeatRunner, s03: ChatHandler                    |
+| MemoryReader     | `readMemoryFiles()`                                                                                                                                    | s02: HeartbeatRunner, s03: ChatHandler                    |
+| MemoryWriter     | `appendDailyMemory()`, `updateLongTermMemory()`                                                                                                        | s02: AgentRunner (ツール登録)                             |
+| TranscriptReader | `loadMessages()`, `loadRecentSessionEvents()`                                                                                                          | s03: API Server / ChatHandler                             |
 
 ### 4.2 データモデルとスキーマ
 
@@ -241,8 +255,8 @@ export type AgentRunStatus = {
   sessionKey: string;
   runId: string;
   status: "queued" | "running" | "completed" | "failed";
-  reason?: string;       // failed 時の理由
-  updatedAt: string;     // ISO8601
+  reason?: string; // failed 時の理由
+  updatedAt: string; // ISO8601
 };
 
 // --- Heartbeat 関連型（s02 HeartbeatRunner が使用）---
@@ -287,11 +301,11 @@ export type HeartbeatRunRecord = {
 ```typescript
 export type ReadEventsOptions = {
   dataDir: string;
-  date?: string;        // "YYYY-MM-DD" (default: today)
-  kinds?: string[];     // filter by event kind
-  channels?: string[];  // filter by channel_id
+  date?: string; // "YYYY-MM-DD" (default: today)
+  kinds?: string[]; // filter by event kind
+  channels?: string[]; // filter by channel_id
   sinceMinutes?: number; // 直近 N 分以内のイベントのみ (default: 60)
-  limit?: number;        // 最大取得件数、新しい順に切り詰め (default: 200)
+  limit?: number; // 最大取得件数、新しい順に切り詰め (default: 200)
 };
 
 export function readEvents(opts: ReadEventsOptions): Promise<NormalizedEvent[]>;
@@ -394,20 +408,20 @@ export type TranscriptReadOptions = {
 // OpenClaw chat.history 互換: sanitized transcript message objects を返す。
 export function loadMessages(opts: TranscriptReadOptions): Promise<unknown[]>;
 export function loadRecentSessionEvents(
-  opts: TranscriptReadOptions & { limit: number },
+  opts: TranscriptReadOptions & { limit: number }
 ): Promise<SessionTranscriptEvent[]>;
 ```
 
 ### 4.3 エラーと例外 Error Handling
 
-| エラー | 分類 | 対応 |
-|--------|------|------|
-| JSONL ファイル不在 | 正常系 | 空配列を返す（エラーにしない） |
-| MEMORY.md 不在 | 正常系 | `null` を返す（初回起動時） |
-| memory/YYYY-MM-DD.md 不在 | 正常系 | `null` を返す |
-| transcript JSONL 破損行 | 準正常系 | 読める行だけ読み込み、破損行はスキップ。破損検知を `console.warn` でログ出力 |
-| JSONL パース失敗（個別行） | 準正常系 | その行をスキップし、残りを処理する |
-| ファイル書き込み失敗 | 異常系 | 例外をそのまま throw（上位で catch） |
+| エラー                     | 分類     | 対応                                                                         |
+| -------------------------- | -------- | ---------------------------------------------------------------------------- |
+| JSONL ファイル不在         | 正常系   | 空配列を返す（エラーにしない）                                               |
+| MEMORY.md 不在             | 正常系   | `null` を返す（初回起動時）                                                  |
+| memory/YYYY-MM-DD.md 不在  | 正常系   | `null` を返す                                                                |
+| transcript JSONL 破損行    | 準正常系 | 読める行だけ読み込み、破損行はスキップ。破損検知を `console.warn` でログ出力 |
+| JSONL パース失敗（個別行） | 準正常系 | その行をスキップし、残りを処理する                                           |
+| ファイル書き込み失敗       | 異常系   | 例外をそのまま throw（上位で catch）                                         |
 
 - **リトライ方針**: 本プランのモジュールにリトライロジックは持たせない。上位レイヤーの責務とする
 - **タイムアウト方針**: ファイル I/O に対するタイムアウトは設けない（ローカルファイルシステム前提）
@@ -580,20 +594,20 @@ graph TB
 
 **Unit テスト:**
 
-| 対象 | モック境界 | 主要テスト観点 |
-|------|----------|--------------|
-| EventReader | テスト用 JSONL フィクスチャ | パース、日付フィルタ、sinceMinutes/limit 切り詰め、空ファイル処理、kinds/channels フィルタ |
-| SystemEventQueue | なし（インメモリ） | enqueue/drain/peek、MAX_EVENTS=20 上限、sessionKey 分離、連続重複排除、contextKey 変化検知、drain 後 cleanup |
-| CommandQueue | なし（インメモリ） | `main` + `session:<sessionKey>` レーン分離、同一レーン直列実行、isIdle/isGlobalIdle 判定、getQueueSize |
-| ContextBuilder | なし（純粋関数） | トークン切り詰め、truncated フラグ、メモリ注入、SystemEvent 注入、recentTranscript 注入、フォーマット出力 |
-| MemoryReader | テスト用 tmpdir | timezone 日付計算、ファイル不在時 null、正常読み込み |
-| MemoryWriter | テスト用 tmpdir | ファイル追記・更新、日付パーティション |
-| TranscriptReader | テスト用 tmpdir | SDK transcript + `sessions.json` 読み取り、破損行スキップ、loadMessages 投影、loadRecentSessionEvents |
+| 対象             | モック境界                  | 主要テスト観点                                                                                               |
+| ---------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| EventReader      | テスト用 JSONL フィクスチャ | パース、日付フィルタ、sinceMinutes/limit 切り詰め、空ファイル処理、kinds/channels フィルタ                   |
+| SystemEventQueue | なし（インメモリ）          | enqueue/drain/peek、MAX_EVENTS=20 上限、sessionKey 分離、連続重複排除、contextKey 変化検知、drain 後 cleanup |
+| CommandQueue     | なし（インメモリ）          | `main` + `session:<sessionKey>` レーン分離、同一レーン直列実行、isIdle/isGlobalIdle 判定、getQueueSize       |
+| ContextBuilder   | なし（純粋関数）            | トークン切り詰め、truncated フラグ、メモリ注入、SystemEvent 注入、recentTranscript 注入、フォーマット出力    |
+| MemoryReader     | テスト用 tmpdir             | timezone 日付計算、ファイル不在時 null、正常読み込み                                                         |
+| MemoryWriter     | テスト用 tmpdir             | ファイル追記・更新、日付パーティション                                                                       |
+| TranscriptReader | テスト用 tmpdir             | SDK transcript + `sessions.json` 読み取り、破損行スキップ、loadMessages 投影、loadRecentSessionEvents        |
 
 **Contract テスト:**
 
-| 対象 | 方針 |
-|------|------|
+| 対象            | 方針                                                    |
+| --------------- | ------------------------------------------------------- |
 | NormalizedEvent | 既存スキーマ `adjutant.event.v1.1` との整合性を検証する |
 
 **Integration テスト:**
