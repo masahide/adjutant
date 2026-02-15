@@ -20,6 +20,7 @@
   "devDependencies": {
     "@assistant-ui/react": "^0.12.10",
     "@eslint/js": "^9.39.1",
+    "@mariozechner/pi-ai": "^0.52.12",
     "@mariozechner/pi-coding-agent": "^0.52.12",
     "@types/chrome-remote-interface": "^0.31.14",
     "@types/node": "^24.10.0",

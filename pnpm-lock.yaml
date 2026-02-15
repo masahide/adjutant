@@ -13,6 +13,9 @@ importers:
       "@eslint/js":
         specifier: ^9.39.1
         version: 9.39.1
+      "@mariozechner/pi-ai":
+        specifier: ^0.52.12
+        version: 0.52.12(ws@8.18.3)(zod@4.3.6)
       "@mariozechner/pi-coding-agent":
         specifier: ^0.52.12
         version: 0.52.12(ws@8.18.3)(zod@4.3.6)
