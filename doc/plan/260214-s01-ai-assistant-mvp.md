@@ -61,7 +61,7 @@ OpenClaw のハートビート機構・メモリシステム・メッセージ�
 6. **エージェントランナー** — `@mariozechner/pi-coding-agent` SDK を使い、セッション管理・LLM 呼び出し・ストリーミングを行う
 7. **メモリシステム（簡易版）** — エージェントが重要と判断した情報を `MEMORY.md`（長期）/ `memory/YYYY-MM-DD.md`（日次）に書き出す。次のプロンプトでこれらを読み込み、文脈を保持する（OpenClaw メモリパターンの簡易実装）
 8. **セッション永続化** — pi-coding-agent SDK のセッション管理を正（source of truth）とする。永続化は OpenClaw と同様に SDK トランスクリプト JSONL + Session Entry Store（`sessions.json`）で行い、UI 履歴/API 取得もこの保存データを投影して提供する（別の独立ログストアは持たない）
-9. **ワークスペースファイル** — `HEARTBEAT.md`（チェックリスト）、`SOUL.md`（エージェントのペルソナ・口調設定）、`USER.md`（ユーザーの情報・好み）、`AGENTS.md`（運用ルール・応答ポリシー）をエージェントの動作カスタマイズに使用する
+9. **ワークスペースファイル** — `assistant/prompts/HEARTBEAT.md`（チェックリスト）、`assistant/prompts/SOUL.md`（エージェントのペルソナ・口調設定）、`assistant/prompts/USER.md`（ユーザーの情報・好み）、`assistant/prompts/AGENTS.md`（運用ルール・応答ポリシー）をエージェントの動作カスタマイズに使用する
 10. **ハートビート用モデル設定** — ハートビートには安価なモデル（例: GPT-4o mini, Gemini Flash）を使用し、対話には上位モデル（Claude）を使う設定を可能にする（OpenClaw モデルカスケードパターン）
 11. **API サーバー** — HTTP エンドポイント + SSE ストリーミングで assistant-ui フロントエンドと接続する。メッセージ送信/キャンセル（POST）とストリーム取得（GET SSE）を分離する 2 段パターンを採用
 12. **Web UI** — `@assistant-ui/react` を使ったチャット画面。ハートビートアラートの表示と自由対話の両方を提供する
@@ -73,7 +73,7 @@ OpenClaw のハートビート機構・メモリシステム・メッセージ�
 3. Heartbeat コア契約（`HEARTBEAT_OK` 抑制、空ファイルスキップ、`activeHours`、重複抑止）
 4. pi-coding-agent SDK 実行基盤（lock/repair/open/create/dispose）
 5. 簡易メモリ（`MEMORY.md` / `memory/YYYY-MM-DD.md`）の読み書き
-6. ワークスペースファイル反映（`SOUL.md` / `USER.md` / `AGENTS.md` / `HEARTBEAT.md`）
+6. ワークスペースファイル反映（`assistant/prompts/SOUL.md` / `assistant/prompts/USER.md` / `assistant/prompts/AGENTS.md` / `assistant/prompts/HEARTBEAT.md`）
 7. assistant-ui 連携の 2 段 API（`POST /api/chat/messages` + `GET /api/chat/runs/:runId/stream`）+ キャンセル API（`POST /api/chat/abort`）
 8. Heartbeat API（`POST /api/heartbeat/run` + `GET /api/events/stream` + `GET /api/heartbeat/last`）+ 履歴取得 API（`GET /api/chat/history?sessionKey=...`）
 
@@ -81,10 +81,10 @@ OpenClaw のハートビート機構・メモリシステム・メッセージ�
 
 - `src/assistant/` — バックエンド実装
 - `src/ui/` — フロントエンド（assistant-ui ベース）
-- `HEARTBEAT.md` — ハートビートチェックリスト（ユーザー設定可能）
-- `SOUL.md` — エージェントのペルソナ定義（ユーザー設定可能）
-- `USER.md` — ユーザー情報定義（名前、所属、好み等）
-- `AGENTS.md` — ワークスペース運用ルール定義（ユーザー設定可能）
+- `assistant/prompts/HEARTBEAT.md` — ハートビートチェックリスト（ユーザー設定可能）
+- `assistant/prompts/SOUL.md` — エージェントのペルソナ定義（ユーザー設定可能）
+- `assistant/prompts/USER.md` — ユーザー情報定義（名前、所属、好み等）
+- `assistant/prompts/AGENTS.md` — ワークスペース運用ルール定義（ユーザー設定可能）
 - テストコード
 - この要件定義ドキュメント
 
@@ -117,9 +117,9 @@ OpenClaw のハートビート機構・メモリシステム・メッセージ�
 2. `activeHours` 設定がある場合、現在時刻が時間外であればスキップする（quiet-hours）
 3. Heartbeat 実行前に `getQueueSize("main")` を確認する。`> 0` の場合は `requests-in-flight` としてスキップし、`heartbeat-wake` が 1 秒後に再試行する
 4. `heartbeat.session` 指定は OpenClaw 解決規則に従う。無効/他 agent のセッション指定は main セッションへフォールバックする
-5. HEARTBEAT.md を読み込み、実質空であればモデル呼び出しなしでスキップする（AC-09）
+5. assistant/prompts/HEARTBEAT.md を読み込み、実質空であればモデル呼び出しなしでスキップする（AC-09）
 6. JSONL から「直近 N 分 + 上限件数」でイベント窓を読み込む
-7. HEARTBEAT.md のチェックリスト + systemPrompt（SOUL.md + USER.md + AGENTS.md）+ メモリファイルとイベントを AI に渡す
+7. assistant/prompts/HEARTBEAT.md のチェックリスト + systemPrompt（assistant/prompts/SOUL.md + assistant/prompts/USER.md + assistant/prompts/AGENTS.md）+ メモリファイルとイベントを AI に渡す
 8. AI が「注目すべきこと」を判断する
    - 何もなければ `HEARTBEAT_OK` を返し、UI には通知しない（出力抑制）
    - 注目事項があればアラートテキストを生成し、Heartbeat イベントを発火する。API Server は `event: heartbeat` として UI へ push する（OpenClaw `onHeartbeatEvent` パターン）
@@ -194,7 +194,7 @@ OpenClaw のハートビート機構・メモリシステム・メッセージ�
 
 **AC-09: 空HEARTBEATスキップ**
 
-- `HEARTBEAT.md` 実質空で `status: "skipped"` になる（モデル呼び出しなし）
+- `assistant/prompts/HEARTBEAT.md` 実質空で `status: "skipped"` になる（モデル呼び出しなし）
 
 **AC-10: トランスクリプト永続化**
 
@@ -206,7 +206,7 @@ OpenClaw のハートビート機構・メモリシステム・メッセージ�
 
 **AC-12: SOUL反映**
 
-- `SOUL.md` が通常対話/Heartbeat の応答方針に反映される
+- `assistant/prompts/SOUL.md` が通常対話/Heartbeat の応答方針に反映される
 
 **AC-13: SystemEventQueue注入/排出**
 
@@ -385,7 +385,7 @@ export function isSystemEventContextChanged(sessionKey: string, contextKey?: str
 // --- 責務境界 ---
 // ContextBuilder は「動的コンテキスト」
 // （イベント + メモリ + SystemEvent + セッショントランスクリプト直近窓）を組み立てる。
-// 「静的ペルソナ」（SOUL.md / USER.md / AGENTS.md）は ContextBuilder の管轄外。
+// 「静的ペルソナ」（assistant/prompts/SOUL.md / assistant/prompts/USER.md / assistant/prompts/AGENTS.md）は ContextBuilder の管轄外。
 // 静的ペルソナは呼び出し元が直接読み込み、AgentRunOptions.systemPrompt に渡す。
 // これにより ContextBuilder は純粋な「データ → プロンプトテキスト」変換に集中できる。
 //
@@ -446,10 +446,10 @@ export type HeartbeatConfig = {
   intervalMs: number; // default: 1800000 (30m)
   timeoutMs?: number; // default: 30000 (§2.8: HB 1 回あたりの LLM タイムアウト上限)
   sessionKey?: string; // default: "main"（OpenClaw 解決規則で canonical 化）
-  heartbeatFilePath: string; // default: "HEARTBEAT.md"
-  soulFilePath: string; // default: "SOUL.md"
-  userFilePath: string; // default: "USER.md"
-  agentsFilePath: string; // default: "AGENTS.md"
+  heartbeatFilePath: string; // default: "assistant/prompts/HEARTBEAT.md"
+  soulFilePath: string; // default: "assistant/prompts/SOUL.md"
+  userFilePath: string; // default: "assistant/prompts/USER.md"
+  agentsFilePath: string; // default: "assistant/prompts/AGENTS.md"
   dataDir: string;
   userTimezone?: string; // default: agents.defaults.userTimezone（Current time 注入に使用）
   retryDelayMs?: number; // default: 1000 (requests-in-flight 時の短周期再試行)
@@ -466,7 +466,7 @@ export type HeartbeatConfig = {
     // アクティブ時間帯設定（省略時は常時有効）
     start: string; // 開始時刻 "HH:MM"（例: "09:00"）
     end: string; // 終了時刻 "HH:MM"（例: "22:00"、"24:00" 可。start > end で深夜跨ぎ）
-    timezone?: string; // "user"（USER.md の timezone）| "local"（ホスト環境）| IANA タイムゾーン名
+    timezone?: string; // "user"（assistant/prompts/USER.md の timezone）| "local"（ホスト環境）| IANA タイムゾーン名
   }; // OpenClaw heartbeat-active-hours.ts 準拠
 };
 
@@ -601,7 +601,7 @@ export type AgentRunOptions = {
   //   CQ にエンキューされたタスク内で AgentRunner に渡す。
   //   SSE ストリームのルーティングに使用する。
   prompt: string;
-  systemPrompt?: string; // 静的ペルソナ（SOUL.md + USER.md + AGENTS.md を結合したテキスト）。
+  systemPrompt?: string; // 静的ペルソナ（assistant/prompts/SOUL.md + assistant/prompts/USER.md + assistant/prompts/AGENTS.md を結合したテキスト）。
   //   呼び出し元が読み込み・結合して渡す。ContextBuilder の管轄外。
   //   SDK の system prompt として LLM に送信される。
   sessionKey: string;
@@ -636,7 +636,7 @@ export function runAgent(opts: AgentRunOptions): Promise<AgentRunResult>;
 
 export type MemoryReadOptions = {
   workspaceDir: string;
-  timezone: string; // default: USER.md の timezone / 未設定時はホスト環境
+  timezone: string; // default: assistant/prompts/USER.md の timezone / 未設定時はホスト環境
 };
 
 export function readMemoryFiles(opts: MemoryReadOptions): Promise<{
@@ -654,7 +654,7 @@ export function readMemoryFiles(opts: MemoryReadOptions): Promise<{
 
 export type MemoryWriteOptions = {
   workspaceDir: string;
-  timezone: string; // default: USER.md の timezone / 未設定時はホスト環境
+  timezone: string; // default: assistant/prompts/USER.md の timezone / 未設定時はホスト環境
 };
 
 // memory/YYYY-MM-DD.md に追記
@@ -876,10 +876,10 @@ export type AgentRunStatus = {
 | LLM API 一時エラー（通信/HTTP 系）                             | 2.5 秒待機後にリトライ 1 回（OpenClaw 準拠）、失敗時は `state: "error"` を SSE で返す                                                                       |
 | LLM コンテキスト超過エラー                                     | イベント/履歴入力を新しい順に切り詰めて再試行（1 回）。再試行も失敗時はエラーを返す                                                                         |
 | LLM モデル利用不可                                             | 即座に失敗を返す。フォールバックモデルへの切り替えは将来拡張                                                                                                |
-| HEARTBEAT.md 不在                                              | デフォルトプロンプトで実行（OpenClaw と同様）                                                                                                               |
-| SOUL.md 不在                                                   | デフォルトのペルソナで動作                                                                                                                                  |
-| USER.md 不在                                                   | ユーザー情報なしで動作（デフォルト設定）                                                                                                                    |
-| AGENTS.md 不在                                                 | 追加の運用ルールなしで動作（デフォルト設定）                                                                                                                |
+| assistant/prompts/HEARTBEAT.md 不在                            | デフォルトプロンプトで実行（OpenClaw と同様）                                                                                                               |
+| assistant/prompts/SOUL.md 不在                                 | デフォルトのペルソナで動作                                                                                                                                  |
+| assistant/prompts/USER.md 不在                                 | ユーザー情報なしで動作（デフォルト設定）                                                                                                                    |
+| assistant/prompts/AGENTS.md 不在                               | 追加の運用ルールなしで動作（デフォルト設定）                                                                                                                |
 | MEMORY.md 不在                                                 | メモリなしで動作（初回起動時）                                                                                                                              |
 | SDK トランスクリプト JSONL 破損                                | 読める行だけ読み込み、破損行はスキップ。破損検知をログに記録する                                                                                            |
 | SDK セッションファイル破損（pi-coding-agent トランスクリプト） | SessionManager open 前に修復/事前準備を試行する（FR-AG-4 準拠）。修復不能な場合はセッションファイルを退避（rename）して新規作成で復旧。破損検知をログに記録 |
@@ -913,7 +913,7 @@ event: chat
 data: {"runId":"msg_001","sessionKey":"main","seq":3,"state":"final","message":{"role":"assistant","content":[{"type":"text","text":"今日の #general では主に3つのトピックが議論されていました..."}],"timestamp":1739600001200}}
 ```
 
-**HEARTBEAT.md の例:**
+**assistant/prompts/HEARTBEAT.md の例:**
 
 ```markdown
 # Heartbeat Checklist
@@ -923,7 +923,7 @@ data: {"runId":"msg_001","sessionKey":"main","seq":3,"state":"final","message":{
 - リアクションが5個以上ついたメッセージがあれば教えて
 ```
 
-**SOUL.md の例:**
+**assistant/prompts/SOUL.md の例:**
 
 ```markdown
 # Adjutant AI Assistant
@@ -948,7 +948,7 @@ data: {"runId":"msg_001","sessionKey":"main","seq":3,"state":"final","message":{
 - 重要な長期的事実（プロジェクト名、チームメンバー、好み）は、ユーザーの明示指示がある場合のみ MEMORY.md に記録する
 ```
 
-**USER.md の例:**
+**assistant/prompts/USER.md の例:**
 
 ```markdown
 # User Profile
@@ -1011,10 +1011,10 @@ graph TD
     end
 
     subgraph "ワークスペースファイル"
-        SOUL[SOUL.md]
-        USER[USER.md]
-        AGENTS[AGENTS.md]
-        HBMD[HEARTBEAT.md]
+        SOUL[assistant/prompts/SOUL.md]
+        USER[assistant/prompts/USER.md]
+        AGENTS[assistant/prompts/AGENTS.md]
+        HBMD[assistant/prompts/HEARTBEAT.md]
     end
 
     SOUL -. "systemPrompt" .-> AR
@@ -1055,8 +1055,8 @@ sequenceDiagram
 
         Note over Timer,AR: ── HeartbeatRunner 本体内で実行 ──
 
-        Timer->>Timer: read HEARTBEAT.md
-        alt HEARTBEAT.md が実質空
+        Timer->>Timer: read assistant/prompts/HEARTBEAT.md
+        alt assistant/prompts/HEARTBEAT.md が実質空
             Timer->>Timer: skip (empty-heartbeat-file)
         else
             Timer->>ER: readEvents(today)
@@ -1221,9 +1221,9 @@ stateDiagram-v2
 - [ ] `package.json` に `"assistant"` スクリプトを追加（P-01 前提）
 - [ ] pi-coding-agent SDK の依存追加と接続確認
 - [ ] assistant-ui 基盤セットアップ（Vite + React）
-- [ ] HEARTBEAT.md テンプレート作成
-- [ ] SOUL.md テンプレート作成
-- [ ] USER.md / AGENTS.md テンプレート作成
+- [ ] assistant/prompts/HEARTBEAT.md テンプレート作成
+- [ ] assistant/prompts/SOUL.md テンプレート作成
+- [ ] assistant/prompts/USER.md / assistant/prompts/AGENTS.md テンプレート作成
 
 ### Phase 2: EventReader + SystemEventQueue
 
@@ -1324,10 +1324,10 @@ stateDiagram-v2
 - [ ] AC-06: 一時失敗時の再試行/切り詰め再試行が機能する
 - [ ] AC-07: HEARTBEAT_OK 抑制時に `ran` 維持 + `ok-*` ログが残る
 - [ ] AC-08: Heartbeat アラートが通知される
-- [ ] AC-09: `HEARTBEAT.md` 実質空で `skipped` になる
+- [ ] AC-09: `assistant/prompts/HEARTBEAT.md` 実質空で `skipped` になる
 - [ ] AC-10: `sessions.json` の Session Entry（`sessionKey -> sessionId/sessionFile`）と transcript JSONL が永続化される
 - [ ] AC-11: 明示指示時のみメモリ書き込みされ、次回ターンで再利用される。Heartbeat 実行時は書き込まれない
-- [ ] AC-12: `SOUL.md` が通常対話/Heartbeat の応答方針に反映される
+- [ ] AC-12: `assistant/prompts/SOUL.md` が通常対話/Heartbeat の応答方針に反映される
 - [ ] AC-13: SystemEventQueue が `sessionKey` ごとに注入・drain される
 - [ ] AC-14: UI ストリーミング完了 + `GET /api/events/stream` の `event: heartbeat` push および `GET /api/heartbeat/last` スナップショット復元が機能する
 - [ ] AC-15: 通常対話/Heartbeat の両方で `MEMORY.md` と当日・前日メモを参照する
@@ -1396,15 +1396,15 @@ MVP 完了後に検討する機能拡張の候補。優先度・実施判断は 
 
 ## Appendix: OpenClaw から取り込んだ設計パターン
 
-| パターン                          | OpenClaw の実装                                                                                                                                                             | Adjutant MVP での実装                                                                                                                                                                              |
-| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **ハートビート**                  | `heartbeat-runner.ts`: 30分間隔タイマー、HEARTBEAT_OK 抑制、アクティブ時間帯制御                                                                                            | 同等。MVP でも `activeHours` を採用                                                                                                                                                                |
-| **システムイベントキュー**        | `system-events.ts`: セッション単位の FIFO キュー（最大20件）、次のプロンプトに前置き注入。投入元は monitor/system/cron など                                                 | 同等（投入元は monitor/system/cron。HeartbeatRunner は enqueue せず drain 側で利用）                                                                                                               |
-| **コマンドキュー（排他制御）**    | `command-queue.ts` + `CommandLane`: セッション/グローバルレーンで直列化                                                                                                     | 同等（`main` + `session:<sessionKey>` の二段レーンで直列化）                                                                                                                                       |
-| **HEARTBEAT_OK トークン制御**     | `heartbeat.ts`: `stripHeartbeatToken()` でトークン除去、`ackMaxChars` で閾値判定、HTML タグ・Markdown 修飾除去後に判定                                                      | 同等（マークアップ正規化を含む）                                                                                                                                                                   |
-| **メモリシステム**                | `MEMORY.md` + `memory/*.md` + SQLite ベクトル検索 + chokidar 監視                                                                                                           | 簡易版（ファイル全文読み込み、ベクトル検索なし）                                                                                                                                                   |
-| **SOUL.md / AGENTS.md / USER.md** | システムプロンプトにペルソナ（SOUL.md）・ユーザー情報（USER.md）・ワークスペースルール（AGENTS.md）を注入                                                                   | 同等（SOUL.md / USER.md / AGENTS.md を注入）                                                                                                                                                       |
-| **モデルカスケード**              | ハートビートに安価モデル、複雑な推論に上位モデルを使い分け。コスト最適化                                                                                                    | ハートビート用モデル設定（`heartbeat.model`）で同等。対話はデフォルトモデル                                                                                                                        |
-| **セッション永続化**              | JSONL 形式でセッション履歴保存、セッションマネージャで管理                                                                                                                  | SDK が正（source of truth）。UI 履歴は TranscriptReader で SDK transcript + `sessions.json` から投影                                                                                               |
-| **Human-in-the-Loop**             | アラートは提案形式、実行はユーザー承認後                                                                                                                                    | MVPでは提案と追質問の対話に限定。外部副作用は実行しない                                                                                                                                            |
-| **重複排除**                      | 24時間内の同一アラート抑制。直前 1 件の完全テキストを Session Entry Store（`sessions.json`）に永続化（`lastHeartbeatText` + `lastHeartbeatSentAt`）。プロセス再起動後も有効 | 同等。Session Entry（例: `sessions.json`）に `lastHeartbeatText` + `lastHeartbeatSentAt` を保持し、24h ウィンドウで完全テキスト比較。`contentHash`（SHA-256 先頭 16 文字）はログ・可観測性用途のみ |
+| パターン                                                                                | OpenClaw の実装                                                                                                                                                             | Adjutant MVP での実装                                                                                                                                                                              |
+| --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **ハートビート**                                                                        | `heartbeat-runner.ts`: 30分間隔タイマー、HEARTBEAT_OK 抑制、アクティブ時間帯制御                                                                                            | 同等。MVP でも `activeHours` を採用                                                                                                                                                                |
+| **システムイベントキュー**                                                              | `system-events.ts`: セッション単位の FIFO キュー（最大20件）、次のプロンプトに前置き注入。投入元は monitor/system/cron など                                                 | 同等（投入元は monitor/system/cron。HeartbeatRunner は enqueue せず drain 側で利用）                                                                                                               |
+| **コマンドキュー（排他制御）**                                                          | `command-queue.ts` + `CommandLane`: セッション/グローバルレーンで直列化                                                                                                     | 同等（`main` + `session:<sessionKey>` の二段レーンで直列化）                                                                                                                                       |
+| **HEARTBEAT_OK トークン制御**                                                           | `heartbeat.ts`: `stripHeartbeatToken()` でトークン除去、`ackMaxChars` で閾値判定、HTML タグ・Markdown 修飾除去後に判定                                                      | 同等（マークアップ正規化を含む）                                                                                                                                                                   |
+| **メモリシステム**                                                                      | `MEMORY.md` + `memory/*.md` + SQLite ベクトル検索 + chokidar 監視                                                                                                           | 簡易版（ファイル全文読み込み、ベクトル検索なし）                                                                                                                                                   |
+| **assistant/prompts/SOUL.md / assistant/prompts/AGENTS.md / assistant/prompts/USER.md** | システムプロンプトにペルソナ（assistant/prompts/SOUL.md）・ユーザー情報（assistant/prompts/USER.md）・ワークスペースルール（assistant/prompts/AGENTS.md）を注入             | 同等（assistant/prompts/SOUL.md / assistant/prompts/USER.md / assistant/prompts/AGENTS.md を注入）                                                                                                 |
+| **モデルカスケード**                                                                    | ハートビートに安価モデル、複雑な推論に上位モデルを使い分け。コスト最適化                                                                                                    | ハートビート用モデル設定（`heartbeat.model`）で同等。対話はデフォルトモデル                                                                                                                        |
+| **セッション永続化**                                                                    | JSONL 形式でセッション履歴保存、セッションマネージャで管理                                                                                                                  | SDK が正（source of truth）。UI 履歴は TranscriptReader で SDK transcript + `sessions.json` から投影                                                                                               |
+| **Human-in-the-Loop**                                                                   | アラートは提案形式、実行はユーザー承認後                                                                                                                                    | MVPでは提案と追質問の対話に限定。外部副作用は実行しない                                                                                                                                            |
+| **重複排除**                                                                            | 24時間内の同一アラート抑制。直前 1 件の完全テキストを Session Entry Store（`sessions.json`）に永続化（`lastHeartbeatText` + `lastHeartbeatSentAt`）。プロセス再起動後も有効 | 同等。Session Entry（例: `sessions.json`）に `lastHeartbeatText` + `lastHeartbeatSentAt` を保持し、24h ウィンドウで完全テキスト比較。`contentHash`（SHA-256 先頭 16 文字）はログ・可観測性用途のみ |

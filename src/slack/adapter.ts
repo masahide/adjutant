@@ -106,13 +106,6 @@ const DOM_CAPTURE_DISABLED =
   (process.env.ADJUTANT_DISABLE_DOM_CAPTURE ?? "").toLowerCase() === "1" ||
   (process.env.ADJUTANT_DISABLE_DOM_CAPTURE ?? "").toLowerCase() === "true";
 
-const REACTION_PAYLOAD_KEYS = [
-  "reaction_added",
-  "reaction_removed",
-  "reactions.add",
-  "reactions.remove",
-];
-
 export class SlackAdapter implements IngestionAdapter {
   name = "slack";
   private readonly now: () => Date;

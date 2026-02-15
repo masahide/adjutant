@@ -39,7 +39,7 @@ AI Assistant MVP のデータ I/O・キュー・コンテキスト組み立て�
 
 - 7 モジュール（EventReader, SystemEventQueue, CommandQueue, ContextBuilder, MemoryReader, MemoryWriter, TranscriptReader）の実装
 - 全プラン共有の型定義ファイル `src/assistant/types.ts` の作成
-- ワークスペースファイルテンプレート（HEARTBEAT.md, SOUL.md, USER.md, AGENTS.md）の作成
+- ワークスペースファイルテンプレート（assistant/prompts/HEARTBEAT.md, assistant/prompts/SOUL.md, assistant/prompts/USER.md, assistant/prompts/AGENTS.md）の作成
 
 **成果物:**
 
@@ -627,82 +627,82 @@ graph TB
 
 ### Phase 1: 設計と準備
 
-- [ ] 要件と仕様の確定（本プラン §2.4 受け入れ条件の確認）
-- [ ] `src/assistant/types.ts` に全プラン共有の型定義を作成（NormalizedEvent re-export、PiTranscriptLine、SessionTranscriptEvent、SessionMessage、SystemEvent、StreamEvent、AgentRunStatus、HeartbeatRunResult、HeartbeatEventPayload、HeartbeatRunRecord）。s02/s03 はこのファイルから import する
-- [ ] HEARTBEAT.md テンプレート作成
-- [ ] SOUL.md テンプレート作成
-- [ ] USER.md / AGENTS.md テンプレート作成
-- [ ] テスト基盤の確認（`node --test` 動作確認、tmpdir ヘルパー）
+- [x] 要件と仕様の確定（本プラン §2.4 受け入れ条件の確認）
+- [x] `src/assistant/types.ts` に全プラン共有の型定義を作成（NormalizedEvent re-export、PiTranscriptLine、SessionTranscriptEvent、SessionMessage、SystemEvent、StreamEvent、AgentRunStatus、HeartbeatRunResult、HeartbeatEventPayload、HeartbeatRunRecord）。s02/s03 はこのファイルから import する
+- [x] assistant/prompts/HEARTBEAT.md テンプレート作成
+- [x] assistant/prompts/SOUL.md テンプレート作成
+- [x] assistant/prompts/USER.md / assistant/prompts/AGENTS.md テンプレート作成
+- [x] テスト基盤の確認（`node --test` 動作確認、tmpdir ヘルパー）
 
 ### Phase 2: EventReader の実装
 
-- [ ] Test: JSONL 読み込み — ファイル不在時に空配列、正常パース、日付フィルタ (Red)
-- [ ] Impl: `readEvents()` 実装 (Green)
-- [ ] Test: sinceMinutes/limit 切り詰め — 新しい順に切り詰め (Red)
-- [ ] Impl: フィルタ・切り詰めロジック (Green)
-- [ ] Test: kinds/channels フィルタ (Red)
-- [ ] Impl: フィルタオプション (Green)
-- [ ] Refactor: パースとフィルタロジックの整理
+- [x] Test: JSONL 読み込み — ファイル不在時に空配列、正常パース、日付フィルタ (Red)
+- [x] Impl: `readEvents()` 実装 (Green)
+- [x] Test: sinceMinutes/limit 切り詰め — 新しい順に切り詰め (Red)
+- [x] Impl: フィルタ・切り詰めロジック (Green)
+- [x] Test: kinds/channels フィルタ (Red)
+- [x] Impl: フィルタオプション (Green)
+- [x] Refactor: パースとフィルタロジックの整理
 
 ### Phase 3: SystemEventQueue の実装
 
-- [ ] Test: enqueue/drain 基本動作 — enqueue した順に drain される (Red)
-- [ ] Impl: 基本 FIFO キュー (Green)
-- [ ] Test: sessionKey 分離 — 異なる sessionKey 間でイベントが混線しない (Red)
-- [ ] Impl: sessionKey ルーティング (Green)
-- [ ] Test: MAX_EVENTS=20 上限 — 超過時は古い方から破棄 (Red)
-- [ ] Test: 連続重複排除 — 同一テキスト連続投入でドロップ (Red)
-- [ ] Test: contextKey 変化検知 — isSystemEventContextChanged (Red)
-- [ ] Test: drain 後の cleanup — キュー空 + lastText リセット (Red)
-- [ ] Impl: 上限・重複排除・contextKey ロジック (Green)
-- [ ] Refactor: キュー管理の内部構造整理
+- [x] Test: enqueue/drain 基本動作 — enqueue した順に drain される (Red)
+- [x] Impl: 基本 FIFO キュー (Green)
+- [x] Test: sessionKey 分離 — 異なる sessionKey 間でイベントが混線しない (Red)
+- [x] Impl: sessionKey ルーティング (Green)
+- [x] Test: MAX_EVENTS=20 上限 — 超過時は古い方から破棄 (Red)
+- [x] Test: 連続重複排除 — 同一テキスト連続投入でドロップ (Red)
+- [x] Test: contextKey 変化検知 — isSystemEventContextChanged (Red)
+- [x] Test: drain 後の cleanup — キュー空 + lastText リセット (Red)
+- [x] Impl: 上限・重複排除・contextKey ロジック (Green)
+- [x] Refactor: キュー管理の内部構造整理
 
 ### Phase 4: CommandQueue の実装
 
-- [ ] Test: sessionKey 単位のレーン分離 — 異なる sessionKey は並行実行可能 (Red)
-- [ ] Test: 同一 sessionKey の直列実行 — 同時実行が発生しない (Red)
-- [ ] Test: isIdle / isGlobalIdle 判定 (Red)
-- [ ] Test: getQueueSize (Red)
-- [ ] Impl: CommandQueue 実装 (Green)
-- [ ] Refactor: Promise チェーン管理の整理
+- [x] Test: sessionKey 単位のレーン分離 — 異なる sessionKey は並行実行可能 (Red)
+- [x] Test: 同一 sessionKey の直列実行 — 同時実行が発生しない (Red)
+- [x] Test: isIdle / isGlobalIdle 判定 (Red)
+- [x] Test: getQueueSize (Red)
+- [x] Impl: CommandQueue 実装 (Green)
+- [x] Refactor: Promise チェーン管理の整理
 
 ### Phase 5: MemoryReader + MemoryWriter の実装
 
-- [ ] Test: MemoryReader timezone 日付計算 — today/yesterday の正確な算出 (Red)
-- [ ] Test: MemoryReader ファイル不在時の null 返却 (Red)
-- [ ] Test: MemoryReader 正常読み込み (Red)
-- [ ] Impl: `readMemoryFiles()` 実装 (Green)
-- [ ] Test: MemoryWriter ファイル追記 — memory/YYYY-MM-DD.md に追記 (Red)
-- [ ] Test: MemoryWriter 長期メモリ更新 — MEMORY.md 上書き (Red)
-- [ ] Impl: `appendDailyMemory()` / `updateLongTermMemory()` 実装 (Green)
-- [ ] Refactor: ファイルパス生成ロジックの共通化
+- [x] Test: MemoryReader timezone 日付計算 — today/yesterday の正確な算出 (Red)
+- [x] Test: MemoryReader ファイル不在時の null 返却 (Red)
+- [x] Test: MemoryReader 正常読み込み (Red)
+- [x] Impl: `readMemoryFiles()` 実装 (Green)
+- [x] Test: MemoryWriter ファイル追記 — memory/YYYY-MM-DD.md に追記 (Red)
+- [x] Test: MemoryWriter 長期メモリ更新 — MEMORY.md 上書き (Red)
+- [x] Impl: `appendDailyMemory()` / `updateLongTermMemory()` 実装 (Green)
+- [x] Refactor: ファイルパス生成ロジックの共通化
 
 ### Phase 6: ContextBuilder の実装
 
-- [ ] Test: イベント配列 → プロンプトテキスト変換 (Red)
-- [ ] Test: メモリ注入（longTerm + daily + yesterday） (Red)
-- [ ] Test: SystemEvent 注入 (Red)
-- [ ] Test: recentTranscript 注入（SessionTranscriptEvent[] からの投影） (Red)
-- [ ] Test: maxTokenEstimate 超過時の切り詰め + truncated フラグ (Red)
-- [ ] Test: ハートビートフロー（events あり, systemEvents 空）とチャットフロー（events 空, systemEvents あり）の排他パターン (Red)
-- [ ] Impl: `buildEventContext()` 実装 (Green)
-- [ ] Refactor: トークン概算と切り詰めロジック整理
+- [x] Test: イベント配列 → プロンプトテキスト変換 (Red)
+- [x] Test: メモリ注入（longTerm + daily + yesterday） (Red)
+- [x] Test: SystemEvent 注入 (Red)
+- [x] Test: recentTranscript 注入（SessionTranscriptEvent[] からの投影） (Red)
+- [x] Test: maxTokenEstimate 超過時の切り詰め + truncated フラグ (Red)
+- [x] Test: ハートビートフロー（events あり, systemEvents 空）とチャットフロー（events 空, systemEvents あり）の排他パターン (Red)
+- [x] Impl: `buildEventContext()` 実装 (Green)
+- [x] Refactor: トークン概算と切り詰めロジック整理
 
 ### Phase 7: TranscriptReader の実装
 
-- [ ] Test: `sessions.json` から sessionKey → sessionId を解決できる (Red)
-- [ ] Test: loadMessages — SDK transcript JSONL から chat.history 互換形式へ投影 (Red)
-- [ ] Test: loadRecentSessionEvents — limit 指定での直近 N 件取得 (Red)
-- [ ] Test: 破損行スキップ — 壊れた行を含む JSONL でも読める行だけ返す (Red)
-- [ ] Impl: TranscriptReader 実装 (Green)
-- [ ] Refactor: transcript 解析ユーティリティの整理
+- [x] Test: `sessions.json` から sessionKey → sessionId を解決できる (Red)
+- [x] Test: loadMessages — SDK transcript JSONL から chat.history 互換形式へ投影 (Red)
+- [x] Test: loadRecentSessionEvents — limit 指定での直近 N 件取得 (Red)
+- [x] Test: 破損行スキップ — 壊れた行を含む JSONL でも読める行だけ返す (Red)
+- [x] Impl: TranscriptReader 実装 (Green)
+- [x] Refactor: transcript 解析ユーティリティの整理
 
 ### Phase 8: 統合と検証
 
-- [ ] 全体テストの実行（`pnpm run test`）
-- [ ] エッジケースの動作確認（空ファイル、破損 JSONL、timezone 境界）
-- [ ] `pnpm run typecheck` がエラーなし
-- [ ] `pnpm run lint` がエラーなし
+- [x] 全体テストの実行（`pnpm run test`）
+- [x] エッジケースの動作確認（空ファイル、破損 JSONL、timezone 境界）
+- [x] `pnpm run typecheck` がエラーなし
+- [x] `pnpm run lint` がエラーなし
 - [ ] 契約の例（§4.4）に対して期待通りの結果が得られることを確認
 
 ---
@@ -711,25 +711,25 @@ graph TB
 
 ### 8.1 機能 DoD Functional DoD
 
-- [ ] AC-01: 既存 JSONL が EventReader で正しく読み込まれる
-- [ ] AC-02: ContextBuilder が JSONL 由来イベントをプロンプトテキストに変換できる
-- [ ] AC-04: CommandQueue が同一 sessionKey の同時実行を防止する
-- [ ] AC-05: CommandQueue / SystemEventQueue が異なる sessionKey 間で分離される
-- [ ] AC-10: TranscriptReader が SDK transcript/sessions.json を正しく投影する
-- [ ] AC-13: SystemEventQueue の enqueue/drain が sessionKey 単位で正しく動作する
-- [ ] AC-15: MemoryReader が MEMORY.md + 当日・前日メモを正しく読み込む
-- [ ] AC-17: ContextBuilder が recentTranscript を入力コンテキストに注入する
-- [ ] 既知の制約（§2.5）が明文化され、想定通りであること
+- [x] AC-01: 既存 JSONL が EventReader で正しく読み込まれる
+- [x] AC-02: ContextBuilder が JSONL 由来イベントをプロンプトテキストに変換できる
+- [x] AC-04: CommandQueue が同一 sessionKey の同時実行を防止する
+- [x] AC-05: CommandQueue / SystemEventQueue が異なる sessionKey 間で分離される
+- [x] AC-10: TranscriptReader が SDK transcript/sessions.json を正しく投影する
+- [x] AC-13: SystemEventQueue の enqueue/drain が sessionKey 単位で正しく動作する
+- [x] AC-15: MemoryReader が MEMORY.md + 当日・前日メモを正しく読み込む
+- [x] AC-17: ContextBuilder が recentTranscript を入力コンテキストに注入する
+- [x] 既知の制約（§2.5）が明文化され、想定通りであること
 - [ ] 契約の例（§4.4）に対して期待通りの結果が得られること
 
 ### 8.2 品質 DoD Quality DoD
 
-- [ ] P-02: `pnpm run check` が成功し、既存 Slack 収集パイプラインに破壊的変更がない
-- [ ] 全てのテストがパスしていること（`pnpm run test`）
-- [ ] `pnpm run typecheck` がエラーなし
-- [ ] `pnpm run lint` がエラーなし
-- [ ] 不要なデバッグコードが削除されていること
-- [ ] 型定義（`src/assistant/types.ts`）が s02/s03 で利用可能な状態であること
+- [x] P-02: `pnpm run check` が成功し、既存 Slack 収集パイプラインに破壊的変更がない
+- [x] 全てのテストがパスしていること（`pnpm run test`）
+- [x] `pnpm run typecheck` がエラーなし
+- [x] `pnpm run lint` がエラーなし
+- [x] 不要なデバッグコードが削除されていること
+- [x] 型定義（`src/assistant/types.ts`）が s02/s03 で利用可能な状態であること
 
 ---
 

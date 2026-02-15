@@ -12,7 +12,16 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export default [
   // 無視パターン
   {
-    ignores: ["node_modules", "dist", "build", "coverage", "**/.svelte-kit/**", "**/build/**"],
+    ignores: [
+      "node_modules",
+      "dist",
+      "build",
+      "coverage",
+      "vendor",
+      "vendor/**",
+      "**/.svelte-kit/**",
+      "**/build/**",
+    ],
   },
 
   // JS の推奨

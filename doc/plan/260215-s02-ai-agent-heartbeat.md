@@ -71,7 +71,7 @@ AI Assistant MVP の「頭脳」に相当するレイヤー。
 3. `heartbeat.session` 指定は OpenClaw 解決規則で canonical 化し、無効/他 agent 指定は `main` にフォールバックする
 4. channels 設定から解決した heartbeat 可視性（showOk/showAlerts/useIndicator）が全 false ならスキップ（alerts-disabled）
 5. `getQueueSize("main")` でビジー判定。ビジー時は requests-in-flight スキップ + 短周期再試行（OpenClaw heartbeat-wake 準拠）
-6. HEARTBEAT.md 読み込み、実質空ならスキップ（empty-heartbeat-file）
+6. assistant/prompts/HEARTBEAT.md 読み込み、実質空ならスキップ（empty-heartbeat-file）
 7. EventReader → MemoryReader → ContextBuilder でコンテキスト構築
 8. AgentRunner 経由で LLM に送信（`isHeartbeat=true`）
 9. HEARTBEAT_OK 判定 → 抑制（ok-token / ok-empty）or アラート生成 → 重複排除判定 → heartbeat イベント配信（HeartbeatRunner 自体は SystemEventQueue へ enqueue しない）
@@ -113,7 +113,7 @@ AI Assistant MVP の「頭脳」に相当するレイヤー。
 
 **AC-09: 空 HEARTBEAT スキップ**
 
-- Given HEARTBEAT.md が実質空である When HeartbeatRunner がファイルを読み込む Then モデル呼び出しなしで `status: "skipped"` となる
+- Given assistant/prompts/HEARTBEAT.md が実質空である When HeartbeatRunner がファイルを読み込む Then モデル呼び出しなしで `status: "skipped"` となる
 
 **AC-11: メモリ書き込みガード**
 
@@ -122,7 +122,7 @@ AI Assistant MVP の「頭脳」に相当するレイヤー。
 
 **AC-12: SOUL 反映**
 
-- Given SOUL.md / USER.md / AGENTS.md が存在する When AgentRunner が実行する Then systemPrompt にこれらの内容が反映される
+- Given assistant/prompts/SOUL.md / assistant/prompts/USER.md / assistant/prompts/AGENTS.md が存在する When AgentRunner が実行する Then systemPrompt にこれらの内容が反映される
 
 **AC-16: 重複通知抑制**
 
@@ -188,7 +188,7 @@ AI Assistant MVP の「頭脳」に相当するレイヤー。
 export type AgentRunOptions = {
   runId: string;
   prompt: string;
-  systemPrompt?: string; // SOUL.md + USER.md + AGENTS.md 結合テキスト
+  systemPrompt?: string; // assistant/prompts/SOUL.md + assistant/prompts/USER.md + assistant/prompts/AGENTS.md 結合テキスト
   sessionKey: string;
   sessionId?: string;
   isHeartbeat?: boolean; // true → updatedAt 復元 + memory_write 無効化
@@ -223,10 +223,10 @@ export type HeartbeatConfig = {
   intervalMs: number; // default: 1800000 (30m)
   timeoutMs?: number; // default: 30000
   sessionKey?: string; // default: "main"
-  heartbeatFilePath: string; // default: "HEARTBEAT.md"
-  soulFilePath: string; // default: "SOUL.md"
-  userFilePath: string; // default: "USER.md"
-  agentsFilePath: string; // default: "AGENTS.md"
+  heartbeatFilePath: string; // default: "assistant/prompts/HEARTBEAT.md"
+  soulFilePath: string; // default: "assistant/prompts/SOUL.md"
+  userFilePath: string; // default: "assistant/prompts/USER.md"
+  agentsFilePath: string; // default: "assistant/prompts/AGENTS.md"
   dataDir: string;
   userTimezone?: string; // default: agents.defaults.userTimezone（未設定時はホスト環境）
   retryDelayMs?: number; // default: 1000
@@ -318,15 +318,15 @@ export function getLastHeartbeatEvent(): HeartbeatEventPayload | null;
 
 ### 4.3 エラーと例外 Error Handling
 
-| エラー                             | 分類                   | 対応                                                      |
-| ---------------------------------- | ---------------------- | --------------------------------------------------------- |
-| LLM API 一時エラー（通信/HTTP 系） | リトライ可             | 2.5 秒待機後にリトライ 1 回。失敗時はエラーイベントを返す |
-| LLM コンテキスト超過エラー         | リトライ可（切り詰め） | イベント/履歴入力を新しい順に切り詰めて再試行（1 回）     |
-| LLM モデル利用不可                 | 即時失敗               | 即座に失敗を返す                                          |
-| HEARTBEAT.md 不在                  | フォールバック         | デフォルトプロンプトで実行                                |
-| SOUL.md / USER.md / AGENTS.md 不在 | フォールバック         | デフォルト設定で動作                                      |
-| SDK セッションファイル破損         | 修復/退避              | 修復試行 → 修復不能時はファイル退避 + 新規作成            |
-| SDK セッション解放失敗             | ログ記録               | finally で flush/dispose + ロック解放。失敗をログに記録   |
+| エラー                                                                                   | 分類                   | 対応                                                      |
+| ---------------------------------------------------------------------------------------- | ---------------------- | --------------------------------------------------------- |
+| LLM API 一時エラー（通信/HTTP 系）                                                       | リトライ可             | 2.5 秒待機後にリトライ 1 回。失敗時はエラーイベントを返す |
+| LLM コンテキスト超過エラー                                                               | リトライ可（切り詰め） | イベント/履歴入力を新しい順に切り詰めて再試行（1 回）     |
+| LLM モデル利用不可                                                                       | 即時失敗               | 即座に失敗を返す                                          |
+| assistant/prompts/HEARTBEAT.md 不在                                                      | フォールバック         | デフォルトプロンプトで実行                                |
+| assistant/prompts/SOUL.md / assistant/prompts/USER.md / assistant/prompts/AGENTS.md 不在 | フォールバック         | デフォルト設定で動作                                      |
+| SDK セッションファイル破損                                                               | 修復/退避              | 修復試行 → 修復不能時はファイル退避 + 新規作成            |
+| SDK セッション解放失敗                                                                   | ログ記録               | finally で flush/dispose + ロック解放。失敗をログに記録   |
 
 ### 4.4 代表的な例 Examples
 
@@ -551,7 +551,7 @@ flowchart TD
     D -->|Yes| H{"getQueueSize(main)==0？"}
     H -->|No| I["skipped(requests-in-flight)"]
     I --> K["retryDelayMs 待機"] --> H
-    H -->|Yes| M{"HEARTBEAT.md<br/>実質空？"}
+    H -->|Yes| M{"assistant/prompts/HEARTBEAT.md<br/>実質空？"}
     M -->|Yes| N["skipped(empty-heartbeat-file)"]
     M -->|No| O["EventReader + MemoryReader<br/>+ ContextBuilder"]
     O --> P["Current time 注入"]
@@ -621,7 +621,7 @@ flowchart TD
 - [ ] Impl: `onHeartbeatEvent()` 実装（購読ハンドラ管理） (Green)
 - [ ] Test: `getLastHeartbeatEvent()` — 直近の HeartbeatEventPayload を返す / 未実行時は null (Red)
 - [ ] Impl: `getLastHeartbeatEvent()` 実装（プロセス内スナップショット保持） (Green)
-- [ ] Test: 空ファイルスキップ — HEARTBEAT.md が実質空で `skipped(empty-heartbeat-file)` (Red)
+- [ ] Test: 空ファイルスキップ — assistant/prompts/HEARTBEAT.md が実質空で `skipped(empty-heartbeat-file)` (Red)
 - [ ] Impl: 実質空判定ロジック (Green)
 - [ ] Test: HEARTBEAT_OK 判定 — stripHeartbeatToken でマークアップ正規化後、ackMaxChars 以下で `shouldSkip=true` (Red)
 - [ ] Test: stripHeartbeatToken — HTML タグ除去、`&nbsp;` 変換、Markdown 修飾除去 (Red)
@@ -670,9 +670,9 @@ flowchart TD
 - [ ] AC-06: 一時失敗時の再試行/切り詰め再試行が機能する
 - [ ] AC-07: HEARTBEAT_OK 抑制時に `ran` 維持 + `ok-*` ログが残る
 - [ ] AC-08: Heartbeat アラートが通知される
-- [ ] AC-09: HEARTBEAT.md 実質空で `skipped` になる
+- [ ] AC-09: assistant/prompts/HEARTBEAT.md 実質空で `skipped` になる
 - [ ] AC-11: 明示指示時のみメモリ書き込みされ、Heartbeat 実行時は書き込まれない
-- [ ] AC-12: SOUL.md が通常対話/Heartbeat の応答方針に反映される
+- [ ] AC-12: assistant/prompts/SOUL.md が通常対話/Heartbeat の応答方針に反映される
 - [ ] AC-16: 24h 同一 Heartbeat 本文が `duplicate` で抑制され `ran` を維持する
 - [ ] AC-18: アラート配信前 readiness 失敗は `skipped` 記録、ok-token/ok-empty 側は `ran + ok-*` 維持
 - [ ] AC-20: Heartbeat 送信 Body に Current time 行が重複なく注入される
