@@ -178,4 +178,80 @@ describe("EventReader", () => {
       await rm(tempDir, { recursive: true, force: true });
     }
   });
+
+  it("date 未指定 + sinceMinutes が日跨ぎの場合は前日ファイルも読む", async () => {
+    const tempDir = await mkdtemp(`${tmpdir()}/adjutant-event-reader-`);
+    const originalNow = Date.now;
+    try {
+      const frozenNow = Date.parse("2026-02-15T00:10:00.000Z");
+      Date.now = () => frozenNow;
+
+      const prevEvent = createEvent({
+        uid: "prev-day-window",
+        ts: "2026-02-14T23:55:00.000Z",
+      });
+      const todayEvent = createEvent({
+        uid: "today-window",
+        ts: "2026-02-15T00:05:00.000Z",
+      });
+      await writeEventsFile({
+        dataDir: tempDir,
+        date: "2026-02-14",
+        lines: [JSON.stringify(prevEvent)],
+      });
+      await writeEventsFile({
+        dataDir: tempDir,
+        date: "2026-02-15",
+        lines: [JSON.stringify(todayEvent)],
+      });
+
+      const result = await readEvents({
+        dataDir: tempDir,
+        sinceMinutes: 30,
+        timezone: "UTC",
+      });
+
+      assert.deepEqual(
+        result.map((event) => event.uid),
+        ["today-window", "prev-day-window"]
+      );
+    } finally {
+      Date.now = originalNow;
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("timezone 基準で当日ディレクトリを解決し、最新イベントを取りこぼさない", async () => {
+    const tempDir = await mkdtemp(`${tmpdir()}/adjutant-event-reader-`);
+    const originalNow = Date.now;
+    try {
+      const frozenNow = Date.parse("2026-02-14T15:10:00.000Z");
+      Date.now = () => frozenNow;
+
+      const jstLatest = createEvent({
+        uid: "jst-latest",
+        ts: "2026-02-14T15:05:00.000Z",
+        logged_at: "2026-02-15T00:05:00+09:00",
+      });
+      await writeEventsFile({
+        dataDir: tempDir,
+        date: "2026-02-15",
+        lines: [JSON.stringify(jstLatest)],
+      });
+
+      const result = await readEvents({
+        dataDir: tempDir,
+        sinceMinutes: 30,
+        timezone: "Asia/Tokyo",
+      });
+
+      assert.deepEqual(
+        result.map((event) => event.uid),
+        ["jst-latest"]
+      );
+    } finally {
+      Date.now = originalNow;
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
 });

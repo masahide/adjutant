@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import type { PiTranscriptLine, SessionTranscriptEvent } from "./types.js";
+import { extractTranscriptMessageText, normalizeTranscriptRole } from "./transcript-utils.js";
 
 export type TranscriptReadOptions = {
   sessionKey: string;
@@ -9,59 +10,12 @@ export type TranscriptReadOptions = {
 
 type SessionEntryStore = Record<string, { sessionId?: unknown; sessionFile?: unknown }>;
 
-const DEFAULT_SESSION_ENTRIES_PATH = join(process.cwd(), "data", "_assistant", "sessions.json");
-
 function resolveSessionEntriesPath(): string {
   const configured = process.env.ADJUTANT_SESSION_ENTRIES_PATH?.trim();
-  return configured || DEFAULT_SESSION_ENTRIES_PATH;
-}
-
-function normalizeRole(value: unknown): SessionTranscriptEvent["role"] {
-  if (typeof value !== "string") {
-    return "other";
+  if (configured) {
+    return configured;
   }
-  switch (value.trim().toLowerCase()) {
-    case "user":
-      return "user";
-    case "assistant":
-      return "assistant";
-    case "system":
-      return "system";
-    case "tool":
-      return "tool";
-    default:
-      return "other";
-  }
-}
-
-function extractTextFromMessage(message: Record<string, unknown>): string | undefined {
-  const content = message.content;
-  if (typeof content === "string") {
-    const trimmed = content.trim();
-    return trimmed ? trimmed : undefined;
-  }
-
-  if (Array.isArray(content)) {
-    const texts = content
-      .map((item) => {
-        if (!item || typeof item !== "object") {
-          return "";
-        }
-        const text = (item as Record<string, unknown>).text;
-        return typeof text === "string" ? text.trim() : "";
-      })
-      .filter(Boolean);
-    if (texts.length > 0) {
-      return texts.join("\n");
-    }
-  }
-
-  const text = message.text;
-  if (typeof text === "string") {
-    const trimmed = text.trim();
-    return trimmed ? trimmed : undefined;
-  }
-  return undefined;
+  return join(process.cwd(), "data", "_assistant", "sessions.json");
 }
 
 function extractTimestamp(line: PiTranscriptLine, message: Record<string, unknown>): number {
@@ -161,10 +115,13 @@ function resolveTranscriptCandidates(params: {
   sessionEntriesPath: string;
 }): string[] {
   const candidates = new Set<string>();
-  if (params.sessionFile) {
-    candidates.add(params.sessionFile);
-  }
   const sessionEntriesDir = dirname(params.sessionEntriesPath);
+  if (params.sessionFile) {
+    const sessionFile = params.sessionFile.trim();
+    if (sessionFile) {
+      candidates.add(isAbsolute(sessionFile) ? sessionFile : join(sessionEntriesDir, sessionFile));
+    }
+  }
   candidates.add(join(sessionEntriesDir, `${params.sessionId}.jsonl`));
 
   const transcriptDir = process.env.ADJUTANT_TRANSCRIPTS_DIR?.trim();
@@ -179,6 +136,13 @@ function normalizeLimit(limit: number | undefined): number {
     return Number.POSITIVE_INFINITY;
   }
   return Math.max(0, Math.floor(limit as number));
+}
+
+function normalizeRecentLimit(limit: number): number {
+  if (!Number.isFinite(limit)) {
+    return 0;
+  }
+  return Math.max(0, Math.floor(limit));
 }
 
 function parseMessageLine(line: string, lineNo: number): PiTranscriptLine | null {
@@ -281,8 +245,8 @@ export async function loadRecentSessionEvents(
     const message = parsed.message;
     const messageIdValue = parsed.id ?? (message as Record<string, unknown>).id;
     const messageId = typeof messageIdValue === "string" ? messageIdValue : undefined;
-    const role = normalizeRole((message as Record<string, unknown>).role);
-    const text = extractTextFromMessage(message);
+    const role = normalizeTranscriptRole((message as Record<string, unknown>).role);
+    const text = extractTranscriptMessageText(message);
     const ts = extractTimestamp(parsed, message);
 
     parsedEvents.push({
@@ -296,7 +260,7 @@ export async function loadRecentSessionEvents(
     });
   }
 
-  const limit = Math.max(0, Math.floor(opts.limit));
+  const limit = normalizeRecentLimit(opts.limit);
   if (limit === 0) {
     return [];
   }

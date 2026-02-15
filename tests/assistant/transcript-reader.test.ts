@@ -236,4 +236,71 @@ describe("TranscriptReader", () => {
       await rm(tempDir, { recursive: true, force: true });
     }
   });
+
+  it("sessionFile が相対パスでも sessions.json 基準で解決できる", async () => {
+    const tempDir = await mkdtemp(`${tmpdir()}/adjutant-transcript-`);
+    const snapshot = snapshotEnv();
+    try {
+      const sessionsPath = join(tempDir, "sessions.json");
+      const transcriptDir = join(tempDir, "transcripts");
+      const transcriptPath = join(transcriptDir, "custom.jsonl");
+      await mkdir(transcriptDir, { recursive: true });
+
+      await writeFile(
+        sessionsPath,
+        JSON.stringify({
+          main: { sessionId: "session-5", sessionFile: "transcripts/custom.jsonl" },
+        }),
+        "utf8"
+      );
+      await writeFile(
+        transcriptPath,
+        `${JSON.stringify({
+          timestamp: "2026-02-15T10:00:00.000Z",
+          id: "m-1",
+          message: { role: "assistant", content: [{ type: "text", text: "relative-path" }] },
+        })}\n`,
+        "utf8"
+      );
+
+      process.env.ADJUTANT_SESSION_ENTRIES_PATH = sessionsPath;
+      const messages = await loadMessages({ sessionKey: "main" });
+      assert.equal(messages.length, 1);
+    } finally {
+      restoreEnv(snapshot);
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("loadRecentSessionEvents は limit が非数なら空配列を返す", async () => {
+    const tempDir = await mkdtemp(`${tmpdir()}/adjutant-transcript-`);
+    const snapshot = snapshotEnv();
+    try {
+      const sessionsPath = join(tempDir, "sessions.json");
+      const transcriptPath = join(tempDir, "session-6.jsonl");
+      await writeFile(
+        sessionsPath,
+        JSON.stringify({
+          main: { sessionId: "session-6", sessionFile: transcriptPath },
+        }),
+        "utf8"
+      );
+      await writeFile(
+        transcriptPath,
+        `${JSON.stringify({
+          timestamp: "2026-02-15T10:00:00.000Z",
+          id: "m-1",
+          message: { role: "assistant", content: [{ type: "text", text: "x" }] },
+        })}\n`,
+        "utf8"
+      );
+
+      process.env.ADJUTANT_SESSION_ENTRIES_PATH = sessionsPath;
+      const events = await loadRecentSessionEvents({ sessionKey: "main", limit: Number.NaN });
+      assert.deepEqual(events, []);
+    } finally {
+      restoreEnv(snapshot);
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
 });

@@ -1,5 +1,6 @@
 import type { NormalizedEvent } from "../core/events.js";
 import type { SessionTranscriptEvent } from "./types.js";
+import { extractTranscriptMessageText, normalizeTranscriptRole } from "./transcript-utils.js";
 
 export type ContextBuildOptions = {
   events: NormalizedEvent[];
@@ -32,21 +33,6 @@ function estimateMaxChars(maxTokenEstimate?: number): number {
     ? Math.max(1, Math.floor(maxTokenEstimate as number))
     : DEFAULT_MAX_TOKEN_ESTIMATE;
   return tokenEstimate * 4;
-}
-
-function normalizeRole(role: string): SessionTranscriptEvent["role"] {
-  switch (role.trim().toLowerCase()) {
-    case "user":
-      return "user";
-    case "assistant":
-      return "assistant";
-    case "system":
-      return "system";
-    case "tool":
-      return "tool";
-    default:
-      return "other";
-  }
 }
 
 function extractSlackDetail(event: NormalizedEvent): { channelId?: string; text?: string } {
@@ -88,39 +74,6 @@ function renderSystemEvents(systemEvents: string[] | undefined): string | null {
   return `## System Events\n${cleaned.map((event) => `- ${event}`).join("\n")}`;
 }
 
-function extractMessageText(raw: unknown): string | null {
-  if (!raw || typeof raw !== "object") {
-    return null;
-  }
-  const message = raw as Record<string, unknown>;
-  const content = message.content;
-  if (typeof content === "string") {
-    const trimmed = content.trim();
-    return trimmed ? trimmed : null;
-  }
-  if (Array.isArray(content)) {
-    const texts = content
-      .map((entry) => {
-        if (!entry || typeof entry !== "object") {
-          return "";
-        }
-        const text = (entry as Record<string, unknown>).text;
-        return typeof text === "string" ? text : "";
-      })
-      .map((text) => text.trim())
-      .filter(Boolean);
-    if (texts.length > 0) {
-      return texts.join("\n");
-    }
-  }
-  const text = message.text;
-  if (typeof text === "string") {
-    const trimmed = text.trim();
-    return trimmed ? trimmed : null;
-  }
-  return null;
-}
-
 function renderRecentTranscript(
   recentTranscript: SessionTranscriptEvent[] | undefined
 ): string | null {
@@ -130,8 +83,12 @@ function renderRecentTranscript(
 
   const lines = recentTranscript
     .map((event) => {
-      const role = normalizeRole(event.role);
-      const text = cleanText(event.text) ?? extractMessageText(event.raw.message) ?? "(no text)";
+      const role = normalizeTranscriptRole(event.role);
+      const textFromRaw =
+        event.raw.message && typeof event.raw.message === "object"
+          ? extractTranscriptMessageText(event.raw.message as Record<string, unknown>)
+          : undefined;
+      const text = cleanText(event.text) ?? cleanText(textFromRaw) ?? "(no text)";
       return `- [${new Date(event.ts).toISOString()}] ${role}: ${text}`;
     })
     .filter(Boolean);

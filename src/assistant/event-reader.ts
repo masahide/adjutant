@@ -2,10 +2,12 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { NormalizedEvent } from "../core/events.js";
 import { isNormalizedEvent } from "../core/validateEvent.js";
+import { formatDateKeyInTimezone } from "./memory-paths.js";
 
 export type ReadEventsOptions = {
   dataDir: string;
   date?: string;
+  timezone?: string;
   kinds?: string[];
   channels?: string[];
   sinceMinutes?: number;
@@ -14,12 +16,23 @@ export type ReadEventsOptions = {
 
 const DEFAULT_SINCE_MINUTES = 60;
 const DEFAULT_LIMIT = 200;
+const DEFAULT_TIMEZONE = process.env.ADJUTANT_TZ || "Asia/Tokyo";
+const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const DATE_KEY_WINDOW_LIMIT = 3660;
 
-function resolveDateKey(value?: string): string {
-  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+function resolveTimezone(value?: string): string {
+  if (typeof value !== "string") {
+    return DEFAULT_TIMEZONE;
+  }
+  const trimmed = value.trim();
+  return trimmed || DEFAULT_TIMEZONE;
+}
+
+function resolveDateKey(value: string | undefined, timezone: string): string {
+  if (typeof value === "string" && DATE_KEY_PATTERN.test(value)) {
     return value;
   }
-  return new Date().toISOString().slice(0, 10);
+  return formatDateKeyInTimezone(new Date(Date.now()), timezone);
 }
 
 function resolveEventsPath(dataDir: string, date: string): string {
@@ -78,60 +91,119 @@ function normalizeFilter(values?: string[]): Set<string> | null {
   return new Set(normalized);
 }
 
+function parseDayEndMsUtc(dateKey: string): number {
+  const parsed = Date.parse(`${dateKey}T23:59:59.999Z`);
+  return Number.isFinite(parsed) ? parsed : Date.now();
+}
+
+function shiftDateKey(dateKey: string, days: number): string {
+  const [yearRaw = "1970", monthRaw = "01", dayRaw = "01"] = dateKey.split("-");
+  const year = Number.parseInt(yearRaw, 10);
+  const month = Number.parseInt(monthRaw, 10);
+  const day = Number.parseInt(dayRaw, 10);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) {
+    return "1970-01-01";
+  }
+  const base = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
+  base.setUTCDate(base.getUTCDate() + days);
+  return base.toISOString().slice(0, 10);
+}
+
+function resolveDateKeysForWindow(params: {
+  explicitDate: boolean;
+  dateKey: string;
+  sinceThreshold: number;
+  timezone: string;
+}): string[] {
+  const { explicitDate, dateKey, sinceThreshold, timezone } = params;
+  if (explicitDate) {
+    return [dateKey];
+  }
+
+  const oldestKey = formatDateKeyInTimezone(new Date(sinceThreshold), timezone);
+  const dateKeys = [dateKey];
+  let cursor = dateKey;
+  while (cursor !== oldestKey && dateKeys.length < DATE_KEY_WINDOW_LIMIT) {
+    cursor = shiftDateKey(cursor, -1);
+    dateKeys.push(cursor);
+  }
+  return dateKeys;
+}
+
 export async function readEvents(opts: ReadEventsOptions): Promise<NormalizedEvent[]> {
-  const dateKey = resolveDateKey(opts.date);
-  const eventsPath = resolveEventsPath(opts.dataDir, dateKey);
+  const timezone = resolveTimezone(opts.timezone);
+  const explicitDate = typeof opts.date === "string" && DATE_KEY_PATTERN.test(opts.date);
+  const dateKey = resolveDateKey(opts.date, timezone);
   const limit = normalizeLimit(opts.limit);
   if (limit === 0) {
     return [];
   }
 
-  let raw: string;
-  try {
-    raw = await readFile(eventsPath, "utf8");
-  } catch (error) {
-    const errno = error as NodeJS.ErrnoException;
-    if (errno.code === "ENOENT") {
-      return [];
-    }
-    throw error;
-  }
-
   const kindsFilter = normalizeFilter(opts.kinds);
   const channelsFilter = normalizeFilter(opts.channels);
-  const sinceThreshold = Date.now() - normalizeSinceMinutes(opts.sinceMinutes) * 60_000;
+  const now = Date.now();
+  const referenceNow = explicitDate ? Math.min(now, parseDayEndMsUtc(dateKey)) : now;
+  const sinceThreshold = referenceNow - normalizeSinceMinutes(opts.sinceMinutes) * 60_000;
+  const dateKeys = resolveDateKeysForWindow({
+    explicitDate,
+    dateKey,
+    sinceThreshold,
+    timezone,
+  });
+
+  const raws: string[] = [];
+  for (const targetDate of dateKeys) {
+    const eventsPath = resolveEventsPath(opts.dataDir, targetDate);
+    try {
+      raws.push(await readFile(eventsPath, "utf8"));
+    } catch (error) {
+      const errno = error as NodeJS.ErrnoException;
+      if (errno.code === "ENOENT") {
+        continue;
+      }
+      throw error;
+    }
+  }
+  if (raws.length === 0) {
+    return [];
+  }
 
   const parsed: NormalizedEvent[] = [];
-  const lines = raw.split(/\r?\n/);
-  for (const line of lines) {
-    if (!line.trim()) {
-      continue;
-    }
-    try {
-      const candidate = JSON.parse(line);
-      if (!isNormalizedEvent(candidate)) {
+  for (const raw of raws) {
+    const lines = raw.split(/\r?\n/);
+    for (const line of lines) {
+      if (!line.trim()) {
         continue;
       }
-
-      const eventTs = parseEventTs(candidate);
-      if (eventTs < sinceThreshold) {
-        continue;
-      }
-      if (kindsFilter && !kindsFilter.has(candidate.kind)) {
-        continue;
-      }
-      if (channelsFilter) {
-        const channelId = extractChannelId(candidate);
-        if (!channelId || !channelsFilter.has(channelId)) {
+      try {
+        const candidate = JSON.parse(line);
+        if (!isNormalizedEvent(candidate)) {
           continue;
         }
+
+        const eventTs = parseEventTs(candidate);
+        if (eventTs < sinceThreshold) {
+          continue;
+        }
+        if (kindsFilter && !kindsFilter.has(candidate.kind)) {
+          continue;
+        }
+        if (channelsFilter) {
+          const channelId = extractChannelId(candidate);
+          if (!channelId || !channelsFilter.has(channelId)) {
+            continue;
+          }
+        }
+        parsed.push(candidate);
+      } catch {
+        // JSONL 破損行はスキップする
       }
-      parsed.push(candidate);
-    } catch {
-      // JSONL 破損行はスキップする
     }
   }
 
   parsed.sort((a, b) => parseEventTs(b) - parseEventTs(a));
+  if (parsed.length <= limit) {
+    return parsed;
+  }
   return parsed.slice(0, limit);
 }
