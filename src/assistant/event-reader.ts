@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { NormalizedEvent } from "../core/events.js";
 import { isNormalizedEvent } from "../core/validateEvent.js";
 import { formatDateKeyInTimezone } from "./memory-paths.js";
+import { normalizeTimezone, shiftDateKey } from "./shared-normalizers.js";
 
 export type ReadEventsOptions = {
   dataDir: string;
@@ -16,17 +17,8 @@ export type ReadEventsOptions = {
 
 const DEFAULT_SINCE_MINUTES = 60;
 const DEFAULT_LIMIT = 200;
-const DEFAULT_TIMEZONE = process.env.ADJUTANT_TZ || "Asia/Tokyo";
 const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const DATE_KEY_WINDOW_LIMIT = 3660;
-
-function resolveTimezone(value?: string): string {
-  if (typeof value !== "string") {
-    return DEFAULT_TIMEZONE;
-  }
-  const trimmed = value.trim();
-  return trimmed || DEFAULT_TIMEZONE;
-}
 
 function resolveDateKey(value: string | undefined, timezone: string): string {
   if (typeof value === "string" && DATE_KEY_PATTERN.test(value)) {
@@ -96,19 +88,6 @@ function parseDayEndMsUtc(dateKey: string): number {
   return Number.isFinite(parsed) ? parsed : Date.now();
 }
 
-function shiftDateKey(dateKey: string, days: number): string {
-  const [yearRaw = "1970", monthRaw = "01", dayRaw = "01"] = dateKey.split("-");
-  const year = Number.parseInt(yearRaw, 10);
-  const month = Number.parseInt(monthRaw, 10);
-  const day = Number.parseInt(dayRaw, 10);
-  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) {
-    return "1970-01-01";
-  }
-  const base = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
-  base.setUTCDate(base.getUTCDate() + days);
-  return base.toISOString().slice(0, 10);
-}
-
 function resolveDateKeysForWindow(params: {
   explicitDate: boolean;
   dateKey: string;
@@ -131,7 +110,7 @@ function resolveDateKeysForWindow(params: {
 }
 
 export async function readEvents(opts: ReadEventsOptions): Promise<NormalizedEvent[]> {
-  const timezone = resolveTimezone(opts.timezone);
+  const timezone = normalizeTimezone(opts.timezone);
   const explicitDate = typeof opts.date === "string" && DATE_KEY_PATTERN.test(opts.date);
   const dateKey = resolveDateKey(opts.date, timezone);
   const limit = normalizeLimit(opts.limit);

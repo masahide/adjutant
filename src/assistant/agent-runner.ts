@@ -11,6 +11,7 @@ import { rename } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { appendDailyMemory, updateLongTermMemory } from "./memory-writer.js";
 import { readMemoryFiles } from "./memory-reader.js";
+import { normalizeSessionKey, normalizeTimezone } from "./shared-normalizers.js";
 import {
   resolveSessionEntriesPath,
   readSessionEntryStore,
@@ -89,14 +90,6 @@ type AgentRunnerRuntime = {
 const lockTails = new Map<string, Promise<void>>();
 
 let runtimeOverride: Partial<AgentRunnerRuntime> | null = null;
-
-function normalizeSessionKey(value: string | undefined): string {
-  if (typeof value !== "string") {
-    return "main";
-  }
-  const trimmed = value.trim();
-  return trimmed || "main";
-}
 
 function resolveSessionFilePath(sessionEntriesPath: string, sessionFile: string): string {
   if (isAbsolute(sessionFile)) {
@@ -537,8 +530,7 @@ function shrinkPrompt(prompt: string): string {
 }
 
 function resolveTimezone(opts: AgentRunOptions): string {
-  const timezone = opts.timezone?.trim();
-  return timezone || process.env.ADJUTANT_TZ || "Asia/Tokyo";
+  return normalizeTimezone(opts.timezone);
 }
 
 function resolveWorkspaceDir(opts: AgentRunOptions): string {

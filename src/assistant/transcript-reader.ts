@@ -13,6 +13,11 @@ export type TranscriptReadOptions = {
   limit?: number;
 };
 
+type ResolvedTranscript = {
+  sessionId: string;
+  lines: PiTranscriptLine[];
+};
+
 function extractTimestamp(line: PiTranscriptLine, message: Record<string, unknown>): number {
   if (typeof line.timestamp === "string") {
     const parsed = Date.parse(line.timestamp);
@@ -121,11 +126,26 @@ function parseMessageLine(line: string, lineNo: number): PiTranscriptLine | null
   }
 }
 
-export async function loadMessages(opts: TranscriptReadOptions): Promise<unknown[]> {
+function parseTranscriptLines(transcript: string): PiTranscriptLine[] {
+  const parsedLines: PiTranscriptLine[] = [];
+  const lines = transcript.split(/\r?\n/);
+  for (const [index, line] of lines.entries()) {
+    if (!line.trim()) {
+      continue;
+    }
+    const parsed = parseMessageLine(line, index + 1);
+    if (parsed) {
+      parsedLines.push(parsed);
+    }
+  }
+  return parsedLines;
+}
+
+async function resolveTranscript(sessionKey: string): Promise<ResolvedTranscript | null> {
   const { path: sessionEntriesPath, store } = await readSessionEntryStore();
-  const entry = resolveSessionEntry(store, opts.sessionKey);
+  const entry = resolveSessionEntry(store, sessionKey);
   if (!entry) {
-    return [];
+    return null;
   }
 
   const transcript = await readFirstExistingTranscriptFile(
@@ -136,20 +156,23 @@ export async function loadMessages(opts: TranscriptReadOptions): Promise<unknown
     })
   );
   if (!transcript) {
+    return null;
+  }
+
+  return {
+    sessionId: entry.sessionId,
+    lines: parseTranscriptLines(transcript),
+  };
+}
+
+export async function loadMessages(opts: TranscriptReadOptions): Promise<unknown[]> {
+  const resolved = await resolveTranscript(opts.sessionKey);
+  if (!resolved) {
     return [];
   }
 
   const projected: unknown[] = [];
-  const lines = transcript.split(/\r?\n/);
-  for (const [index, line] of lines.entries()) {
-    if (!line.trim()) {
-      continue;
-    }
-    const parsed = parseMessageLine(line, index + 1);
-    if (!parsed) {
-      continue;
-    }
-
+  for (const parsed of resolved.lines) {
     if (parsed.message && typeof parsed.message === "object") {
       projected.push(parsed.message);
       continue;
@@ -179,31 +202,14 @@ export async function loadMessages(opts: TranscriptReadOptions): Promise<unknown
 export async function loadRecentSessionEvents(
   opts: TranscriptReadOptions & { limit: number }
 ): Promise<SessionTranscriptEvent[]> {
-  const { path: sessionEntriesPath, store } = await readSessionEntryStore();
-  const entry = resolveSessionEntry(store, opts.sessionKey);
-  if (!entry) {
-    return [];
-  }
-
-  const transcript = await readFirstExistingTranscriptFile(
-    resolveTranscriptCandidates({
-      sessionId: entry.sessionId,
-      sessionFile: entry.sessionFile,
-      sessionEntriesPath,
-    })
-  );
-  if (!transcript) {
+  const resolved = await resolveTranscript(opts.sessionKey);
+  if (!resolved) {
     return [];
   }
 
   const parsedEvents: SessionTranscriptEvent[] = [];
-  const lines = transcript.split(/\r?\n/);
-  for (const [index, line] of lines.entries()) {
-    if (!line.trim()) {
-      continue;
-    }
-    const parsed = parseMessageLine(line, index + 1);
-    if (!parsed || !parsed.message || typeof parsed.message !== "object") {
+  for (const parsed of resolved.lines) {
+    if (!parsed.message || typeof parsed.message !== "object") {
       continue;
     }
 
@@ -216,7 +222,7 @@ export async function loadRecentSessionEvents(
 
     parsedEvents.push({
       sessionKey: opts.sessionKey,
-      sessionId: entry.sessionId,
+      sessionId: resolved.sessionId,
       messageId,
       ts,
       role,

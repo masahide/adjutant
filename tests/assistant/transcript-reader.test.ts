@@ -183,6 +183,64 @@ describe("TranscriptReader", () => {
     }
   });
 
+  it("共通パイプラインで malformed 行をスキップしつつ両APIを継続できる", async () => {
+    const tempDir = await mkdtemp(`${tmpdir()}/adjutant-transcript-`);
+    const snapshot = snapshotEnv();
+    const warnings: string[] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map((arg) => String(arg)).join(" "));
+    };
+
+    try {
+      const sessionsPath = join(tempDir, "sessions.json");
+      const transcriptPath = join(tempDir, "session-common.jsonl");
+      await writeFile(
+        sessionsPath,
+        JSON.stringify({
+          main: { sessionId: "session-common", sessionFile: transcriptPath },
+        }),
+        "utf8"
+      );
+      await writeFile(
+        transcriptPath,
+        [
+          JSON.stringify({
+            timestamp: "2026-02-15T10:00:00.000Z",
+            id: "m-1",
+            message: { role: "user", content: [{ type: "text", text: "first" }] },
+          }),
+          "{broken-json",
+          JSON.stringify({
+            timestamp: "2026-02-15T10:00:01.000Z",
+            id: "m-2",
+            message: { role: "assistant", content: [{ type: "text", text: "second" }] },
+          }),
+        ].join("\n"),
+        "utf8"
+      );
+
+      process.env.ADJUTANT_SESSION_ENTRIES_PATH = sessionsPath;
+      const messages = await loadMessages({ sessionKey: "main" });
+      const recent = await loadRecentSessionEvents({ sessionKey: "main", limit: 5 });
+
+      assert.equal(messages.length, 2);
+      assert.equal(recent.length, 2);
+      assert.deepEqual(
+        recent.map((event) => event.messageId),
+        ["m-1", "m-2"]
+      );
+      assert.equal(
+        warnings.some((line) => line.includes("malformed transcript line")),
+        true
+      );
+    } finally {
+      console.warn = originalWarn;
+      restoreEnv(snapshot);
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("未知 sessionKey では空配列を返す", async () => {
     const tempDir = await mkdtemp(`${tmpdir()}/adjutant-transcript-`);
     const snapshot = snapshotEnv();

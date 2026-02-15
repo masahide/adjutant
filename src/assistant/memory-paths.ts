@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { shiftDateKey } from "./shared-normalizers.js";
 
 type DateKeys = {
   today: string;
@@ -39,19 +40,6 @@ export function formatDateKeyInTimezone(date: Date, timezone: string): string {
   } catch {
     return date.toISOString().slice(0, 10);
   }
-}
-
-function shiftDateKey(dateKey: string, days: number): string {
-  const [yearRaw = "1970", monthRaw = "01", dayRaw = "01"] = dateKey.split("-");
-  const year = Number.parseInt(yearRaw, 10);
-  const month = Number.parseInt(monthRaw, 10);
-  const day = Number.parseInt(dayRaw, 10);
-  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) {
-    return "1970-01-01";
-  }
-  const base = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
-  base.setUTCDate(base.getUTCDate() + days);
-  return base.toISOString().slice(0, 10);
 }
 
 export function resolveMemoryDateKeys(timezone: string, now: Date = new Date()): DateKeys {

@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
-import { access, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readSessionEntryStore } from "../../src/assistant/session-entry-store.js";
+import {
+  readSessionEntryStore,
+  writeSessionEntryStore,
+} from "../../src/assistant/session-entry-store.js";
 
 let tempDirs: string[] = [];
 
@@ -55,6 +58,32 @@ describe("SessionEntryStore", () => {
     assert.equal(
       files.some((name) => name.startsWith("sessions.json.broken-")),
       true
+    );
+  });
+
+  it("writeSessionEntryStore は tmp を残さず原子的に保存する", async () => {
+    const tempDir = await mkdtemp(`${tmpdir()}/adjutant-session-store-`);
+    tempDirs.push(tempDir);
+    const sessionsPath = join(tempDir, "sessions.json");
+    await writeFile(sessionsPath, JSON.stringify({ main: { sessionId: "before" } }), "utf8");
+
+    await writeSessionEntryStore(
+      {
+        main: { sessionId: "after", updatedAt: "2026-02-15T00:00:00.000Z" },
+      },
+      sessionsPath
+    );
+
+    const saved = JSON.parse(await readFile(sessionsPath, "utf8")) as {
+      main?: { sessionId?: string; updatedAt?: string };
+    };
+    assert.equal(saved.main?.sessionId, "after");
+    assert.equal(saved.main?.updatedAt, "2026-02-15T00:00:00.000Z");
+
+    const files = await readdir(tempDir);
+    assert.equal(
+      files.some((name) => name.includes(".tmp-")),
+      false
     );
   });
 });

@@ -274,37 +274,37 @@ sequenceDiagram
 
 ### Phase 1 設計と準備
 
-- [ ] 要件と受け入れ条件を固定し、既存契約との差分を明文化（Task P1-1, `doc/plan/260215-s05-*.md`）
-- [ ] 内部インターフェース（precheck/finalize/transcript pipeline）を型定義（Task P1-2, `src/assistant/*`）
-- [ ] Mermaid 図を確定（Task P1-3, `doc/plan/260215-s05-*.md`）
-- [ ] 既存テストのベースライン実行（Task P1-4, `pnpm check`）
-- [ ] 影響ファイルの責務マップを作成（Task P1-5, 計画書内メモ）
+- [x] 要件と受け入れ条件を固定し、既存契約との差分を明文化（Task P1-1, `doc/plan/260215-s05-*.md`）
+- [x] 内部インターフェース（precheck/finalize/transcript pipeline）を型定義（Task P1-2, `src/assistant/*`）
+- [x] Mermaid 図を確定（Task P1-3, `doc/plan/260215-s05-*.md`）
+- [x] 既存テストのベースライン実行（Task P1-4, `pnpm check`）
+- [x] 影響ファイルの責務マップを作成（Task P1-5, 計画書内メモ）
 
 ### Phase 2 HeartbeatRunner の重複削減
 
-- [ ] Test finalize 共通化の失敗テストを追加（Red, Task P2-1, `tests/assistant/heartbeat-runner.test.ts`）
-- [ ] Test precheck 分割後の契約維持テストを追加（Red, Task P2-2, `tests/assistant/heartbeat-runner.test.ts`）
-- [ ] Impl `runOnce` の終了処理を `finalize` に統合（Green, Task P2-3, `src/assistant/heartbeat-runner.ts`）
-- [ ] Refactor precheck / prompt build / postprocess を分離（Task P2-4, `src/assistant/heartbeat-runner.ts`）
-- [ ] Integration `startHeartbeat` と短周期再試行の既存ケース再確認（Task P2-5, `tests/assistant/heartbeat-runner.test.ts`）
-- [ ] Docs 必要時に契約と図を更新（Task P2-6, `doc/plan/260215-s05-*.md`）
+- [x] Test finalize 共通化の失敗テストを追加（Red, Task P2-1, `tests/assistant/heartbeat-runner.test.ts`）
+- [x] Test precheck 分割後の契約維持テストを追加（Red, Task P2-2, `tests/assistant/heartbeat-runner.test.ts`）
+- [x] Impl `runOnce` の終了処理を `finalize` に統合（Green, Task P2-3, `src/assistant/heartbeat-runner.ts`）
+- [x] Refactor precheck / prompt build / postprocess を分離（Task P2-4, `src/assistant/heartbeat-runner.ts`）
+- [x] Integration `startHeartbeat` と短周期再試行の既存ケース再確認（Task P2-5, `tests/assistant/heartbeat-runner.test.ts`）
+- [x] Docs 必要時に契約と図を更新（Task P2-6, `doc/plan/260215-s05-*.md`）
 
 ### Phase 3 Shared Utilities / Transcript / Store の整理
 
-- [ ] Test transcript 共通パイプラインの失敗テストを追加（Red, Task P3-1, `tests/assistant/transcript-reader.test.ts`）
-- [ ] Test atomic write の失敗テストを追加（Red, Task P3-2, `tests/assistant/session-entry-store.test.ts`）
-- [ ] Impl transcript 読込共通化（Green, Task P3-3, `src/assistant/transcript-reader.ts`）
-- [ ] Impl date/timezone/sessionKey 正規化の共有化（Green, Task P3-4, `src/assistant/event-reader.ts`, `src/assistant/memory-paths.ts`, `src/assistant/*`）
-- [ ] Impl `writeSessionEntryStore` を原子的保存へ変更（Green, Task P3-5, `src/assistant/session-entry-store.ts`）
-- [ ] Refactor `command-queue` 後処理の重複削減（Task P3-6, `src/assistant/command-queue.ts`）
-- [ ] Integration 関連テストの全再実行（Task P3-7, `pnpm test`）
+- [x] Test transcript 共通パイプラインの失敗テストを追加（Red, Task P3-1, `tests/assistant/transcript-reader.test.ts`）
+- [x] Test atomic write の失敗テストを追加（Red, Task P3-2, `tests/assistant/session-entry-store.test.ts`）
+- [x] Impl transcript 読込共通化（Green, Task P3-3, `src/assistant/transcript-reader.ts`）
+- [x] Impl date/timezone/sessionKey 正規化の共有化（Green, Task P3-4, `src/assistant/event-reader.ts`, `src/assistant/memory-paths.ts`, `src/assistant/*`）
+- [x] Impl `writeSessionEntryStore` を原子的保存へ変更（Green, Task P3-5, `src/assistant/session-entry-store.ts`）
+- [x] Refactor `command-queue` 後処理の重複削減（Task P3-6, `src/assistant/command-queue.ts`）
+- [x] Integration 関連テストの全再実行（Task P3-7, `pnpm test`）
 
 ### Phase 4 統合と検証
 
-- [ ] `pnpm check` 実行で quality gate 通過を確認（Task P4-1）
-- [ ] 主要エッジケース（timeout/malformed/limit）再確認（Task P4-2）
-- [ ] ログと例外の挙動を確認（Task P4-3）
-- [ ] 計画書の進捗チェック更新（Task P4-4, `doc/plan/260215-s05-*.md`）
+- [x] `pnpm check` 実行で quality gate 通過を確認（Task P4-1）
+- [x] 主要エッジケース（timeout/malformed/limit）再確認（Task P4-2）
+- [x] ログと例外の挙動を確認（Task P4-3）
+- [x] 計画書の進捗チェック更新（Task P4-4, `doc/plan/260215-s05-*.md`）
 
 ---
 
@@ -312,16 +312,16 @@ sequenceDiagram
 
 ### 8.1 機能DoD Functional DoD
 
-- [ ] `runOnce` の分岐結果と副作用（イベント/記録）が既存契約どおりであること
-- [ ] transcript reader の公開挙動が維持されること
-- [ ] セッションストア保存が原子的更新であること
+- [x] `runOnce` の分岐結果と副作用（イベント/記録）が既存契約どおりであること
+- [x] transcript reader の公開挙動が維持されること
+- [x] セッションストア保存が原子的更新であること
 
 ### 8.2 品質DoD Quality DoD
 
-- [ ] 追加/既存テストがすべて成功すること
-- [ ] Lint/Format/Typecheck エラーがないこと
-- [ ] 重複ロジックが削減され、責務が明確になっていること
-- [ ] 変更内容が計画書と整合していること
+- [x] 追加/既存テストがすべて成功すること
+- [x] Lint/Format/Typecheck エラーがないこと
+- [x] 重複ロジックが削減され、責務が明確になっていること
+- [x] 変更内容が計画書と整合していること
 
 ---
 

@@ -6,6 +6,7 @@ import { readEvents } from "./event-reader.js";
 import { runAgent, type AgentRunOptions, type AgentRunResult } from "./agent-runner.js";
 import { getQueueSize } from "./command-queue.js";
 import { readMemoryFiles } from "./memory-reader.js";
+import { normalizeSessionKey, normalizeTimezone } from "./shared-normalizers.js";
 import {
   readSessionEntryStore,
   writeSessionEntryStore,
@@ -80,7 +81,6 @@ const DEFAULT_INTERVAL_MS = 30 * 60 * 1000;
 const DEFAULT_TIMEOUT_MS = 30 * 1000;
 const DEFAULT_RETRY_DELAY_MS = 1000;
 const DEFAULT_ACK_MAX_CHARS = 300;
-const DEFAULT_TIMEZONE = process.env.ADJUTANT_TZ || "Asia/Tokyo";
 const DEFAULT_HEARTBEAT_PROMPT = "# HEARTBEAT\n\nHEARTBEAT_OK の場合はそれだけを返してください。";
 const HEARTBEAT_RUN_RECORD_RELATIVE_PATH = join("_assistant", "heartbeat-runs.jsonl");
 const HEARTBEAT_DUPLICATE_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -155,8 +155,7 @@ function asRecord(value: unknown): UnknownRecord | null {
 }
 
 function resolveTimezone(config: HeartbeatConfig): string {
-  const timezone = config.userTimezone?.trim();
-  return timezone || DEFAULT_TIMEZONE;
+  return normalizeTimezone(config.userTimezone);
 }
 
 function resolveWorkspaceDir(config: HeartbeatConfig): string {
@@ -169,14 +168,6 @@ function resolvePath(filePath: string): string {
     return filePath;
   }
   return join(process.cwd(), filePath);
-}
-
-function normalizeSessionKey(value: string | undefined): string {
-  if (typeof value !== "string") {
-    return "main";
-  }
-  const trimmed = value.trim();
-  return trimmed || "main";
 }
 
 function resolveSessionKeyWithFallback(
@@ -431,6 +422,105 @@ async function persistRunRecord(
   }
 }
 
+type FinalizeRunOptions = {
+  runtime: HeartbeatRuntime;
+  dataDir: string;
+  runAt: Date;
+  sessionKey: string;
+  triggerReason?: string;
+  result: HeartbeatRunResult;
+  event: Omit<HeartbeatEventPayload, "ts"> & { ts?: number };
+  record?: {
+    modelId?: string;
+    preview?: string;
+  };
+};
+
+async function finalizeRun(options: FinalizeRunOptions): Promise<HeartbeatRunResult> {
+  emitHeartbeatEvent({
+    ts: options.event.ts ?? options.runtime.now().getTime(),
+    ...options.event,
+  });
+  await persistRunRecord(
+    options.runtime,
+    options.dataDir,
+    buildRunRecord({
+      runAt: options.runAt,
+      sessionKey: options.sessionKey,
+      result: options.result,
+      triggerReason: options.triggerReason,
+      modelId: options.record?.modelId,
+      preview: options.record?.preview,
+    })
+  );
+  return options.result;
+}
+
+async function resolvePrecheckSkip(params: {
+  runtime: HeartbeatRuntime;
+  config: HeartbeatConfig;
+  runAt: Date;
+  sessionKey: string;
+  triggerReason?: string;
+}): Promise<HeartbeatRunResult | null> {
+  if (!isWithinActiveHours(params.config, params.runAt)) {
+    const result: HeartbeatRunResult = { status: "skipped", reason: "quiet-hours" };
+    return await finalizeRun({
+      runtime: params.runtime,
+      dataDir: params.config.dataDir,
+      runAt: params.runAt,
+      sessionKey: params.sessionKey,
+      triggerReason: params.triggerReason,
+      result,
+      event: {
+        ts: params.runAt.getTime(),
+        status: "skipped",
+        reason: result.reason,
+        indicatorType: "ok",
+      },
+    });
+  }
+
+  const visibility = await resolveVisibility(params.runtime, params.config);
+  if (isVisibilityDisabled(visibility)) {
+    const result: HeartbeatRunResult = { status: "skipped", reason: "alerts-disabled" };
+    return await finalizeRun({
+      runtime: params.runtime,
+      dataDir: params.config.dataDir,
+      runAt: params.runAt,
+      sessionKey: params.sessionKey,
+      triggerReason: params.triggerReason,
+      result,
+      event: {
+        ts: params.runAt.getTime(),
+        status: "skipped",
+        reason: result.reason,
+        indicatorType: "ok",
+      },
+    });
+  }
+
+  if (params.runtime.getQueueSize("main") > 0) {
+    const result: HeartbeatRunResult = { status: "skipped", reason: "requests-in-flight" };
+    return await finalizeRun({
+      runtime: params.runtime,
+      dataDir: params.config.dataDir,
+      runAt: params.runAt,
+      sessionKey: params.sessionKey,
+      triggerReason: params.triggerReason,
+      result,
+      event: {
+        ts: params.runAt.getTime(),
+        status: "skipped",
+        reason: result.reason,
+        indicatorType: "ok",
+      },
+    });
+  }
+
+  return null;
+}
+
 function toBoolean(value: unknown, fallback: boolean): boolean {
   if (typeof value === "boolean") {
     return value;
@@ -585,8 +675,8 @@ export async function runOnce(
   opts?: { reason?: string }
 ): Promise<HeartbeatRunResult> {
   const runtime = getRuntime();
-  const now = runtime.now();
-  const startedAtMs = now.getTime();
+  const runAt = runtime.now();
+  const startedAtMs = runAt.getTime();
   const timezone = resolveTimezone(config);
   const ackMaxChars = resolveAckMaxChars(config);
   const timeoutMs = resolveTimeoutMs(config);
@@ -595,68 +685,15 @@ export async function runOnce(
   const requestedSessionKey = normalizeSessionKey(config.sessionKey);
   const sessionKey = resolveSessionKeyWithFallback(sessionStore, requestedSessionKey);
 
-  if (!isWithinActiveHours(config, now)) {
-    const result: HeartbeatRunResult = { status: "skipped", reason: "quiet-hours" };
-    emitHeartbeatEvent({
-      ts: now.getTime(),
-      status: "skipped",
-      reason: result.reason,
-      indicatorType: "ok",
-    });
-    await persistRunRecord(
-      runtime,
-      config.dataDir,
-      buildRunRecord({
-        runAt: now,
-        sessionKey,
-        result,
-        triggerReason: opts?.reason,
-      })
-    );
-    return result;
-  }
-
-  const visibility = await resolveVisibility(runtime, config);
-  if (isVisibilityDisabled(visibility)) {
-    const result: HeartbeatRunResult = { status: "skipped", reason: "alerts-disabled" };
-    emitHeartbeatEvent({
-      ts: now.getTime(),
-      status: "skipped",
-      reason: result.reason,
-      indicatorType: "ok",
-    });
-    await persistRunRecord(
-      runtime,
-      config.dataDir,
-      buildRunRecord({
-        runAt: now,
-        sessionKey,
-        result,
-        triggerReason: opts?.reason,
-      })
-    );
-    return result;
-  }
-
-  if (runtime.getQueueSize("main") > 0) {
-    const result: HeartbeatRunResult = { status: "skipped", reason: "requests-in-flight" };
-    emitHeartbeatEvent({
-      ts: now.getTime(),
-      status: "skipped",
-      reason: result.reason,
-      indicatorType: "ok",
-    });
-    await persistRunRecord(
-      runtime,
-      config.dataDir,
-      buildRunRecord({
-        runAt: now,
-        sessionKey,
-        result,
-        triggerReason: opts?.reason,
-      })
-    );
-    return result;
+  const prechecked = await resolvePrecheckSkip({
+    runtime,
+    config,
+    runAt,
+    sessionKey,
+    triggerReason: opts?.reason,
+  });
+  if (prechecked) {
+    return prechecked;
   }
 
   try {
@@ -665,23 +702,19 @@ export async function runOnce(
     const heartbeatPrompt = normalizeText(heartbeatPromptRaw ?? DEFAULT_HEARTBEAT_PROMPT);
     if (isEffectivelyEmptyHeartbeatPrompt(heartbeatPrompt)) {
       const result: HeartbeatRunResult = { status: "skipped", reason: "empty-heartbeat-file" };
-      emitHeartbeatEvent({
-        ts: runtime.now().getTime(),
-        status: "skipped",
-        reason: result.reason,
-        indicatorType: "ok",
-      });
-      await persistRunRecord(
+      return await finalizeRun({
         runtime,
-        config.dataDir,
-        buildRunRecord({
-          runAt: now,
-          sessionKey,
-          result,
-          triggerReason: opts?.reason,
-        })
-      );
-      return result;
+        dataDir: config.dataDir,
+        runAt,
+        sessionKey,
+        triggerReason: opts?.reason,
+        result,
+        event: {
+          status: "skipped",
+          reason: result.reason,
+          indicatorType: "ok",
+        },
+      });
     }
 
     const workspaceDir = resolveWorkspaceDir(config);
@@ -717,13 +750,13 @@ export async function runOnce(
         .map((v) => v.trim())
         .filter(Boolean)
         .join("\n\n"),
-      now,
+      runAt,
       timezone
     );
 
     const agentResult = await runWithTimeout(runtime, timeoutMs, async () => {
       return await runtime.runAgent({
-        runId: `hb-${now.getTime()}`,
+        runId: `hb-${runAt.getTime()}`,
         prompt: body,
         systemPrompt,
         sessionKey,
@@ -749,82 +782,73 @@ export async function runOnce(
       };
 
       const readinessOk = isReadinessOk(config, "ok");
-      emitHeartbeatEvent({
-        ts: runtime.now().getTime(),
-        status: eventStatus,
-        durationMs,
-        reason: readinessOk ? undefined : "readiness-failed",
-        indicatorType: "ok",
-        preview: stripped.normalizedText.slice(0, 240),
-      });
-
-      await persistRunRecord(
+      return await finalizeRun({
         runtime,
-        config.dataDir,
-        buildRunRecord({
-          runAt: now,
-          sessionKey,
-          result,
-          triggerReason: opts?.reason,
+        dataDir: config.dataDir,
+        runAt,
+        sessionKey,
+        triggerReason: opts?.reason,
+        result,
+        event: {
+          status: eventStatus,
+          durationMs,
+          reason: readinessOk ? undefined : "readiness-failed",
+          indicatorType: "ok",
+          preview: stripped.normalizedText.slice(0, 240),
+        },
+        record: {
           modelId: result.modelId,
           preview: stripped.normalizedText.slice(0, 240),
-        })
-      );
-      return result;
+        },
+      });
     }
 
     const alertText = stripped.normalizedText || agentResult.text.trim();
     const readinessOk = isReadinessOk(config, "alert");
     if (!readinessOk) {
       const result: HeartbeatRunResult = { status: "skipped", reason: "readiness-failed" };
-      emitHeartbeatEvent({
-        ts: runtime.now().getTime(),
-        status: "skipped",
-        reason: result.reason,
-        indicatorType: "error",
-      });
-      await persistRunRecord(
+      return await finalizeRun({
         runtime,
-        config.dataDir,
-        buildRunRecord({
-          runAt: now,
-          sessionKey,
-          result,
-          triggerReason: opts?.reason,
-        })
-      );
-      return result;
+        dataDir: config.dataDir,
+        runAt,
+        sessionKey,
+        triggerReason: opts?.reason,
+        result,
+        event: {
+          status: "skipped",
+          reason: result.reason,
+          indicatorType: "error",
+        },
+      });
     }
 
     const sessionEntry = getSessionEntry(sessionStore, sessionKey) ?? {};
-    if (isDuplicateAlert(sessionEntry, alertText, now.getTime())) {
+    if (isDuplicateAlert(sessionEntry, alertText, runAt.getTime())) {
       const result: HeartbeatRunResult = {
         status: "ran",
         durationMs,
         contentHash: computeContentHash(alertText),
         modelId: agentResult.modelId ?? config.model,
       };
-      emitHeartbeatEvent({
-        ts: runtime.now().getTime(),
-        status: "skipped",
-        reason: "duplicate",
-        durationMs,
-        preview: alertText.slice(0, 240),
-        indicatorType: "ok",
-      });
-      await persistRunRecord(
+      return await finalizeRun({
         runtime,
-        config.dataDir,
-        buildRunRecord({
-          runAt: now,
-          sessionKey,
-          result,
-          triggerReason: opts?.reason,
+        dataDir: config.dataDir,
+        runAt,
+        sessionKey,
+        triggerReason: opts?.reason,
+        result,
+        event: {
+          status: "skipped",
+          reason: "duplicate",
+          durationMs,
+          preview: alertText.slice(0, 240),
+          indicatorType: "ok",
+        },
+        record: {
           modelId: result.modelId,
           preview: alertText.slice(0, 240),
-        })
-      );
-      return result;
+        },
+      });
     }
 
     const result: HeartbeatRunResult = {
@@ -835,56 +859,49 @@ export async function runOnce(
       modelId: agentResult.modelId ?? config.model,
     };
 
-    emitHeartbeatEvent({
-      ts: runtime.now().getTime(),
-      status: "sent",
-      durationMs,
-      preview: alertText.slice(0, 240),
-      indicatorType: "alert",
-    });
-
     await rememberHeartbeatAlert({
       runtime,
       store: sessionStore,
       sessionKey,
       normalizedAlert: alertText,
-      now,
+      now: runAt,
       sessionEntriesPath: config.sessionEntriesPath,
     });
 
-    await persistRunRecord(
+    return await finalizeRun({
       runtime,
-      config.dataDir,
-      buildRunRecord({
-        runAt: now,
-        sessionKey,
-        result,
-        triggerReason: opts?.reason,
+      dataDir: config.dataDir,
+      runAt,
+      sessionKey,
+      triggerReason: opts?.reason,
+      result,
+      event: {
+        status: "sent",
+        durationMs,
+        preview: alertText.slice(0, 240),
+        indicatorType: "alert",
+      },
+      record: {
         modelId: result.modelId,
         preview: alertText.slice(0, 240),
-      })
-    );
-    return result;
+      },
+    });
   } catch (error) {
     const reason = toReason(error);
     const result: HeartbeatRunResult = { status: "failed", reason };
-    emitHeartbeatEvent({
-      ts: runtime.now().getTime(),
-      status: "failed",
-      reason,
-      indicatorType: "error",
-    });
-    await persistRunRecord(
+    return await finalizeRun({
       runtime,
-      config.dataDir,
-      buildRunRecord({
-        runAt: now,
-        sessionKey,
-        result,
-        triggerReason: opts?.reason,
-      })
-    );
-    return result;
+      dataDir: config.dataDir,
+      runAt,
+      sessionKey,
+      triggerReason: opts?.reason,
+      result,
+      event: {
+        status: "failed",
+        reason,
+        indicatorType: "error",
+      },
+    });
   }
 }
 

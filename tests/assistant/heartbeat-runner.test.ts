@@ -413,6 +413,32 @@ describe("HeartbeatRunner", () => {
     }
   });
 
+  it("precheck で skipped した場合も run record を残す", async () => {
+    const tempDir = await mkdtemp(`${tmpdir()}/adjutant-heartbeat-`);
+    try {
+      await preparePromptFiles(tempDir, "Heartbeat prompt");
+      setHeartbeatRuntimeForTest({
+        getQueueSize: () => 1,
+      });
+
+      const result = await runOnce(createBaseConfig(tempDir), { reason: "timer" });
+      assert.deepEqual(result, { status: "skipped", reason: "requests-in-flight" });
+
+      const recordPath = join(tempDir, "_assistant", "heartbeat-runs.jsonl");
+      const raw = await readFile(recordPath, "utf8");
+      const lines = raw.trim().split(/\r?\n/);
+      const latest = JSON.parse(lines[lines.length - 1] ?? "{}") as {
+        triggerReason?: string;
+        result?: { status?: string; reason?: string };
+      };
+      assert.equal(latest.triggerReason, "timer");
+      assert.equal(latest.result?.status, "skipped");
+      assert.equal(latest.result?.reason, "requests-in-flight");
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("requests-in-flight 短周期再試行で次回実行される", async () => {
     const tempDir = await mkdtemp(`${tmpdir()}/adjutant-heartbeat-`);
     try {
@@ -445,7 +471,7 @@ describe("HeartbeatRunner", () => {
       });
       await new Promise((resolve) => setTimeout(resolve, 80));
       handle.stop();
-      await new Promise((resolve) => setTimeout(resolve, 30));
+      await new Promise((resolve) => setTimeout(resolve, 150));
 
       assert.equal(runCalls >= 1, true);
     } finally {

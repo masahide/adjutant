@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 export type SessionEntryRecord = Record<string, unknown> & {
@@ -61,7 +61,7 @@ export async function writeSessionEntryStore(
 ): Promise<string> {
   const path = resolveSessionEntriesPath(customPath);
   await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, JSON.stringify(store, null, 2), "utf8");
+  await writeJsonAtomic(path, JSON.stringify(store, null, 2));
   return path;
 }
 
@@ -117,5 +117,23 @@ async function backupBrokenStore(path: string, reason: string): Promise<void> {
     if (errno.code !== "ENOENT") {
       console.warn("[SessionEntryStore] failed to backup broken sessions.json:", error);
     }
+  }
+}
+
+async function writeJsonAtomic(path: string, content: string): Promise<void> {
+  const tempPath = `${path}.tmp-${process.pid}-${Date.now()}`;
+  try {
+    await writeFile(tempPath, content, "utf8");
+    await rename(tempPath, path);
+  } catch (error) {
+    try {
+      await unlink(tempPath);
+    } catch (cleanupError) {
+      const errno = cleanupError as NodeJS.ErrnoException;
+      if (errno.code !== "ENOENT") {
+        console.warn("[SessionEntryStore] failed to cleanup tmp file:", cleanupError);
+      }
+    }
+    throw error;
   }
 }

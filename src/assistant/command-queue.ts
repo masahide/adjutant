@@ -66,15 +66,11 @@ function drainLane(lane: string): void {
   void (async () => {
     try {
       const value = await entry.fn();
-      state.active = false;
       entry.resolve(value);
-      if (state.queue.length === 0) {
-        maybeCleanupLane(lane);
-      }
-      drainLane(lane);
     } catch (error) {
-      state.active = false;
       entry.reject(error);
+    } finally {
+      state.active = false;
       if (state.queue.length === 0) {
         maybeCleanupLane(lane);
       }
