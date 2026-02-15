@@ -55,6 +55,27 @@ function getConfig(): ChatHandlerConfig {
   return config;
 }
 
+/** Emit terminal event (if not already emitted), update idempotency status, and log. */
+function finalizeRun(
+  runId: string,
+  sessionKey: string,
+  seqRef: { value: number },
+  terminal: StreamEvent["state"],
+  errorMessage?: string
+): void {
+  if (!StreamEventBridge.getTerminal(runId)) {
+    StreamEventBridge.emit({
+      runId,
+      sessionKey,
+      seq: ++seqRef.value,
+      state: terminal,
+      errorMessage,
+    });
+  }
+  IdempotencyRegistry.updateStatus(runId, terminal === "final" ? "ok" : "error");
+  logRunStatus(runId, sessionKey, terminal === "final" ? "completed" : "failed", errorMessage);
+}
+
 export function acceptMessage(req: PostChatMessageRequest): PostChatMessageResponse {
   const cfg = getConfig();
   if (!req.sessionKey || req.sessionKey.trim() === "") {
@@ -88,12 +109,13 @@ function startRun(runId: string, sessionKey: string, message: string): void {
   const cfg = getConfig();
   let aborted = false;
   const seqRef = { value: 0 };
-  const abortCtrl = {
+  activeRuns.set(runId, {
+    sessionKey,
     abort: () => {
       aborted = true;
     },
-  };
-  activeRuns.set(runId, { sessionKey, abort: abortCtrl.abort, seqRef });
+    seqRef,
+  });
 
   logRunStatus(runId, sessionKey, "queued");
 
@@ -104,15 +126,7 @@ function startRun(runId: string, sessionKey: string, message: string): void {
         logRunStatus(runId, sessionKey, "running");
 
         if (aborted) {
-          StreamEventBridge.emit({
-            runId,
-            sessionKey,
-            seq: ++seqRef.value,
-            state: "aborted",
-            errorMessage: "Run was aborted before execution",
-          });
-          IdempotencyRegistry.updateStatus(runId, "error");
-          logRunStatus(runId, sessionKey, "failed", "aborted-before-execution");
+          finalizeRun(runId, sessionKey, seqRef, "aborted", "Run was aborted before execution");
           return;
         }
 
@@ -152,59 +166,23 @@ function startRun(runId: string, sessionKey: string, message: string): void {
         });
 
         if (aborted) {
-          // Agent finished but abort was requested during execution
-          if (!StreamEventBridge.getTerminal(runId)) {
-            StreamEventBridge.emit({
-              runId,
-              sessionKey,
-              seq: ++seqRef.value,
-              state: "aborted",
-              errorMessage: "Run was aborted during execution",
-            });
-          }
-          IdempotencyRegistry.updateStatus(runId, "error");
-          logRunStatus(runId, sessionKey, "failed", "aborted-during-execution");
+          finalizeRun(runId, sessionKey, seqRef, "aborted", "Run was aborted during execution");
           return;
         }
 
         if (result.status === "completed") {
-          // Guard: ensure terminal event was emitted by AgentRunner
-          if (!StreamEventBridge.getTerminal(runId)) {
-            StreamEventBridge.emit({
-              runId,
-              sessionKey,
-              seq: ++seqRef.value,
-              state: "final",
-            });
-          }
-          IdempotencyRegistry.updateStatus(runId, "ok");
-          logRunStatus(runId, sessionKey, "completed");
+          finalizeRun(runId, sessionKey, seqRef, "final");
         } else {
-          // Fix #3: failed status → emit error terminal
-          if (!StreamEventBridge.getTerminal(runId)) {
-            StreamEventBridge.emit({
-              runId,
-              sessionKey,
-              seq: ++seqRef.value,
-              state: "error",
-              errorMessage: result.reason ?? "Agent failed",
-            });
-          }
-          IdempotencyRegistry.updateStatus(runId, "error");
-          logRunStatus(runId, sessionKey, "failed", result.reason);
+          finalizeRun(runId, sessionKey, seqRef, "error", result.reason ?? "Agent failed");
         }
       } catch (err) {
-        if (!StreamEventBridge.getTerminal(runId)) {
-          StreamEventBridge.emit({
-            runId,
-            sessionKey,
-            seq: ++seqRef.value,
-            state: "error",
-            errorMessage: err instanceof Error ? err.message : "Unknown error",
-          });
-        }
-        IdempotencyRegistry.updateStatus(runId, "error");
-        logRunStatus(runId, sessionKey, "failed", err instanceof Error ? err.message : "unknown");
+        finalizeRun(
+          runId,
+          sessionKey,
+          seqRef,
+          "error",
+          err instanceof Error ? err.message : "Unknown error"
+        );
       } finally {
         activeRuns.delete(runId);
       }
@@ -219,31 +197,14 @@ export function abort(req: PostChatAbortRequest): PostChatAbortResponse {
     const run = activeRuns.get(req.runId);
     if (run && run.sessionKey === req.sessionKey) {
       run.abort();
-      // Emit aborted terminal if not already terminated
-      if (!StreamEventBridge.getTerminal(req.runId)) {
-        StreamEventBridge.emit({
-          runId: req.runId,
-          sessionKey: req.sessionKey,
-          seq: ++run.seqRef.value,
-          state: "aborted",
-          errorMessage: "Aborted by user",
-        });
-      }
+      finalizeRun(req.runId, req.sessionKey, run.seqRef, "aborted", "Aborted by user");
       abortedIds.push(req.runId);
     }
   } else {
     for (const [runId, run] of activeRuns) {
       if (run.sessionKey === req.sessionKey) {
         run.abort();
-        if (!StreamEventBridge.getTerminal(runId)) {
-          StreamEventBridge.emit({
-            runId,
-            sessionKey: req.sessionKey,
-            seq: ++run.seqRef.value,
-            state: "aborted",
-            errorMessage: "Aborted by user",
-          });
-        }
+        finalizeRun(runId, req.sessionKey, run.seqRef, "aborted", "Aborted by user");
         abortedIds.push(runId);
       }
     }

@@ -36,8 +36,7 @@ export function createApiServer(userConfig?: Partial<ApiServerConfig>): {
       await handleRequest(req, res, cfg, sseConnections);
     } catch (err) {
       if (!res.headersSent) {
-        res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Internal Server Error" }));
+        sendJson(res, 500, { error: "Internal Server Error" });
       }
       console.error("[ApiServer] Unhandled error:", err);
     }
@@ -62,6 +61,56 @@ export function createApiServer(userConfig?: Partial<ApiServerConfig>): {
 
   return { start, stop, server };
 }
+
+// ── HTTP helpers ──
+
+function sendJson(res: ServerResponse, status: number, data: unknown): void {
+  res.writeHead(status, { "Content-Type": "application/json" });
+  res.end(JSON.stringify(data));
+}
+
+async function readBody(req: IncomingMessage): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) {
+    chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+  }
+  return Buffer.concat(chunks).toString("utf-8");
+}
+
+async function readJsonBody(
+  req: IncomingMessage,
+  res: ServerResponse
+): Promise<Record<string, unknown> | null> {
+  const raw = await readBody(req);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    sendJson(res, 400, { error: "Invalid JSON" });
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    sendJson(res, 400, { error: "Request body must be a JSON object" });
+    return null;
+  }
+  return parsed as Record<string, unknown>;
+}
+
+function startSseStream(res: ServerResponse, sseConnections: Set<ServerResponse>): () => void {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    Connection: "keep-alive",
+  });
+  sseConnections.add(res);
+  const keepalive = setInterval(() => res.write(": ping\n\n"), KEEPALIVE_INTERVAL_MS);
+  return () => {
+    clearInterval(keepalive);
+    sseConnections.delete(res);
+  };
+}
+
+// ── Router ──
 
 async function handleRequest(
   req: IncomingMessage,
@@ -111,45 +160,23 @@ async function handleRequest(
     return handleGetHeartbeatLast(res, cfg);
   }
 
-  res.writeHead(404, { "Content-Type": "application/json" });
-  res.end(JSON.stringify({ error: "Not Found" }));
+  sendJson(res, 404, { error: "Not Found" });
 }
 
-async function readBody(req: IncomingMessage): Promise<string> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) {
-    chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
-  }
-  return Buffer.concat(chunks).toString("utf-8");
-}
+// ── Route handlers ──
 
 async function handlePostChatMessages(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const body = await readBody(req);
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(body);
-  } catch {
-    res.writeHead(400, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: "Invalid JSON" }));
-    return;
-  }
-
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    res.writeHead(400, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: "Request body must be a JSON object" }));
-    return;
-  }
+  const body = await readJsonBody(req, res);
+  if (!body) return;
 
   try {
     const result = ChatHandler.acceptMessage(
-      parsed as { message: string; sessionKey: string; idempotencyKey: string }
+      body as unknown as { message: string; sessionKey: string; idempotencyKey: string }
     );
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify(result));
+    sendJson(res, 200, result);
   } catch (err) {
     if (err instanceof ChatHandler.ValidationError) {
-      res.writeHead(400, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: err.message }));
+      sendJson(res, 400, { error: err.message });
     } else {
       throw err;
     }
@@ -157,32 +184,17 @@ async function handlePostChatMessages(req: IncomingMessage, res: ServerResponse)
 }
 
 async function handlePostChatAbort(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const body = await readBody(req);
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(body);
-  } catch {
-    res.writeHead(400, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: "Invalid JSON" }));
-    return;
-  }
+  const body = await readJsonBody(req, res);
+  if (!body) return;
 
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    res.writeHead(400, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: "Request body must be a JSON object" }));
-    return;
-  }
-
-  const p = parsed as { sessionKey?: string; runId?: string };
+  const p = body as unknown as { sessionKey?: string; runId?: string };
   if (!p.sessionKey) {
-    res.writeHead(400, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: "sessionKey is required" }));
+    sendJson(res, 400, { error: "sessionKey is required" });
     return;
   }
 
   const result = ChatHandler.abort({ sessionKey: p.sessionKey, runId: p.runId });
-  res.writeHead(200, { "Content-Type": "application/json" });
-  res.end(JSON.stringify(result));
+  sendJson(res, 200, result);
 }
 
 function handleStreamRun(
@@ -190,40 +202,26 @@ function handleStreamRun(
   res: ServerResponse,
   sseConnections: Set<ServerResponse>
 ): void {
-  res.writeHead(200, {
-    "Content-Type": "text/event-stream",
-    "Cache-Control": "no-cache",
-    Connection: "keep-alive",
-  });
-
-  sseConnections.add(res);
-
-  const keepalive = setInterval(() => {
-    res.write(": ping\n\n");
-  }, KEEPALIVE_INTERVAL_MS);
-
+  const cleanupSse = startSseStream(res, sseConnections);
   const { events, unsubscribe } = StreamEventBridge.subscribe(runId);
 
   const pump = async () => {
     try {
       for await (const event of events) {
-        const data = JSON.stringify(event);
-        res.write(`event: chat\ndata: ${data}\n\n`);
+        res.write(`event: chat\ndata: ${JSON.stringify(event)}\n\n`);
         if (event.state === "final" || event.state === "aborted" || event.state === "error") {
           break;
         }
       }
     } finally {
-      clearInterval(keepalive);
-      sseConnections.delete(res);
+      cleanupSse();
       res.end();
     }
   };
 
   res.on("close", () => {
     unsubscribe();
-    clearInterval(keepalive);
-    sseConnections.delete(res);
+    cleanupSse();
   });
 
   pump().catch((err) => {
@@ -233,18 +231,15 @@ function handleStreamRun(
 
 async function handleGetChatHistory(sessionKey: string | null, res: ServerResponse): Promise<void> {
   if (!sessionKey) {
-    res.writeHead(400, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: "sessionKey is required" }));
+    sendJson(res, 400, { error: "sessionKey is required" });
     return;
   }
 
   try {
     const messages = await loadMessages({ sessionKey });
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ sessionKey, sessionId: sessionKey, messages }));
+    sendJson(res, 200, { sessionKey, sessionId: sessionKey, messages });
   } catch {
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ sessionKey, sessionId: sessionKey, messages: [] }));
+    sendJson(res, 200, { sessionKey, sessionId: sessionKey, messages: [] });
   }
 }
 
@@ -254,30 +249,26 @@ async function handlePostHeartbeatRun(
   cfg: ApiServerConfig
 ): Promise<void> {
   if (!cfg.heartbeatProvider) {
-    res.writeHead(501, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: "HeartbeatRunner not configured" }));
+    sendJson(res, 501, { error: "HeartbeatRunner not configured" });
     return;
   }
 
-  const body = await readBody(req);
+  const raw = await readBody(req);
   let parsed: { reason?: string } = {};
   try {
-    if (body.trim()) parsed = JSON.parse(body);
+    if (raw.trim()) parsed = JSON.parse(raw);
   } catch {
-    res.writeHead(400, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: "Invalid JSON" }));
+    sendJson(res, 400, { error: "Invalid JSON" });
     return;
   }
 
   try {
     const result = await cfg.heartbeatProvider.runOnce({ reason: parsed.reason });
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify(result));
+    sendJson(res, 200, result);
   } catch (err) {
-    res.writeHead(500, { "Content-Type": "application/json" });
-    res.end(
-      JSON.stringify({ error: err instanceof Error ? err.message : "HeartbeatRunner failed" })
-    );
+    sendJson(res, 500, {
+      error: err instanceof Error ? err.message : "HeartbeatRunner failed",
+    });
   }
 }
 
@@ -286,16 +277,7 @@ function handleEventsStream(
   cfg: ApiServerConfig,
   sseConnections: Set<ServerResponse>
 ): void {
-  res.writeHead(200, {
-    "Content-Type": "text/event-stream",
-    "Cache-Control": "no-cache",
-    Connection: "keep-alive",
-  });
-  sseConnections.add(res);
-
-  const keepalive = setInterval(() => {
-    res.write(": ping\n\n");
-  }, KEEPALIVE_INTERVAL_MS);
+  const cleanupSse = startSseStream(res, sseConnections);
 
   let unsubHeartbeat: (() => void) | undefined;
   if (cfg.heartbeatProvider) {
@@ -305,20 +287,17 @@ function handleEventsStream(
   }
 
   res.on("close", () => {
-    clearInterval(keepalive);
-    sseConnections.delete(res);
+    cleanupSse();
     unsubHeartbeat?.();
   });
 }
 
 function handleGetHeartbeatLast(res: ServerResponse, cfg: ApiServerConfig): void {
   if (!cfg.heartbeatProvider) {
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end("null");
+    sendJson(res, 200, null);
     return;
   }
 
   const last = cfg.heartbeatProvider.getLastHeartbeatEvent();
-  res.writeHead(200, { "Content-Type": "application/json" });
-  res.end(JSON.stringify(last));
+  sendJson(res, 200, last);
 }
