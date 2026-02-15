@@ -14,6 +14,7 @@
     "format:write": "prettier --write .",
     "test": "bash -lc 'files=$(find tests -type f -name \"*.test.ts\"); if [ -z \"$files\" ]; then echo \"No tests found\"; exit 1; fi; node --import tsx --test $files'",
     "test:slack": "node --import tsx --test \"tests/slack/**/*.test.ts\"",
+    "assistant": "tsx src/assistant/main.ts",
     "check": "pnpm run format && pnpm run typecheck && pnpm run test"
   },
   "devDependencies": {
@@ -22,8 +23,11 @@
     "@mariozechner/pi-coding-agent": "^0.52.12",
     "@types/chrome-remote-interface": "^0.31.14",
     "@types/node": "^24.10.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
     "@typescript-eslint/eslint-plugin": "^8.46.3",
     "@typescript-eslint/parser": "^8.46.3",
+    "@vitejs/plugin-react": "^5.1.4",
     "chrome-remote-interface": "^0.33.3",
     "devtools-protocol": "^0.0.1541592",
     "eslint": "^9.39.1",
@@ -31,7 +35,9 @@
     "globals": "^16.5.0",
     "openai": "^4.104.0",
     "prettier": "^3.6.2",
+    "react-dom": "^19.2.4",
     "tsx": "^4.20.6",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1"
   }
 }
