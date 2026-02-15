@@ -229,7 +229,7 @@ OpenClaw のハートビート機構・メモリシステム・メッセージ�
 
 - メモリファイルは全文読み込み（ベクトル検索なし）。ファイルが大きくなるとコンテキストウィンドウを圧迫する
 - JSONL の窓読み（sinceMinutes + limit）で運用するため、古い文脈の取りこぼしが発生する可能性がある
-- ハートビート重複排除はセッションストア（`lastHeartbeatText` / `lastHeartbeatSentAt`）に依存するため、セッション単位の精度となる
+- ハートビート重複排除は SDK セッションメタデータ（`lastHeartbeatText` / `lastHeartbeatSentAt`）に依存する。永続化はセッションストア（例: `sessions.json`）で行うため、プロセス再起動後も継続される
 - セッションコンパクション（自動要約・圧縮）は未実装。履歴が長くなると手動で `/new` 相当の操作が必要
 - 実行中の run をキャンセルする abort API は未実装（OpenClaw は `chat.abort` を提供）。長時間実行が発生した場合はプロセス再起動で対応
 - pi-coding-agent SDK のバージョンに依存する
@@ -305,9 +305,9 @@ export function readEvents(opts: ReadEventsOptions): Promise<NormalizedEvent[]>;
 // 1. HeartbeatRunner: アラート生成時に、要約テキストをチャットセッションの
 //    キューに投入する（ハートビート → チャット間のコンテキスト橋渡し）。
 //    これにより UC-3 フォローアップ時にアラート文脈が自動で利用可能になる。
-// 2. ChatHandler (API Server): ユーザーメッセージ処理開始時に、
-//    EventReader で前回 drain 以降の新規イベントをテンプレート整形してキューに投入する（LLM は使わない）。
-//    投入判定: 前回 drain 時刻（sessionKey 単位で保持）より新しいイベントのみ。
+// 2. ChatHandler (API Server): CommandQueue タスク関数内で、
+//    EventReader で直近イベント窓を読み込み、テンプレート整形してキューに投入する（LLM は使わない）。
+//    ※ readEvents → enqueue → drain は CQ タスク関数内で実行（sessionKey 直列化により競合防止）。
 // ※ 既存 CDP → JSONL パイプラインへの直接 hook は MVP では行わない。
 //    リアルタイム投入（file watcher / pipeline hook）は §10 次フェーズ候補。
 
@@ -483,14 +483,17 @@ export type HeartbeatRunRecord = {
   sessionId?: string;
   sessionKey?: string;
   result: HeartbeatRunResult;
+  triggerReason?: string;      // 実行トリガー理由（OpenClaw runHeartbeatOnce(reason) と整合）
   modelId?: string;
   preview?: string;
 };
 
 // --- 重複排除仕様 ---
-// - キー: 直前送達テキスト（セッションストアの lastHeartbeatText）
+// - キー: 直前送達テキスト（SDK セッションメタデータ `lastHeartbeatText`）
 // - ウィンドウ: 24 時間（lastHeartbeatSentAt との差分で判定）
-// - 保持: セッションストアに永続化（プロセス再起動後も有効）
+// - 保持: SDK セッションメタデータ `lastHeartbeatSentAt` とともに
+//         セッションストア（例: `sessions.json`）へ永続化する
+//         （`src/assistant/session-store.ts` の表示用ログには保持しない）
 // - 判定タイミング: stripHeartbeatToken() 後、UI 送信前
 //   → モデルは呼び出し済みのため HeartbeatRunResult { status: "ran", durationMs: ... } を返し、
 //     HeartbeatEventPayload でも status: "skipped", reason: "duplicate" を記録
@@ -781,7 +784,7 @@ export function listSessions(sessionDir: string): Promise<string[]>;
 // --- ハートビート ---
 
 // POST /api/heartbeat/run — Heartbeat 実行（手動/定期）
-// Request:  { mode: "now" | "scheduled" }
+// Request:  { reason?: string }  // 例: "manual" | "scheduled"
 // Response: HeartbeatRunResult
 //
 // GET /api/heartbeat/last — 最新ハートビート結果取得（ポーリング）
@@ -1072,19 +1075,19 @@ sequenceDiagram
     User->>UI: メッセージ入力
     UI->>API: POST /api/chat/messages {text, sessionKey?, sessionId?, clientMessageId}
 
-    Note over API: sessionKey 解決（§4.1 解決ルール）
-    Note over API,SEQ: ChatHandler: 新規イベントを SEQ に投入（lastDrainTs から sinceMinutes を算出）
-    API->>ER: readEvents({sinceMinutes})
-    ER-->>API: NormalizedEvent[]
-    API->>SEQ: enqueue(テンプレート整形済みテキスト, sessionKey)
+    Note over API: sessionKey 解決（§4.1 解決ルール）+ 冪等判定
 
     API->>CQ: enqueueCommand(chatTask, {sessionKey})
     API-->>UI: {runId, sessionId, sessionKey, accepted, deduplicated}
     UI->>API: GET /api/chat/runs/:runId/stream
 
-    Note over API,AR: ── 以下は enqueue されたタスク関数内 ──
+    Note over API,AR: ── 以下は enqueue されたタスク関数内（sessionKey 単位で直列実行）──
 
     API-->>UI: SSE run_started {runId, sessionId, sessionKey, seq=1}
+    Note over API,ER: readEvents は直近イベント窓を取得（MVP 既定 sinceMinutes=60）
+    API->>ER: readEvents({sinceMinutes: 60})
+    ER-->>API: NormalizedEvent[]
+    API->>SEQ: enqueue(テンプレート整形済みテキスト, sessionKey)
     API->>SEQ: drain(sessionKey)
     SEQ-->>API: SystemEvent[]
     API->>MR: readMemoryFiles()
@@ -1371,4 +1374,4 @@ MVP 完了後に検討する機能拡張の候補。優先度・実施判断は 
 | **モデルカスケード** | ハートビートに安価モデル、複雑な推論に上位モデルを使い分け。コスト最適化 | ハートビート用モデル設定（`heartbeat.model`）で同等。対話はデフォルトモデル |
 | **セッション永続化** | JSONL 形式でセッション履歴保存、セッションマネージャで管理 | SDK が正（source of truth）、SessionStore は UI 表示用イベントログ |
 | **Human-in-the-Loop** | アラートは提案形式、実行はユーザー承認後 | MVPでは提案と追質問の対話に限定。外部副作用は実行しない |
-| **重複排除** | 24時間内の同一アラート抑制。直前 1 件の完全テキストをセッションストアに永続化（`lastHeartbeatText` + `lastHeartbeatSentAt`）。プロセス再起動後も有効 | 同等。セッションストアに `lastHeartbeatText` + `lastHeartbeatSentAt` を永続化し、24h ウィンドウで完全テキスト比較。`contentHash`（SHA-256 先頭 16 文字）はログ・可観測性用途のみ |
+| **重複排除** | 24時間内の同一アラート抑制。直前 1 件の完全テキストをセッションストアに永続化（`lastHeartbeatText` + `lastHeartbeatSentAt`）。プロセス再起動後も有効 | 同等。SDK セッションメタデータ（例: `sessions.json`）に `lastHeartbeatText` + `lastHeartbeatSentAt` を保持し、24h ウィンドウで完全テキスト比較。`contentHash`（SHA-256 先頭 16 文字）はログ・可観測性用途のみ |
