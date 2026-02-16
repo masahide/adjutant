@@ -288,20 +288,20 @@ sequenceDiagram
 - [x] Impl `src/assistant/chat-handler.ts` から `loadRecentSessionEvents` と `readMemoryFiles` 依存を削除 Green
 - [x] Refactor prompt 組み立てを最小関数へ整理し可読性を向上（system event 経路は維持）
 - [x] Integration 既存 `chat-handler`/`api-server` テスト通過確認
-- [ ] Docs 必要なら `doc/` 配下に責務分離メモを追記
+- [x] Docs 必要なら `doc/` 配下に責務分離メモを追記
 
 ### Phase 3 設定契約の整理
 
 - [x] Test `transcriptLimit` を要求しない設定で `configure` 可能なテストへ更新 Red
 - [x] Impl `ChatHandlerConfig` と `src/assistant/main.ts` から `transcriptLimit` を削除 Green
-- [ ] Refactor `tests/assistant/chat-handler.test.ts` / `tests/assistant/api-server.test.ts` の重複設定を整理
+- [x] Refactor `tests/assistant/chat-handler.test.ts` / `tests/assistant/api-server.test.ts` の重複設定を整理
 - [x] Integration `pnpm test` で assistant 系回帰確認
-- [ ] Docs 設定項目ドキュメントがあれば更新
+- [x] Docs 設定項目ドキュメントがあれば更新
 
 ### Phase 4 統合と検証
 
 - [x] 全体テスト実行（`pnpm test`, 必要に応じ `pnpm check`）
-- [ ] エッジケース確認（branch/compaction セッション継続の手動確認）
+- [x] エッジケース確認（branch/compaction セッション継続の手動確認）
 - [x] エッジケース確認（system event 注入の1ターン消費）
 - [x] ログと例外確認（abort/error 終端、context overflow リトライ）
 - [x] ドキュメント更新（仕様・契約・図、履歴APIは表示用途で維持）

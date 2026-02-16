@@ -72,6 +72,13 @@ pnpm check               # format -> typecheck -> test
 | `ADJUTANT_API_HOST`                        | `127.0.0.1`                         | AI アシスタント API サーバーのバインドアドレス                          |
 | `ADJUTANT_VITE_PORT`                       | `5173`                              | AI アシスタント Web UI（Vite）のポート                                  |
 | `ADJUTANT_WORKSPACE_DIR`                   | `ADJUTANT_DATA_DIR` と同値          | アシスタントのワークスペースディレクトリ                                |
+| `ADJUTANT_SESSION_ENTRIES_PATH`            | `./data/_assistant/sessions.json`   | アシスタントのセッションメタ情報（`sessionId`, `sessionFile`）保存先    |
+
+## AI セッションコンテキスト方針
+
+- 会話履歴の復元は `SessionManager.buildSessionContext()` に委譲します。
+- `ChatHandler` は transcript/memory を再注入せず、`system event`（ある場合）+ `## User Message` のみを送信します。
+- `/api/chat/history` は UI 表示用途として transcript-reader の読み出し結果を返します。
 
 ## 出力
 

@@ -2,10 +2,11 @@ import { describe, it, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { createApiServer } from "../../src/assistant/api-server.js";
 import * as ChatHandler from "../../src/assistant/chat-handler.js";
-import * as StreamEventBridge from "../../src/assistant/stream-event-bridge.js";
 import type { StreamEvent } from "../../src/assistant/types.js";
-import { resetSystemEventQueueForTest } from "../../src/assistant/system-event-queue.js";
-import { resetCommandQueueForTest } from "../../src/assistant/command-queue.js";
+import {
+  configureChatHandlerForTest,
+  resetChatHandlerTestState,
+} from "./chat-handler-test-helpers.js";
 
 function makeStubAgent(): ChatHandler.AgentRunFn {
   return async ({ runId, sessionKey, onDelta }) => {
@@ -24,18 +25,8 @@ let stop: () => Promise<void>;
 let port: number;
 
 async function setupServer(agentFn?: ChatHandler.AgentRunFn) {
-  ChatHandler.resetForTest();
-  StreamEventBridge.resetForTest();
-  resetSystemEventQueueForTest();
-  resetCommandQueueForTest();
-
-  ChatHandler.configure({
-    runAgent: agentFn ?? makeStubAgent(),
-    dataDir: "/tmp/test-data",
-    workspaceDir: "/tmp/test-workspace",
-    timezone: "Asia/Tokyo",
-    idempotencyTtlSec: 300,
-  });
+  resetChatHandlerTestState();
+  configureChatHandlerForTest(agentFn ?? makeStubAgent());
 
   port = 3100 + Math.floor(Math.random() * 900);
   const api = createApiServer({ port, host: "127.0.0.1" });
@@ -167,18 +158,8 @@ describe("ApiServer", () => {
   });
 
   it("GET /api/heartbeat/last はプロバイダ設定時にスナップショットを返す", async () => {
-    ChatHandler.resetForTest();
-    StreamEventBridge.resetForTest();
-    resetSystemEventQueueForTest();
-    resetCommandQueueForTest();
-
-    ChatHandler.configure({
-      runAgent: makeStubAgent(),
-      dataDir: "/tmp/test-data",
-      workspaceDir: "/tmp/test-workspace",
-      timezone: "Asia/Tokyo",
-      idempotencyTtlSec: 300,
-    });
+    resetChatHandlerTestState();
+    configureChatHandlerForTest(makeStubAgent());
 
     port = 3100 + Math.floor(Math.random() * 900);
     const api = createApiServer({

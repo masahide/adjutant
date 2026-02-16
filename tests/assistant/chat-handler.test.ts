@@ -3,12 +3,12 @@ import assert from "node:assert/strict";
 import * as ChatHandler from "../../src/assistant/chat-handler.js";
 import * as StreamEventBridge from "../../src/assistant/stream-event-bridge.js";
 import type { StreamEvent } from "../../src/assistant/types.js";
+import { enqueueSystemEvent, hasSystemEvents } from "../../src/assistant/system-event-queue.js";
 import {
-  enqueueSystemEvent,
-  hasSystemEvents,
-  resetSystemEventQueueForTest,
-} from "../../src/assistant/system-event-queue.js";
-import { resetCommandQueueForTest } from "../../src/assistant/command-queue.js";
+  configureChatHandlerForTest,
+  initializeChatHandlerForTest,
+  resetChatHandlerTestState,
+} from "./chat-handler-test-helpers.js";
 
 function makeStubAgent(
   opts: {
@@ -56,17 +56,7 @@ async function waitForTerminal(runId: string): Promise<StreamEvent> {
 
 describe("ChatHandler", () => {
   beforeEach(() => {
-    ChatHandler.resetForTest();
-    StreamEventBridge.resetForTest();
-    resetSystemEventQueueForTest();
-    resetCommandQueueForTest();
-    ChatHandler.configure({
-      runAgent: makeStubAgent(),
-      dataDir: "/tmp/test-data",
-      workspaceDir: "/tmp/test-workspace",
-      timezone: "Asia/Tokyo",
-      idempotencyTtlSec: 300,
-    });
+    initializeChatHandlerForTest(makeStubAgent());
   });
 
   it("acceptMessage は sessionKey 必須バリデーション", () => {
@@ -125,31 +115,19 @@ describe("ChatHandler", () => {
   });
 
   it("configure は transcriptLimit なしで受け付ける", () => {
-    ChatHandler.resetForTest();
-    assert.doesNotThrow(() =>
-      ChatHandler.configure({
-        runAgent: makeStubAgent(),
-        dataDir: "/tmp/test-data",
-        workspaceDir: "/tmp/test-workspace",
-        timezone: "Asia/Tokyo",
-        idempotencyTtlSec: 300,
-      })
-    );
+    resetChatHandlerTestState();
+    assert.doesNotThrow(() => configureChatHandlerForTest(makeStubAgent()));
   });
 
   it("runAgent への prompt は User Message のみを含む", async () => {
     let capturedPrompt = "";
-    ChatHandler.configure({
-      runAgent: makeStubAgent({
+    configureChatHandlerForTest(
+      makeStubAgent({
         onPrompt: (prompt) => {
           capturedPrompt = prompt;
         },
-      }),
-      dataDir: "/tmp/test-data",
-      workspaceDir: "/tmp/test-workspace",
-      timezone: "Asia/Tokyo",
-      idempotencyTtlSec: 300,
-    });
+      })
+    );
 
     ChatHandler.acceptMessage({
       message: "hello",
@@ -167,17 +145,13 @@ describe("ChatHandler", () => {
 
   it("system event は 1 ターンだけ prompt に注入されて drain される", async () => {
     const capturedPrompts: string[] = [];
-    ChatHandler.configure({
-      runAgent: makeStubAgent({
+    configureChatHandlerForTest(
+      makeStubAgent({
         onPrompt: (prompt) => {
           capturedPrompts.push(prompt);
         },
-      }),
-      dataDir: "/tmp/test-data",
-      workspaceDir: "/tmp/test-workspace",
-      timezone: "Asia/Tokyo",
-      idempotencyTtlSec: 300,
-    });
+      })
+    );
 
     enqueueSystemEvent("workspace changed", { sessionKey: "main" });
     assert.equal(hasSystemEvents("main"), true);
@@ -242,13 +216,7 @@ describe("ChatHandler", () => {
   });
 
   it("AgentRunner 例外時は error 終端が配信される", async () => {
-    ChatHandler.configure({
-      runAgent: makeStubAgent({ fail: true }),
-      dataDir: "/tmp/test-data",
-      workspaceDir: "/tmp/test-workspace",
-      timezone: "Asia/Tokyo",
-      idempotencyTtlSec: 300,
-    });
+    configureChatHandlerForTest(makeStubAgent({ fail: true }));
 
     ChatHandler.acceptMessage({
       message: "hello",
@@ -270,13 +238,7 @@ describe("ChatHandler", () => {
   });
 
   it("AgentRunner が failed を返すと error 終端が配信される", async () => {
-    ChatHandler.configure({
-      runAgent: makeFailedAgent(),
-      dataDir: "/tmp/test-data",
-      workspaceDir: "/tmp/test-workspace",
-      timezone: "Asia/Tokyo",
-      idempotencyTtlSec: 300,
-    });
+    configureChatHandlerForTest(makeFailedAgent());
 
     ChatHandler.acceptMessage({
       message: "hello",
@@ -317,13 +279,7 @@ describe("ChatHandler", () => {
   });
 
   it("abort は実行中 run を中断し aborted 終端を配信する", async () => {
-    ChatHandler.configure({
-      runAgent: makeStubAgent({ delay: 5000 }),
-      dataDir: "/tmp/test-data",
-      workspaceDir: "/tmp/test-workspace",
-      timezone: "Asia/Tokyo",
-      idempotencyTtlSec: 300,
-    });
+    configureChatHandlerForTest(makeStubAgent({ delay: 5000 }));
 
     ChatHandler.acceptMessage({
       message: "hello",
@@ -344,13 +300,7 @@ describe("ChatHandler", () => {
   });
 
   it("abort (sessionKey のみ) は全実行中 run を中断する", () => {
-    ChatHandler.configure({
-      runAgent: makeStubAgent({ delay: 5000 }),
-      dataDir: "/tmp/test-data",
-      workspaceDir: "/tmp/test-workspace",
-      timezone: "Asia/Tokyo",
-      idempotencyTtlSec: 300,
-    });
+    configureChatHandlerForTest(makeStubAgent({ delay: 5000 }));
 
     ChatHandler.acceptMessage({
       message: "hello",
