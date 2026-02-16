@@ -275,36 +275,36 @@ sequenceDiagram
 
 ### Phase 1 設計と準備
 
-- [ ] 要件と仕様の確定 受け入れ条件の確定（本計画）
-- [ ] インターフェース契約の確定 スキーマと例の追加（`ChatHandlerConfig` 変更）
-- [ ] Mermaid図の作成 更新（本計画）
-- [ ] インターフェース 型定義の作成（`transcriptLimit` 削除）
-- [ ] テスト基盤の確認（`tests/assistant/*` 影響把握）
+- [x] 要件と仕様の確定 受け入れ条件の確定（本計画）
+- [x] インターフェース契約の確定 スキーマと例の追加（`ChatHandlerConfig` 変更）
+- [x] Mermaid図の作成 更新（本計画）
+- [x] インターフェース 型定義の作成（`transcriptLimit` 削除）
+- [x] テスト基盤の確認（`tests/assistant/*` 影響把握）
 
 ### Phase 2 Prompt Source 統一（ChatHandler）
 
-- [ ] Test `chat-handler` に transcript/memory 再注入が無いことを検証する失敗テストを追加 Red
-- [ ] Test system event がある場合のみ `## System Events` が付与され、実行後に drain されることを検証する失敗テストを追加 Red
-- [ ] Impl `src/assistant/chat-handler.ts` から `loadRecentSessionEvents` と `readMemoryFiles` 依存を削除 Green
-- [ ] Refactor prompt 組み立てを最小関数へ整理し可読性を向上（system event 経路は維持）
-- [ ] Integration 既存 `chat-handler`/`api-server` テスト通過確認
+- [x] Test `chat-handler` に transcript/memory 再注入が無いことを検証する失敗テストを追加 Red
+- [x] Test system event がある場合のみ `## System Events` が付与され、実行後に drain されることを検証する失敗テストを追加 Red
+- [x] Impl `src/assistant/chat-handler.ts` から `loadRecentSessionEvents` と `readMemoryFiles` 依存を削除 Green
+- [x] Refactor prompt 組み立てを最小関数へ整理し可読性を向上（system event 経路は維持）
+- [x] Integration 既存 `chat-handler`/`api-server` テスト通過確認
 - [ ] Docs 必要なら `doc/` 配下に責務分離メモを追記
 
 ### Phase 3 設定契約の整理
 
-- [ ] Test `transcriptLimit` を要求しない設定で `configure` 可能なテストへ更新 Red
-- [ ] Impl `ChatHandlerConfig` と `src/assistant/main.ts` から `transcriptLimit` を削除 Green
+- [x] Test `transcriptLimit` を要求しない設定で `configure` 可能なテストへ更新 Red
+- [x] Impl `ChatHandlerConfig` と `src/assistant/main.ts` から `transcriptLimit` を削除 Green
 - [ ] Refactor `tests/assistant/chat-handler.test.ts` / `tests/assistant/api-server.test.ts` の重複設定を整理
-- [ ] Integration `pnpm test` で assistant 系回帰確認
+- [x] Integration `pnpm test` で assistant 系回帰確認
 - [ ] Docs 設定項目ドキュメントがあれば更新
 
 ### Phase 4 統合と検証
 
-- [ ] 全体テスト実行（`pnpm test`, 必要に応じ `pnpm check`）
+- [x] 全体テスト実行（`pnpm test`, 必要に応じ `pnpm check`）
 - [ ] エッジケース確認（branch/compaction セッション継続の手動確認）
-- [ ] エッジケース確認（system event 注入の1ターン消費）
-- [ ] ログと例外確認（abort/error 終端、context overflow リトライ）
-- [ ] ドキュメント更新（仕様・契約・図、履歴APIは表示用途で維持）
+- [x] エッジケース確認（system event 注入の1ターン消費）
+- [x] ログと例外確認（abort/error 終端、context overflow リトライ）
+- [x] ドキュメント更新（仕様・契約・図、履歴APIは表示用途で維持）
 
 ---
 
@@ -312,16 +312,16 @@ sequenceDiagram
 
 ## 8.1 機能DoD Functional DoD
 
-- [ ] 受け入れ条件がすべて満たされていること
-- [ ] 既知の制約が明文化され、想定通りであること
-- [ ] 契約の例に対して期待通りの結果が得られること
+- [x] 受け入れ条件がすべて満たされていること
+- [x] 既知の制約が明文化され、想定通りであること
+- [x] 契約の例に対して期待通りの結果が得られること
 
 ## 8.2 品質DoD Quality DoD
 
-- [ ] 全てのテストがパスしていること
-- [ ] Linter Formatterのエラーがないこと
-- [ ] 不要なデバッグコードが削除されていること
-- [ ] 主要な変更点がドキュメントに反映されていること
+- [x] 全てのテストがパスしていること
+- [x] Linter Formatterのエラーがないこと
+- [x] 不要なデバッグコードが削除されていること
+- [x] 主要な変更点がドキュメントに反映されていること
 
 ---
 

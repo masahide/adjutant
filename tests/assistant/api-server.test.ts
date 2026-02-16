@@ -1,4 +1,4 @@
-import { describe, it, beforeEach, afterEach } from "node:test";
+import { describe, it, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { createApiServer } from "../../src/assistant/api-server.js";
 import * as ChatHandler from "../../src/assistant/chat-handler.js";
@@ -34,7 +34,6 @@ async function setupServer(agentFn?: ChatHandler.AgentRunFn) {
     dataDir: "/tmp/test-data",
     workspaceDir: "/tmp/test-workspace",
     timezone: "Asia/Tokyo",
-    transcriptLimit: 20,
     idempotencyTtlSec: 300,
   });
 
@@ -178,7 +177,6 @@ describe("ApiServer", () => {
       dataDir: "/tmp/test-data",
       workspaceDir: "/tmp/test-workspace",
       timezone: "Asia/Tokyo",
-      transcriptLimit: 20,
       idempotencyTtlSec: 300,
     });
 

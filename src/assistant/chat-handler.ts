@@ -12,9 +12,6 @@ import {
   resolveSessionLane,
   enqueueCommandInLane,
   enqueueCommand,
-  buildEventContext,
-  readMemoryFiles,
-  loadRecentSessionEvents,
 } from "./index.js";
 
 export type AgentRunFn = (opts: {
@@ -29,13 +26,11 @@ export type ChatHandlerConfig = {
   dataDir: string;
   workspaceDir: string;
   timezone: string;
-  transcriptLimit: number;
   idempotencyTtlSec: number;
 };
 
 const DEFAULT_CONFIG: Partial<ChatHandlerConfig> = {
   timezone: "Asia/Tokyo",
-  transcriptLimit: 20,
   idempotencyTtlSec: 300,
 };
 
@@ -139,29 +134,7 @@ function startRun(runId: string, storeKey: string, sessionKey: string, message: 
           return;
         }
 
-        const systemEvents = drainSystemEvents(sessionKey);
-
-        const [memory, transcript] = await Promise.all([
-          readMemoryFiles({
-            workspaceDir: cfg.workspaceDir,
-            timezone: cfg.timezone,
-          }),
-          loadRecentSessionEvents({
-            sessionKey,
-            limit: cfg.transcriptLimit,
-          }),
-        ]);
-
-        const context = buildEventContext({
-          events: [],
-          systemEvents,
-          recentTranscript: transcript,
-          memoryContent: memory.longTerm ?? undefined,
-          dailyMemoryContent: memory.daily ?? undefined,
-          yesterdayMemoryContent: memory.yesterday ?? undefined,
-        });
-
-        const prompt = `${context.text}\n\n## User Message\n${message}`;
+        const prompt = buildChatPrompt(message, drainSystemEvents(sessionKey));
 
         const result = await cfg.runAgent({
           prompt,
@@ -212,6 +185,24 @@ function startRun(runId: string, storeKey: string, sessionKey: string, message: 
       }
     })
   );
+}
+
+function renderSystemEventsSection(systemEvents: string[]): string | null {
+  const cleaned = systemEvents.map((event) => event.trim()).filter(Boolean);
+  if (cleaned.length === 0) {
+    return null;
+  }
+  return `## System Events\n${cleaned.map((event) => `- ${event}`).join("\n")}`;
+}
+
+function buildChatPrompt(message: string, systemEvents: string[]): string {
+  const sections: string[] = [];
+  const systemEventsSection = renderSystemEventsSection(systemEvents);
+  if (systemEventsSection) {
+    sections.push(systemEventsSection);
+  }
+  sections.push(`## User Message\n${message}`);
+  return sections.join("\n\n");
 }
 
 export function abort(req: PostChatAbortRequest): PostChatAbortResponse {

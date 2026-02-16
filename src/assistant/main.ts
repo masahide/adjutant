@@ -34,7 +34,6 @@ ChatHandler.configure({
   dataDir: DATA_DIR,
   workspaceDir: WORKSPACE_DIR,
   timezone: TIMEZONE,
-  transcriptLimit: 20,
   idempotencyTtlSec: 300,
 });
 

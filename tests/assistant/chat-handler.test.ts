@@ -3,11 +3,22 @@ import assert from "node:assert/strict";
 import * as ChatHandler from "../../src/assistant/chat-handler.js";
 import * as StreamEventBridge from "../../src/assistant/stream-event-bridge.js";
 import type { StreamEvent } from "../../src/assistant/types.js";
-import { resetSystemEventQueueForTest } from "../../src/assistant/system-event-queue.js";
+import {
+  enqueueSystemEvent,
+  hasSystemEvents,
+  resetSystemEventQueueForTest,
+} from "../../src/assistant/system-event-queue.js";
 import { resetCommandQueueForTest } from "../../src/assistant/command-queue.js";
 
-function makeStubAgent(opts: { fail?: boolean; delay?: number } = {}): ChatHandler.AgentRunFn {
-  return async ({ runId, sessionKey, onDelta }) => {
+function makeStubAgent(
+  opts: {
+    fail?: boolean;
+    delay?: number;
+    onPrompt?: (prompt: string) => void;
+  } = {}
+): ChatHandler.AgentRunFn {
+  return async ({ runId, sessionKey, prompt, onDelta }) => {
+    opts.onPrompt?.(prompt);
     if (opts.delay) await new Promise((r) => setTimeout(r, opts.delay));
     if (opts.fail) {
       throw new Error("Agent failed");
@@ -29,6 +40,20 @@ function makeFailedAgent(): ChatHandler.AgentRunFn {
   };
 }
 
+async function waitForTerminal(runId: string): Promise<StreamEvent> {
+  const { events, unsubscribe } = StreamEventBridge.subscribe(runId);
+  try {
+    for await (const ev of events) {
+      if (ev.state === "final" || ev.state === "error" || ev.state === "aborted") {
+        return ev;
+      }
+    }
+    throw new Error(`terminal event not received: ${runId}`);
+  } finally {
+    unsubscribe();
+  }
+}
+
 describe("ChatHandler", () => {
   beforeEach(() => {
     ChatHandler.resetForTest();
@@ -40,7 +65,6 @@ describe("ChatHandler", () => {
       dataDir: "/tmp/test-data",
       workspaceDir: "/tmp/test-workspace",
       timezone: "Asia/Tokyo",
-      transcriptLimit: 20,
       idempotencyTtlSec: 300,
     });
   });
@@ -100,6 +124,88 @@ describe("ChatHandler", () => {
     assert.equal(res.runId, "my-unique-key");
   });
 
+  it("configure は transcriptLimit なしで受け付ける", () => {
+    ChatHandler.resetForTest();
+    assert.doesNotThrow(() =>
+      ChatHandler.configure({
+        runAgent: makeStubAgent(),
+        dataDir: "/tmp/test-data",
+        workspaceDir: "/tmp/test-workspace",
+        timezone: "Asia/Tokyo",
+        idempotencyTtlSec: 300,
+      })
+    );
+  });
+
+  it("runAgent への prompt は User Message のみを含む", async () => {
+    let capturedPrompt = "";
+    ChatHandler.configure({
+      runAgent: makeStubAgent({
+        onPrompt: (prompt) => {
+          capturedPrompt = prompt;
+        },
+      }),
+      dataDir: "/tmp/test-data",
+      workspaceDir: "/tmp/test-workspace",
+      timezone: "Asia/Tokyo",
+      idempotencyTtlSec: 300,
+    });
+
+    ChatHandler.acceptMessage({
+      message: "hello",
+      sessionKey: "main",
+      idempotencyKey: "prompt-001",
+    });
+
+    const terminal = await waitForTerminal("prompt-001");
+    assert.equal(terminal.state, "final");
+    assert.equal(capturedPrompt, "## User Message\nhello");
+    assert.equal(capturedPrompt.includes("## Recent Session Transcript"), false);
+    assert.equal(capturedPrompt.includes("Long-term Memory"), false);
+    assert.equal(capturedPrompt.includes("## Daily Memory"), false);
+  });
+
+  it("system event は 1 ターンだけ prompt に注入されて drain される", async () => {
+    const capturedPrompts: string[] = [];
+    ChatHandler.configure({
+      runAgent: makeStubAgent({
+        onPrompt: (prompt) => {
+          capturedPrompts.push(prompt);
+        },
+      }),
+      dataDir: "/tmp/test-data",
+      workspaceDir: "/tmp/test-workspace",
+      timezone: "Asia/Tokyo",
+      idempotencyTtlSec: 300,
+    });
+
+    enqueueSystemEvent("workspace changed", { sessionKey: "main" });
+    assert.equal(hasSystemEvents("main"), true);
+
+    ChatHandler.acceptMessage({
+      message: "hello",
+      sessionKey: "main",
+      idempotencyKey: "system-event-001",
+    });
+    const first = await waitForTerminal("system-event-001");
+    assert.equal(first.state, "final");
+    assert.equal(hasSystemEvents("main"), false);
+    assert.equal(
+      capturedPrompts[0],
+      "## System Events\n- workspace changed\n\n## User Message\nhello"
+    );
+
+    ChatHandler.acceptMessage({
+      message: "next",
+      sessionKey: "main",
+      idempotencyKey: "system-event-002",
+    });
+    const second = await waitForTerminal("system-event-002");
+    assert.equal(second.state, "final");
+    assert.equal(capturedPrompts[1], "## User Message\nnext");
+    assert.equal(capturedPrompts[1].includes("## System Events"), false);
+  });
+
   it("同一 sessionKey + idempotencyKey の再送は冪等処理", () => {
     const first = ChatHandler.acceptMessage({
       message: "hello",
@@ -141,7 +247,6 @@ describe("ChatHandler", () => {
       dataDir: "/tmp/test-data",
       workspaceDir: "/tmp/test-workspace",
       timezone: "Asia/Tokyo",
-      transcriptLimit: 20,
       idempotencyTtlSec: 300,
     });
 
@@ -170,7 +275,6 @@ describe("ChatHandler", () => {
       dataDir: "/tmp/test-data",
       workspaceDir: "/tmp/test-workspace",
       timezone: "Asia/Tokyo",
-      transcriptLimit: 20,
       idempotencyTtlSec: 300,
     });
 
@@ -218,7 +322,6 @@ describe("ChatHandler", () => {
       dataDir: "/tmp/test-data",
       workspaceDir: "/tmp/test-workspace",
       timezone: "Asia/Tokyo",
-      transcriptLimit: 20,
       idempotencyTtlSec: 300,
     });
 
@@ -246,7 +349,6 @@ describe("ChatHandler", () => {
       dataDir: "/tmp/test-data",
       workspaceDir: "/tmp/test-workspace",
       timezone: "Asia/Tokyo",
-      transcriptLimit: 20,
       idempotencyTtlSec: 300,
     });
 

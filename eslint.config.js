@@ -50,6 +50,14 @@ export default [
       "no-console": "off", // ここはお好みで
     },
   },
+  {
+    files: ["src/ui/**/*.ts", "src/ui/**/*.tsx"],
+    languageOptions: {
+      globals: {
+        ...globals.browser,
+      },
+    },
+  },
   // Prettier と競合するルールを無効化
   prettier,
 ];
