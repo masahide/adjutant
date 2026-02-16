@@ -129,6 +129,15 @@
 - Fast Pathで拾い漏らしたケースを Slow Path で補正する二層構成を維持。
 - `HEARTBEAT.md` / `AGENTS.md` 運用も継続。
 
+### 3.7 Slow Path 詳細要件（ext2-plan 取り込み）
+
+- ルーター層の判定漏れ（False Negative）補正を目的に、OpenClawネイティブ方式の巡回を維持する。
+- 起動トリガーは「Gateway Cron + wakeups」を正とし、定期的（例: 15分）にメインセッションを自律起動する。
+- 起動時プロンプトは `HEARTBEAT.md` と `AGENTS.md` の運用指示を前提に構成し、直近イベントの確認タスクを明示する。
+- 巡回時は `session-logs` 相当の手段（`jq` / `rg`）でセッション JSONL を直接検索し、未対応事案を抽出できること。
+- 未対応事案を検知した場合は、遅延応答（message送信）と記憶更新（`memory/YYYY-MM-DD.md` など）を実行可能であること。
+- 逆に対応不要時は不要通知を避け、静音完了（既存 heartbeat の挙動）を維持する。
+
 ## 4. インターフェース契約（草案）
 
 ### 4.1 新規イベント通知インターフェース
@@ -170,6 +179,8 @@ type SlackNotifyQueueConfig = {
 4. Given 通知キューが cap を超えたとき、When dropPolicy=`summarize`、Then summary system event が1件残り処理継続する。
 5. Given run中に同一sessionへの追加イベントが来たとき、When session lane がbusy、Then順序を壊さず後続実行へ回される。
 6. Given UI履歴APIを呼んだとき、When system event が未反映でも、Then transcriptベース結果を返し、仕様上の乖離が明示される。
+7. Given 定期ハートビートが発火したとき、When 直近ログに未対応事案がない、Then ユーザー通知せず静音で終了する。
+8. Given 定期ハートビートが発火したとき、When 直近ログに未対応事案がある、Then message送信と memory 更新を実行し結果を記録する。
 
 ## 6. 実装タスク（次フェーズ）
 
@@ -195,6 +206,7 @@ type SlackNotifyQueueConfig = {
 
 - [ ] queue overflow / dedupe / debounce テスト追加
 - [ ] session lane 順序保証テスト追加
+- [ ] heartbeat 巡回（通知なし/通知あり）の E2E 観点テスト追加
 - [ ] `pnpm check` 通過
 
 ## 7. 懸念事項と決定事項

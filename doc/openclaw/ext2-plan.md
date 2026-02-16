@@ -1,33 +1,18 @@
-# ハートビート巡回と補正のOpenClawネイティブ方式へのアップデート
+# ext2-plan（統合メモ）
 
-OpenClawのドキュメントや実装を紐解くと、ハートビート（定期実行）は以下のようなアプローチで実現されています。
+このドキュメントの要求仕様は `doc/openclaw/ext-plan.md` に統合済み。
 
-- **トリガー:** Gatewayには組み込みの「Cronスケジューリング（Cron + wakeups）」や「定期的なトリガー（heartbeat-like）」が備わっており、これを使ってエージェントを自律的に起動（Autonomous invocation）させます 。
+## 統合先
 
-- **プロンプトによる指示:** OpenClawは `HEARTBEAT.md` というファイルをシステムプロンプトにインジェクトする仕組みを持っています 。また、`AGENTS.md` テンプレート内にも「定期的に（数日おきに）ハートビートを利用して：直近の memory/YYYY-MM-DD.md ファイルを読み通し、重要なイベントを特定し…」といった運用指示を記述するアプローチが取られています 。
+- Slow Path 詳細要件:
+- `doc/openclaw/ext-plan.md` の `3.7 Slow Path 詳細要件（ext2-plan 取り込み）`
 
-- **ログの分析手段:** OpenClawには `session-logs` というスキルが用意されており、エージェントは `jq` や `rg` コマンドを用いて直接セッションのJSONLファイル（`~/.openclaw/agents/[agent_id]/sessions/*.jsonl`）を検索・分析することができます 。
+- 受け入れ条件:
+- `doc/openclaw/ext-plan.md` の `5. 受け入れ条件（Given/When/Then）` の 7, 8
 
-これを踏まえ、ハートビート（Slow Path）の仕様をOpenClaw方式にアップデートした要件定義（v1.2）の該当部分をまとめます。
+- 実装タスク:
+- `doc/openclaw/ext-plan.md` の `6. 実装タスク（次フェーズ）` の Phase 4（heartbeat E2E）
 
----
+## 方針
 
-### 3.3. ハートビート巡回と補正（Slow Path：OpenClawネイティブ方式）
-
-ルーター層の判定漏れ（False Negative）を防ぐため、OpenClawの自律的呼び出し（Autonomous Invocation）およびスキルを活用した定期巡回タスクを実装する。
-
-- **Gateway Cronによる自律起動**:
-  OpenClawのGatewayに組み込まれたCron/ウェイクアップ機能を利用し、一定間隔（例：15分毎）でメインエージェントのセッションを自律的に起動する 。
-
-- **`HEARTBEAT.md` / `AGENTS.md` によるコンテキスト付与**:
-  起動時のシステムプロンプトとしてインジェクトされる `HEARTBEAT.md` や `AGENTS.md` の指示に基づき、「直近15分間のSlack通知ログをレビューし、プロアクティブな対応が必要な取りこぼしがないか確認せよ」というタスクをエージェントに自律的に認識させる 。
-
-- **`session-logs` スキルを用いた直接検索**:
-  エージェントは、`session-logs` スキル（`jq` や `rg` コマンドを使用）をツールとして呼び出し、ルーター層によって記録された最新のセッションログファイル（`~/.openclaw/agents/[agent_id]/sessions/*.jsonl`）から、自身が未対応のメッセージ群を抽出・分析する 。
-
-- **自律的な対応と記憶の更新**:
-  分析の結果、要対応事案を発見した場合は、エージェントが `message` ツール等を用いてSlackへ遅延対応を実行する 。さらに、その判断や重要な文脈について、`write` ツールを用いて `memory/YYYY-MM-DD.md` 等の記憶ファイルに自ら書き込みを行う 。
-
----
-
-このように「Cronでエージェントを起こす」→「エージェント自身にツール（`session-logs` スキル等）を使って直近のJSONLを読ませる」→「必要なら対応し、ファイルに書き込む（`write`）」という流れにすることで、OpenClawの「エージェント主導（Agentic）でファイルシステムを操作する」という哲学に完全に合致したシステムになります。
+- 今後の更新は `doc/openclaw/ext-plan.md` を正本として実施する。
