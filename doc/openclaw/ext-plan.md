@@ -2,12 +2,12 @@
 
 ## 1. 目的
 
-本ドキュメントは、以下2点を **OpenClaw 実装に寄せて** 要件化するための拡張計画。
+本ドキュメントは、以下2点を **OpenClaw 実装（plugin + startAccount モデル）に寄せて** 要件化するための拡張計画。
 
-1. Slack収集プロセス (`pnpm start`) と AIエージェントプロセス (`pnpm run assistant`) の統合
-2. SlackイベントからAIへの通知パスに、OpenClaw準拠のメッセージキュー設計を導入
+1. 収集プロセス (`pnpm start`) と AIエージェントプロセス (`pnpm run assistant`) を、チャネルプラグイン駆動の単一ランタイムへ統合
+2. チャネルイベント（初期は Slack）からAIへの通知パスに、OpenClaw準拠のルーター/キュー設計を導入
 
-既存の「ハートビート補正（Slow Path）」は維持しつつ、まずは Fast Path（受信イベントの即時処理）を整備する。
+既存の「ハートビート補正（Slow Path）」は維持しつつ、まずは Fast Path（受信イベントの即時処理）を整備する。初期対応チャネルは Slack とし、仕様は他チャネルへ拡張可能な形で定義する。
 
 ## 2. vendor/openclaw 調査サマリ
 
@@ -62,28 +62,50 @@
 
 ### 2.6 重要な差分確認（誤認防止）
 
-- 現在の `vendor/openclaw` スナップショットには outbound の write-ahead delivery queue 実装は存在しない。
-- `vendor/openclaw/src/infra/outbound/deliver.ts` は直接配送ロジックで、WAL/再起動リカバリを内包しない。
-- よって今回の「OpenClaw準拠」は **Slack受信〜AI通知のインプロセスキュー設計** を意味し、配送WALの複製は対象外とする。
+- 現在の `vendor/openclaw` スナップショットには outbound の write-ahead delivery queue 実装が存在する。
+- `vendor/openclaw/src/infra/outbound/deliver.ts` は送信前に `enqueueDelivery()` で永続化し、成功後は `ackDelivery()`、失敗時は `failDelivery()` を呼ぶ。
+- `vendor/openclaw/src/infra/outbound/delivery-queue.ts` には pending キューの読み出しと `recoverPendingDeliveries()` があり、起動時リカバリを提供する。
+- `vendor/openclaw/src/gateway/server.impl.ts` では gateway 起動時に `recoverPendingDeliveries()` を呼び出し、未配送分の再送を試行する。
+- ただし今回の「OpenClaw準拠」で本計画が主対象とするのは **チャネル受信〜AI通知のインプロセスキュー設計（Fast/Slow Path）** であり、outbound 配送WALの追実装は本フェーズ対象外とする。
+
+### 2.7 チャネルプラグイン起動方式（startAccount）
+
+- OpenClaw では gateway 起動時に plugin registry を読み込み、各チャネル plugin を `registerChannel()` で登録する。
+- 受信監視の起動はチャネル plugin の `gateway.startAccount(ctx)` が担う。`ctx` には `accountId / runtime / abortSignal / setStatus` が渡される。
+- `ChannelManager.startChannels()` がチャネル/アカウント単位で `startAccount()` を呼び、停止時は `stopAccount()` と abort を使ってライフサイクルを管理する。
+- 実例として Slack/Telegram/Discord/Line などが同じ契約で `monitor*Provider()` を起動している。
+- 参照:
+- `vendor/openclaw/src/channels/plugins/types.adapters.ts`
+- `vendor/openclaw/src/gateway/server-channels.ts`
+- `vendor/openclaw/src/plugins/registry.ts`
+- `vendor/openclaw/extensions/slack/src/channel.ts`
 
 ## 3. 要求仕様（ブラッシュアップ版）
 
-### 3.1 単一プロセス統合
+### 3.1 チャネル連携とルーター層（Fast Path）
 
 - `assistant` 起動時に以下を同一プロセスで起動する。
-- Slack CDP接続とイベント正規化（現 `src/index.ts` 相当）
+- channel plugin registry（extensions 相当）のロード
+- `ChannelManager`（channel/account 単位の `startAccount/stopAccount` 管理）
 - JSONL永続化（現行維持）
 - AI APIサーバー + Web UI（現 `src/assistant/main.ts`）
+- 初期チャネルは Slack plugin とし、既存 `src/index.ts` の起動処理は `startAccount(ctx)` 契約へ移行する。
+- 新規チャネル追加は plugin 追加で行い、Router/Queue本体にチャネル固有分岐を持ち込まない。
+- 統合起動アーキテクチャ方針は `ChannelPlugin + startAccount + ChannelManager + GatewayRuntime` で固定する。
+- ルーター層は受信イベントごとに `run | pending | drop` を判定し、`system` 注入可否を独立フラグで付与する。
+- `run` 判定時は `session.lock` を取得してメインエージェントを起動し、セッション JSONL の直近履歴を読み込んだうえで応答する。
+- その際、直前まで `pending` としてスルーされていた未対応メッセージ群（連続 `user` ロール）もまとめてコンテキストへ含める。
+- エージェントのシステムプロンプトには「未回答の質問/未完了タスクが残っている場合は、今回の緊急対応とあわせて一括回収すること」を明示する。
 - プロセス間ファイルポーリング前提をやめ、メモリ経由でイベント通知できる構成へ移行する。
 - ただし JSONL 保存は監査・再処理のため継続する。
 
-### 3.2 Slack -> AI 通知パイプライン（Fast Path）
+### 3.2 Channel -> AI 通知パイプライン（Fast Path）
 
-新設コンポーネント（仮）: `src/assistant/slack-notification-pipeline.ts`  
+新設コンポーネント（仮）: `src/assistant/channel-notification-pipeline.ts`  
 内部責務は OpenClaw 準拠で分離する。
 
 - `trigger-filter`:
-- 実行可否判定と、`run/system/drop` へのルーティング判定を担当
+- 実行可否判定と、`run/system/pending/drop` へのルーティング判定を担当
 
 - `inbound-debounce-buffer`:
 - トリガー対象メッセージのバッファリングとテキスト結合を担当
@@ -94,16 +116,24 @@
 - `system-event-queue`:
 - 反応系イベントのセッション別有界FIFOを担当（既存 `system-event-queue.ts`）
 
+#### 3.2.0 取り込み契約（OpenClaw startAccount 寄せ）
+
+- 各チャネル plugin は `startAccount(ctx)` を実装し、監視中に受信したイベントを `emit(input)`（`channelId/accountId/event`）で通知パイプラインへ渡す。
+- `startAccount()` は `abortSignal` で停止可能であること（永続ループを持つ実装を許容）。
+- `ChannelManager` は account 単位に `startAccount/stopAccount` を呼び出し、`running/lastError/lastInboundAt` の状態を保持する。
+- Fast Path は `channelId/accountId` を入力メタとして受け取り、ルーティング判定はチャネル共通ロジックで実施する（初期版の event kind は `post/reaction/notification`）。
+
 #### 3.2.1 処理順序（固定）
 
-1. `NormalizedEvent` を分類（post/reaction/notification）
-2. `accountId` と self-message 判定を解決
-3. `trigger-filter` で `RouteDecision` を生成（`drop` は排他的、`run/system` は独立フラグで併用可）
-4. `run` 対象のみ `inbound-debounce-buffer` へ投入
-5. デバウンス flush 結果を `notification-queue` へ1エントリ投入
-6. `notification-queue` を drain して `ChatHandler.acceptMessage()` へ変換
-7. `system` 対象は `system-event-queue` へ投入
-8. `drop` 対象（自己送信）はキュー投入せず破棄
+1. `ChannelManager` 経由で `ChannelNotificationInput`（`channelId/accountId/event`）を受け取る
+2. `NormalizedEvent` を分類（post/reaction/notification）
+3. `accountId` と self-message 判定を解決
+4. `trigger-filter` で `RouteDecision` を生成（`drop` は排他的、`run/system` は独立フラグで併用可、`run` と `pending` は排他）
+5. `run` 対象のみ `inbound-debounce-buffer` へ投入し、flush 時に `notification-queue` へ1エントリ投入
+6. `pending` 対象は即時起動せず、JSONL 上の履歴として保持（次回 `run` または heartbeat 再評価で回収）
+7. `notification-queue` を drain して `ChatHandler.acceptMessage()` へ変換
+8. `system` 対象は `system-event-queue` へ投入
+9. `drop` 対象（自己送信）はキュー投入せず破棄
 
 #### 3.2.2 デバウンスと cap/drop の関係（明示）
 
@@ -113,16 +143,18 @@
 
 #### 3.2.3 トリガー判定（暫定既定）
 
-- 初期版では `post | reaction | notification` をすべて実行トリガー対象とする。
+- 初期版では `post | reaction | notification` をすべてルーター判定対象とする。
+- ルーターは各イベントを `run`（即時実行）または `pending`（保留）へ振り分ける。
+- `pending` は未対応履歴として JSONL に残し、次回 `run` 時に直近の連続 `user` ブロックとしてまとめて回収する。
 - ただし bot自身/自己送信イベントは実行トリガー対象外とする（ループ防止）。
 - self-message は `run/system` のいずれにも投入せず完全無視する。
 - 初期版では event 種別による追加抑制フィルタは導入しない。
 - ただし無尽蔵化を防ぐため、`cap=20` / `debounce` / lane concurrency / queue wait 警告ログを必須ガードレールとして適用する。
 - 将来フェーズで DM/mention の厳格な絞り込みを再導入できるよう、`trigger-filter` の差し替え可能性を維持する。
 
-#### 3.2.4 `kind=post` の inbound/outbound 識別（確定）
+#### 3.2.4 `kind=post` の inbound/outbound 識別（Phase 1: Slack）
 
-- `kind=post` は Slack 受信イベント（message / app_mention など）に限定する。
+- `kind=post` はチャネル受信イベントに限定する（Phase 1 は Slack の message / app_mention）。
 - `chat.postMessage` など outbound 送信由来データは `kind=post` として扱わない。
 - outbound 系を正規化する場合は別 kind（例: `outbound_post`）へ分離し、Fast Path 実行トリガー対象外とする。
 
@@ -142,14 +174,14 @@
 
 #### 3.2.7 イベント種別ルーティング表（初期版）
 
-| event kind                   | 条件                 | run | system-event | 備考                                        |
-| ---------------------------- | -------------------- | --- | ------------ | ------------------------------------------- |
-| `post`                       | 受信由来 かつ 非self | yes | no           | message は本文（デバウンスで結合）          |
-| `reaction`                   | 非self               | yes | yes          | run は軽量トリガー文、詳細は system event   |
-| `notification`               | 非self               | yes | yes          | run は軽量トリガー文、詳細は system event   |
-| `post/reaction/notification` | self                 | no  | no           | 完全無視（ループ防止）                      |
-| `post`                       | self判定不可         | no  | no           | fail-safe で drop（run禁止）                |
-| `reaction/notification`      | self判定不可         | no  | yes          | fail-safe で system-only（warn ログを残す） |
+| event kind                   | 条件                 | run            | pending        | system-event | 備考                                                |
+| ---------------------------- | -------------------- | -------------- | -------------- | ------------ | --------------------------------------------------- |
+| `post`                       | 受信由来 かつ 非self | router判定     | router判定     | no           | run/pending は排他。run時は本文をデバウンスで結合。 |
+| `reaction`                   | 非self               | router判定     | router判定     | yes          | run は軽量トリガー文、詳細は system event。          |
+| `notification`               | 非self               | router判定     | router判定     | yes          | run は軽量トリガー文、詳細は system event。          |
+| `post/reaction/notification` | self                 | no             | no             | no           | 完全無視（ループ防止）。                             |
+| `post`                       | self判定不可         | no             | no             | no           | fail-safe で drop（run禁止）。                       |
+| `reaction/notification`      | self判定不可         | no             | no             | yes          | fail-safe で run禁止。system-only + warn ログ。      |
 
 #### 3.2.8 run message 生成規則（reaction/notification）
 
@@ -184,7 +216,27 @@
 - `eventUids` は `maxEventUidsPerDispatch`（既定 50）を上限とする。
 - `idempotencyKey` は切り詰め前の全 UID 集合で計算し、重複実行防止の精度を維持する。
 
-### 3.3 実行レーン統合
+#### 3.2.12 即時対応の実行とペンディング分の一括回収（変更）
+
+- ルーターが `run`（要対応）を返した場合、`session.lock` を取得してメインエージェントを起動する。
+- エージェントはセッション JSONL の直近履歴をコンテキストとして読み込み、`pending` として保留されていた直前の未対応メッセージ群も含めて処理する。
+- システムプロンプトに「未回答の質問や未完了タスクが残っている場合は今回ターンでまとめて回収すること」を含め、緊急対応と同時に取りこぼしを解消する。
+- 一括対応が完了したら assistant レコードを追記し、次回 heartbeat 判定の基準（しおり）を更新する。
+
+### 3.3 ハートビート巡回と補正（Slow Path）
+
+- 定期レビュータスクとして Gateway の Cron / wakeups 相当を使い、一定間隔（例: 15分ごと）で heartbeat を起動する（adjutant では `setInterval` で等価実現）。
+- 個別メッセージ単位の「対応済みフラグ」を DB 管理しない。代わりに、セッション JSONL の末尾レコードを状態判定の「しおり（カーソル）」として扱う。
+- 判定ロジック:
+- 末尾が `user`（Slack通知）かつ最終更新から閾値時間を超過している場合のみ「未対応の pending が放置されている」と見なす。
+- 末尾が `assistant` またはツール実行結果である場合は「最新状態まで対応済み」と見なし、処理をスキップする。
+- 上記で未対応と判定された場合のみ、`session.lock` を取得してメインエージェントを自律起動する。
+- エージェントは直近の未対応メッセージ群（連続 `user` ロール）を読み込み、「プロアクティブに対応すべき事案が隠れていないか」を再評価する。
+- 要対応事案が見つかった場合は「先ほどの件ですが…」のように時間差を踏まえた文脈で Slack へ遅延対応を実行する。
+- 応答完了後に assistant レコードが末尾へ追記されるため、次回 heartbeat では自然にスキップされる。
+- `HEARTBEAT.md` / `AGENTS.md` の運用は継続し、heartbeat でも「未回答回収」を優先タスクとして明示する。
+
+### 3.4 実行レーン統合
 
 - 既存 `src/assistant/command-queue.ts` を OpenClaw準拠へ拡張する。
 - laneごとの `maxConcurrent` 対応
@@ -194,7 +246,7 @@
 - **本フェーズでは followup queue（collect/interrupt）を実装しない。**
 - AC-6 は「lane 直列化による順序保証」で満たす（followup queue は将来フェーズ）。
 
-### 3.4 system event 注入ポリシー
+### 3.5 system event 注入ポリシー
 
 - **継続する（OpenClaw準拠）**。
 - 実装方針:
@@ -202,31 +254,14 @@
 - 注入後に drain して再注入を防ぐ
 - `MAX_EVENTS` と重複抑止は `system-event-queue.ts` で担保
 
-### 3.5 履歴APIとモデル送信文脈の乖離方針
+### 3.6 履歴APIとモデル送信文脈の乖離方針
 
 - `/api/chat/history` は当面 transcript 生読み（UI用途）を維持する。
 - モデル送信 prompt は system event や実行時コンテキストが乗るため、完全一致は要求しない。
 - ドキュメントに「UI表示履歴 != 実際にモデルへ送った最終prompt」を明記する。
 - 将来的に必要なら `prompt preview` 用APIを別設計で追加する（本フェーズ非対象）。
 
-### 3.6 Slow Path（ハートビート）継続
-
-- 既存 heartbeat runner は維持。
-- Fast Pathで拾い漏らしたケースを Slow Path で補正する二層構成を維持。
-- `HEARTBEAT.md` / `AGENTS.md` 運用も継続。
-- OpenClaw用語の「Cron + wakeups」は、adjutant では当面 `setInterval` 実装で等価実現する（置換は本フェーズ外）。
-- 本フェーズの heartbeat 責務は「判定のみ」とし、送信・memory 更新は担わない。
-
-### 3.7 Slow Path 詳細要件（ext2-plan 取り込み）
-
-- ルーター層の判定漏れ（False Negative）補正を目的に、OpenClawネイティブ方式の巡回を維持する。
-- 起動トリガーは「Gateway Cron + wakeups」相当の周期起動（adjutant では `setInterval`）で実施する。
-- 起動時プロンプトは `HEARTBEAT.md` と `AGENTS.md` の運用指示を前提に構成し、直近イベントの確認タスクを明示する。
-- 巡回時は `session-logs` 相当の手段（`jq` / `rg`）でセッション JSONL を直接検索し、未対応事案を抽出できること。
-- 未対応事案を検知した場合は、まず「要対応フラグ/通知要否」の判定結果を返し、送信・記憶更新の実行は本フェーズ外とする。
-- 逆に対応不要時は不要通知を避け、静音完了（既存 heartbeat の挙動）を維持する。
-
-### 3.8 単一プロセス化の障害分離
+### 3.7 単一プロセス化の障害分離
 
 - CDP 接続障害は API サーバー / Web UI へ伝播させない。
 - CDP 再接続中も Slow Path（heartbeat）は継続実行する。
@@ -234,18 +269,34 @@
 
 ## 4. インターフェース契約（草案）
 
-### 4.1 Fast Path 入力インターフェース
+### 4.1 Fast Path 入力インターフェース（チャネル共通）
 
 ```ts
-type SlackNotificationInput = {
+type ChannelNotificationInput = {
   event: NormalizedEvent;
   accountId: string;
+  channelId: string; // slack | telegram | discord | ...
 };
 
-type SlackNotificationPipeline = {
-  enqueue(input: SlackNotificationInput): void;
+type ChannelNotificationPipeline = {
+  enqueue(input: ChannelNotificationInput): void;
   flushSession(sessionKey: string): Promise<void>;
   clearSession(sessionKey: string): number;
+};
+
+type ChannelGatewayContext = {
+  accountId: string;
+  runtime: RuntimeEnv;
+  abortSignal: AbortSignal;
+  emit: (input: ChannelNotificationInput) => Promise<void>;
+  getStatus: () => ChannelAccountSnapshot;
+  setStatus: (next: ChannelAccountSnapshot) => void;
+};
+
+type ChannelIngestionPlugin = {
+  id: string;
+  startAccount: (ctx: ChannelGatewayContext) => Promise<unknown>;
+  stopAccount?: (ctx: ChannelGatewayContext) => Promise<void>;
 };
 ```
 
@@ -273,14 +324,18 @@ type ResolveSessionKeyResult = {
 };
 ```
 
-sessionKey マッピング規則（OpenClaw準拠）:
+sessionKey マッピング規則（Phase 1: Slack plugin）:
 
 - `D*` -> `slack:{channelId}`
 - `G*` -> `slack:group:{channelId}`（初期版は group/mpim を同一扱い）
 - `C*` -> `slack:channel:{channelId}`
 - thread reply -> `baseSessionKey:thread:{threadTs}`（親キー保持）
 
-accountId 解決順:
+補足:
+
+- 他チャネル（Telegram/Discord 等）は plugin 側の resolver で `channelId`/thread 規則を定義し、同じ `sessionKey` 契約へ正規化して渡す。
+
+accountId 解決順（Phase 1: Slack plugin）:
 
 1. `ADJUTANT_SLACK_ACCOUNT_ID`
 2. `"default"`
@@ -347,26 +402,29 @@ idempotencyKey 生成規則（初期版）:
 
 ## 5. 受け入れ条件（Given/When/Then）
 
-1. Given `assistant` を起動したとき、When Slack CDPが利用可能、Then 収集とAPI/UIが単一プロセスで同時起動する。
+1. Given `assistant` を起動したとき、When Slack plugin が有効かつ CDP が利用可能、Then plugin registry / ChannelManager / 収集 / API / UI が単一プロセスで同時起動し、Slack `startAccount()` が開始される。
 2. Given 同一スレッドで短時間に複数メッセージが来たとき、When デバウンス窓内、Then AI実行要求は1回に束ねられ、本文は結合される。
-3. Given 受信由来の `post | reaction | notification` が到着したとき、When trigger-filter を通す、Then RouteDecision（run/system/drop）に従って処理される。
+3. Given 受信由来の `post | reaction | notification` が到着したとき、When trigger-filter を通す、Then RouteDecision（run/pending/system/drop）に従って処理される。
 4. Given `reaction` イベントが連続したとき、When 同一contextKeyが連続、Then system event は重複注入されない。
 5. Given notification queue が cap を超えたとき、When dropPolicy=`summarize`、Then summary system event が1件注入され処理継続する。
 6. Given run中に同一sessionへの追加イベントが来たとき、When session lane がbusy、Then順序を壊さず後続に直列実行される。
 7. Given CDP 接続が切断したとき、When 再接続待機中、Then API/UI は稼働継続し heartbeat は継続する。
 8. Given UI履歴APIを呼んだとき、When system event が未反映でも、Then transcriptベース結果を返し、仕様上の乖離が明示される。
-9. Given 定期ハートビートが発火したとき、When 直近ログに未対応事案がない、Then ユーザー通知せず静音で終了する。
-10. Given 定期ハートビートが発火したとき、When 直近ログに未対応事案がある、Then 要対応判定を記録して終了し、message送信と memory 更新は行わない。
+9. Given 定期ハートビートが発火したとき、When セッション JSONL 末尾が `assistant` またはツール実行結果、Then 既対応と見なして静音で終了する。
+10. Given 定期ハートビートが発火したとき、When セッション JSONL 末尾が `user` かつ閾値時間を超過、Then メインエージェントを起動して未対応メッセージ群を再評価し、必要時は時間文脈を添えて Slack へ遅延対応する。
 11. Given self 判定IDが未解決の account で `post` が到着したとき、When trigger-filter を通す、Then fail-safe で drop され run は起動しない。
 12. Given system event が同一 contextKey で連続到着したとき、When dedupe を適用する、Then 後続イベントは注入されない。
 13. Given デバウンス結果が `maxDispatchChars` を超えるとき、When dispatch を生成する、Then `messageTruncated=true` と `originalCharCount` / `dispatchedCharCount` を付与して run を継続する。
 14. Given self 判定IDが未解決の account で `reaction` または `notification` が到着したとき、When trigger-filter を通す、Then fail-safe で run を起動せず system-only で処理する。
+15. Given 新規チャネル plugin が `startAccount()` で `ChannelNotificationInput` を emit するとき、When plugin を registry に登録する、Then Fast Path 本体のルーティング/キュー実装を変更せず処理連携できる。
 
 ## 6. 実装タスク（次フェーズ）
 
 ### Phase 1 設計固定
 
-- [ ] `src/index.ts` と `src/assistant/main.ts` の統合起動設計を確定
+- [x] `GatewayRuntime`（plugin registry + ChannelManager + assistant runtime）の統合起動**方針**を確定
+- [x] `ChannelIngestionPlugin` 契約（`startAccount/stopAccount/emit/status`）の**要求仕様**を確定
+- [x] Slack 起動経路を `startAccount(ctx)` へ移行する**方針**を確定
 - [ ] sessionKey解決ルール（channel/thread/account）を確定
 - [x] accountId取得方式（初期版: `ADJUTANT_SLACK_ACCOUNT_ID` -> `"default"`）を確定
 - [x] メンション/トリガー判定ルール（初期版: 全イベント、self-message除外）を確定
@@ -377,29 +435,32 @@ idempotencyKey 生成規則（初期版）:
 - [ ] `NormalizedEvent -> ChatHandler.acceptMessage` 変換仕様を確定
 - [x] 通知キュー設定値（cap/debounce/drop）を確定
 - [ ] `HEARTBEAT.md` / `AGENTS.md` のテンプレート配置方針を確定
-- [x] heartbeat責務境界（通知判定のみ / 送信・memory更新まで）を確定
+- [x] heartbeat責務境界（しおり判定 + 条件一致時のみ自律応答）を確定
 
 ### Phase 2 キュー基盤
 
+- [ ] `ChannelManager` 実装（`startChannels/startChannel/stopChannel` + account別状態管理）
 - [ ] `trigger-filter` / `inbound-debounce-buffer` / `notification-queue` の分離実装
 - [ ] `notification-queue` 実装（有界キュー + summarize）
 - [ ] `command-queue` 拡張（lane concurrency / clear）
 - [ ] system event 連携（enqueue/drainの接続）
+- [ ] plugin registry 実装（channel plugin 登録・起動順制御）
 - [ ] `trigger-filter` / `inbound-debounce-buffer` のユニットテスト追加
 - [ ] `notification-queue` / `system-event-queue` のユニットテスト追加
 - [ ] `command-queue` lane制御のユニットテスト追加
 
 ### Phase 3 統合
 
-- [ ] SlackAdapter 出力を JSONL + Fast Path へ二重配送
+- [ ] Slack plugin `startAccount()` 出力を JSONL + Fast Path へ二重配送
 - [ ] ChatHandler への dispatch 変換経路を実装（idempotencyKey生成含む）
+- [ ] 2チャネル目（例: Telegram）を plugin 追加だけで接続できることを検証
 - [ ] 統合起動コマンド整理（README/起動手順更新）
 
 ### Phase 4 検証
 
 - [ ] queue overflow / dedupe / debounce テスト追加
 - [ ] session lane 順序保証テスト追加
-- [ ] heartbeat 巡回（要対応判定なし/あり）の E2E 観点テスト追加
+- [ ] heartbeat 巡回（しおり判定で skip / 自律応答起動）の E2E 観点テスト追加
 - [ ] `pnpm check` 通過
 
 ## 7. 懸念事項と決定事項
@@ -408,8 +469,10 @@ idempotencyKey 生成規則（初期版）:
 
 - `ChatHandler` の system event 注入は継続（OpenClaw準拠）。
 - `/api/chat/history` の transcript生読みは当面維持（OpenClawと同様の許容）。
-- heartbeat責務は「判定のみ」（送信・memory更新は本フェーズ外）。
-- Fast Path の実行トリガーは初期版で全イベント（`post|reaction|notification`）に適用。
+- 統合起動設計の基準アーキテクチャは `ChannelPlugin + startAccount + ChannelManager + GatewayRuntime` で固定する。
+- 取り込み拡張の基本単位は `ChannelIngestionPlugin` とし、`startAccount()` 契約でチャネルを増やす。
+- heartbeat責務は「しおり判定 + 条件一致時のみ自律応答」とする（常時起動はしない）。
+- Fast Path の対象イベントは初期版で全イベント（`post|reaction|notification`）とし、各イベントを `run/pending` へルーター判定する。
 - コスト方針は「必要コストは許容、ただし無尽蔵化は避ける」とし、初期版は cap/debounce/concurrency/log で制御する。
 - デバウンス窓内で event kind 混在を許容する（初期版）。
 - `kind=post` は受信イベント専用（outbound は別 kind 扱い / Fast Path 対象外）。
@@ -419,6 +482,9 @@ idempotencyKey 生成規則（初期版）:
 ### 未確定
 
 - notification queue の永続化要否（現時点はインメモリ前提）。
+- heartbeat の「放置判定」閾値（既定値）と、セッション別の可変設定可否。
+- `pending` 連続 `user` ブロックを一括回収する際の最大コンテキスト長（トークン/文字）と切り詰め方針。
+- plugin 起動失敗時の隔離方針（単一チャネル fail-open / fail-stop の既定）。
 
 ---
 
@@ -433,3 +499,10 @@ idempotencyKey 生成規則（初期版）:
 - `vendor/openclaw/src/slack/monitor/context.ts`
 - `vendor/openclaw/src/gateway/server-methods/sessions.ts`
 - `vendor/openclaw/src/gateway/session-utils.fs.ts`
+- `vendor/openclaw/src/infra/outbound/deliver.ts`
+- `vendor/openclaw/src/infra/outbound/delivery-queue.ts`
+- `vendor/openclaw/src/gateway/server.impl.ts`
+- `vendor/openclaw/src/gateway/server-channels.ts`
+- `vendor/openclaw/src/channels/plugins/types.adapters.ts`
+- `vendor/openclaw/src/plugins/registry.ts`
+- `vendor/openclaw/extensions/slack/src/channel.ts`
