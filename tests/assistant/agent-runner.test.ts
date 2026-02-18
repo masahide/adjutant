@@ -749,4 +749,74 @@ describe("AgentRunner", () => {
       memoryWriteEnabled: false,
     });
   });
+
+  it("spoke セッションでは memory をロードしない", async () => {
+    let readMemoryCalls = 0;
+    let capturedPrompt = "";
+
+    setAgentRunnerRuntimeForTest({
+      ...inMemorySessionStoreRuntime(),
+      nowMs: () => 1000,
+      acquireLock: async () => () => undefined,
+      readMemoryFiles: async () => {
+        readMemoryCalls += 1;
+        return { longTerm: "long-term", daily: "daily", yesterday: null };
+      },
+      openSessionManager: () => ({}),
+      createSession: async () => ({
+        session: {
+          subscribe: () => () => undefined,
+          prompt: async (prompt) => {
+            capturedPrompt = prompt;
+          },
+          dispose: () => undefined,
+        },
+      }),
+    });
+
+    await runAgent({
+      runId: "run-spoke-memory",
+      prompt: "hello",
+      sessionKey: "slack:channel:C1",
+    });
+
+    assert.equal(readMemoryCalls, 0);
+    assert.equal(capturedPrompt.includes("## Memory"), false);
+    assert.equal(capturedPrompt.includes("## Daily Memory"), false);
+  });
+
+  it("main セッションでは memory をロードして prompt に注入する", async () => {
+    let readMemoryCalls = 0;
+    let capturedPrompt = "";
+
+    setAgentRunnerRuntimeForTest({
+      ...inMemorySessionStoreRuntime(),
+      nowMs: () => 1000,
+      acquireLock: async () => () => undefined,
+      readMemoryFiles: async () => {
+        readMemoryCalls += 1;
+        return { longTerm: "LT", daily: "DY", yesterday: null };
+      },
+      openSessionManager: () => ({}),
+      createSession: async () => ({
+        session: {
+          subscribe: () => () => undefined,
+          prompt: async (prompt) => {
+            capturedPrompt = prompt;
+          },
+          dispose: () => undefined,
+        },
+      }),
+    });
+
+    await runAgent({
+      runId: "run-main-memory",
+      prompt: "hello",
+      sessionKey: "main",
+    });
+
+    assert.equal(readMemoryCalls, 1);
+    assert.equal(capturedPrompt.includes("## Memory\nLT"), true);
+    assert.equal(capturedPrompt.includes("## Daily Memory\nDY"), true);
+  });
 });

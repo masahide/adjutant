@@ -27,6 +27,7 @@ export type AgentRunOptions = {
   prompt: string;
   systemPrompt?: string;
   sessionKey: string;
+  memoryScope?: "auto" | "main" | "spoke";
   sessionId?: string;
   model?: string;
   isHeartbeat?: boolean;
@@ -481,6 +482,13 @@ function shouldEnableMemoryWrite(opts: AgentRunOptions): boolean {
   return /覚えておいて|覚えといて|remember\s+(this|that)|remember\b/i.test(opts.prompt);
 }
 
+function resolveMemoryScope(opts: AgentRunOptions, sessionKey: string): "main" | "spoke" {
+  if (opts.memoryScope === "main" || opts.memoryScope === "spoke") {
+    return opts.memoryScope;
+  }
+  return sessionKey === "main" ? "main" : "spoke";
+}
+
 function classifyError(
   error: unknown
 ): "transient" | "context_overflow" | "model_unavailable" | "unknown" {
@@ -766,11 +774,14 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
   const timezone = resolveTimezone(opts);
   const sessionEntriesPath = resolveSessionEntriesPath(opts.sessionEntriesPath);
   const memoryWriteEnabled = shouldEnableMemoryWrite(opts);
-
-  const memory = await runtime.readMemoryFiles({
-    workspaceDir,
-    timezone,
-  });
+  const memoryScope = resolveMemoryScope(opts, sessionKey);
+  const memory =
+    memoryScope === "main"
+      ? await runtime.readMemoryFiles({
+          workspaceDir,
+          timezone,
+        })
+      : { longTerm: null, daily: null, yesterday: null };
 
   let prompt = withSystemPrompt(opts.prompt, opts.systemPrompt);
   prompt = appendMemoryContext(prompt, {

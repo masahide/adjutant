@@ -5,6 +5,21 @@
 s01（データ・キュー基盤）、s02（AI 実行層）、s03（API + UI）の 3 レイヤーは個別に実装・テスト済み（183 テスト合格）。
 `src/assistant/main.ts` のスタブ AgentRunner を実モジュールに置き換え、HeartbeatRunner を統合し、MVP アシスタントをエンドツーエンドで動作可能にする。
 
+## 進捗チェック
+
+- [x] runId フォーマット変更（OpenClaw 準拠）
+- [x] アダプタ関数（`createAgentRunAdapter`）実装
+- [x] HeartbeatRunner 統合（`startHeartbeat` + `heartbeatProvider` 接続）
+- [x] グレースフルシャットダウン（`heartbeatHandle.stop()` + `api.stop()` + `viteChild?.kill()`）
+- [x] `tests/assistant/main-adapter.test.ts` 作成
+- [x] 既存 runId アサーション更新（`runId = idempotencyKey`, `storeKey = sessionKey:idempotencyKey`）
+- [ ] `pnpm run check` 全体通過
+
+補足:
+
+- `node --import tsx --test tests/assistant/idempotency-registry.test.ts tests/assistant/chat-handler.test.ts tests/assistant/main-adapter.test.ts` は通過済み。
+- `pnpm run check` は現時点で `prettier --check`（`doc/openclaw/ext-plan.md`, `doc/openclaw/session-plan.md`, `doc/plan/260217-s01-openclaw-proactive-gateway-integration.md`）で停止し、全体完走できない。
+
 ## 変更内容
 
 ### 1. runId フォーマット変更（OpenClaw 準拠）
@@ -34,4 +49,4 @@ s01（データ・キュー基盤）、s02（AI 実行層）、s03（API + UI）
 
 - `tests/assistant/main-adapter.test.ts` 新規作成
 - 既存テストの runId アサーション更新
-- `pnpm run check` で全テストパス
+- `pnpm run check` は実行済み（現状は `prettier --check` 段階で停止）

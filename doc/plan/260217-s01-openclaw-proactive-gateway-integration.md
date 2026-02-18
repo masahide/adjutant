@@ -66,20 +66,29 @@
 
 実装時は以下をこの計画書の補助契約として必ず参照する。
 
-| 項目 | 参照先 |
-| --- | --- |
-| 処理順序 9 ステップ | `doc/openclaw/ext-plan.md` の `3.2.1` |
-| デバウンス後 cap 判定 | `doc/openclaw/ext-plan.md` の `3.2.2` |
-| `kind=post` inbound/outbound 識別 | `doc/openclaw/ext-plan.md` の `3.2.4` |
-| summarize drop policy 詳細 | `doc/openclaw/ext-plan.md` の `3.2.5` |
-| queue key フォールバック | `doc/openclaw/ext-plan.md` の `3.2.6` |
-| イベント種別ルーティング表 | `doc/openclaw/ext-plan.md` の `3.2.7` |
-| run message 生成規則 | `doc/openclaw/ext-plan.md` の `3.2.8` |
-| run + system 重複規約 | `doc/openclaw/ext-plan.md` の `3.2.9` |
-| contextKey 生成規則 | `doc/openclaw/ext-plan.md` の `3.2.10` |
-| dispatch サイズ上限 | `doc/openclaw/ext-plan.md` の `3.2.11` |
-| pending 一括回収 | `doc/openclaw/ext-plan.md` の `3.2.12` |
-| accountId/sessionKey 契約 | `doc/openclaw/ext-plan.md` の `4.2` |
+| 項目                              | 参照先                                 |
+| --------------------------------- | -------------------------------------- |
+| 処理順序 9 ステップ               | `doc/openclaw/ext-plan.md` の `3.2.1`  |
+| デバウンス後 cap 判定             | `doc/openclaw/ext-plan.md` の `3.2.2`  |
+| `kind=post` inbound/outbound 識別 | `doc/openclaw/ext-plan.md` の `3.2.4`  |
+| summarize drop policy 詳細        | `doc/openclaw/ext-plan.md` の `3.2.5`  |
+| queue key フォールバック          | `doc/openclaw/ext-plan.md` の `3.2.6`  |
+| イベント種別ルーティング表        | `doc/openclaw/ext-plan.md` の `3.2.7`  |
+| run message 生成規則              | `doc/openclaw/ext-plan.md` の `3.2.8`  |
+| run + system 重複規約             | `doc/openclaw/ext-plan.md` の `3.2.9`  |
+| contextKey 生成規則               | `doc/openclaw/ext-plan.md` の `3.2.10` |
+| dispatch サイズ上限               | `doc/openclaw/ext-plan.md` の `3.2.11` |
+| pending 一括回収                  | `doc/openclaw/ext-plan.md` の `3.2.12` |
+| accountId/sessionKey 契約         | `doc/openclaw/ext-plan.md` の `4.2`    |
+
+実装同期先（Phase 2 現時点）:
+
+- ルーティング state machine / validator: `src/openclaw/route-decision.ts`
+- 非同期 trigger-filter: `src/openclaw/trigger-filter.ts`
+- `resolveAgentRoute + resolveThreadSessionKeys + queue key` フォールバック: `src/openclaw/session-route-resolver.ts`
+- `NormalizedEvent -> ChatDispatchRequest -> API request` 変換: `src/openclaw/dispatch-adapter.ts`
+- plugin registry / ChannelManager / `startAccount` 統合経路: `src/openclaw/plugin-registry.ts`, `src/openclaw/channel-manager.ts`
+- system event enqueue 接続を含む通知パイプライン: `src/openclaw/channel-notification-pipeline.ts`
 
 ## 3. 前提技術スタック Context and Tech Stack
 
@@ -180,6 +189,7 @@ type ChatDispatchRequest = {
 - Slack channel id マッピングは `ext-plan.md:4.2` に従う。
 - `D*` は `slack:{channelId}`、`G*` は `slack:group:{channelId}`、`C*` は `slack:channel:{channelId}` を適用する。
 - thread reply は `baseSessionKey:thread:{threadTs}` として親キーを保持する。
+- queue key は `accountId:sessionKey:senderId:threadKey` で生成し、`senderId` 欠落時は `unknown-sender`、`threadKey` 欠落時は `channel:{channelKey|sessionKey}` へフォールバックする。
 - accountId 解決順は `ADJUTANT_SLACK_ACCOUNT_ID -> "default"`。
 - self-message 判定 ID は `botUserIdByAccount` 優先で解決し、未解決時は fail-safe を適用する。
 
@@ -367,19 +377,19 @@ sequenceDiagram
 - [x] P1-02 参照分離: 詳細仕様正本を `doc/openclaw/ext-plan.md` に戻し、計画書から参照マップを定義。
 - [x] P1-03 契約補強: RouteDecision フラグ制約、二重追記回復契約、API 接続契約を追加。
 - [x] P1-04 testing 方針を `node:test` へ統一。
-- [ ] P1-05 TODO `sessions_send` と `message` の将来使い分け規約を確定。
+- [x] P1-05 TODO `sessions_send` と `message` の将来使い分け規約を確定。
 
 ### Phase 2 機能A Fast Path と routing の実装
 
-- [ ] P2-A-RED RouteDecision の矛盾状態を拒否する unit test を追加する。
-- [ ] P2-A-GREEN `TriggerFilter.decide(): Promise<RouteDecision>` と `decision-normalizer` を実装する。
-- [ ] P2-A-REFACTOR run/pending/system/drop の分岐を state machine 化する。
-- [ ] P2-A-INTEGRATION `ChannelManager` と plugin registry と `startAccount` 起動経路を統合する。
-- [ ] P2-A-INTEGRATION system event enqueue/drain を pipeline に接続する。
-- [ ] P2-B-RED `NormalizedEvent -> ChatDispatchRequest` 変換失敗ケースを追加する。
-- [ ] P2-B-GREEN dispatch adapter と API request 変換を実装する。
-- [ ] P2-B-REFACTOR `resolveAgentRoute + resolveThreadSessionKeys` resolver を独立モジュール化する。
-- [ ] P2-B-DOC ルーティング表と queue key フォールバックを実装と同期する。
+- [x] P2-A-RED RouteDecision の矛盾状態を拒否する unit test を追加する。
+- [x] P2-A-GREEN `TriggerFilter.decide(): Promise<RouteDecision>` と `decision-normalizer` を実装する。
+- [x] P2-A-REFACTOR run/pending/system/drop の分岐を state machine 化する。
+- [x] P2-A-INTEGRATION `ChannelManager` と plugin registry と `startAccount` 起動経路を統合する。
+- [x] P2-A-INTEGRATION system event enqueue/drain を pipeline に接続する。
+- [x] P2-B-RED `NormalizedEvent -> ChatDispatchRequest` 変換失敗ケースを追加する。
+- [x] P2-B-GREEN dispatch adapter と API request 変換を実装する。
+- [x] P2-B-REFACTOR `resolveAgentRoute + resolveThreadSessionKeys` resolver を独立モジュール化する。
+- [x] P2-B-DOC ルーティング表と queue key フォールバックを実装と同期する。
 
 ### Phase 3 機能B Slow Path と二重追記回復の実装
 
@@ -389,12 +399,12 @@ sequenceDiagram
 - [ ] P3-D-RED heartbeat 境界テスト（統合タイムライン逆走査で最新の対応境界までの区間に stale user post 無しは skip / 有りかつ `pending-session-backfill` 未滞留で起動）を追加する。
 - [ ] P3-D-GREEN `memory/timeline.jsonl` 逆走査判定と放置閾値判定を実装する。
 - [ ] P3-D-REFACTOR 逆走査 I/O 層と判定層を分離する。
-- [ ] P3-E-RED spoke memory load 禁止の失敗テストを追加する。
-- [ ] P3-E-GREEN `runAgent` に `memoryScope` 制御を追加する。
+- [x] P3-E-RED spoke memory load 禁止の失敗テストを追加する。
+- [x] P3-E-GREEN `runAgent` に `memoryScope` 制御を追加する。
 
 ### Phase 4 統合と検証
 
-- [ ] P4-01 `pnpm check` を実行し失敗を解消する。
+- [x] P4-01 `pnpm check` を実行し失敗を解消する。
 - [ ] P4-02 E2E で heartbeat 自律起動と skip 条件を検証する。
 - [ ] P4-03 API 最小契約（`message/sessionKey/idempotencyKey`）互換性を回帰テストする。
 - [ ] P4-04 ログと例外を確認し、逆走査判定失敗時の再試行挙動が想定どおりであることを確認する。
@@ -412,8 +422,8 @@ sequenceDiagram
 
 ### 8.2 品質DoD Quality DoD
 
-- [ ] `node:test` の Unit/Integration/Contract がすべてパスする。
-- [ ] `pnpm check` が成功する。
+- [x] `node:test` の Unit/Integration/Contract がすべてパスする。
+- [x] `pnpm check` が成功する。
 - [ ] queue overflow timeout self判定不可のログが期待どおり出る。
 - [ ] `doc/plan/...` と `doc/openclaw/ext-plan.md` の参照整合が保たれている。
 
@@ -424,6 +434,7 @@ sequenceDiagram
 - heartbeat 判定データソースは統合タイムライン `memory/timeline.jsonl`（1ファイル）に固定。
 - heartbeat は `memory/timeline.jsonl` を後ろから逆走査し、最初に見つかった `role=assistant | role=tool | recordType=action` を対応境界として打ち切る。末尾からその境界までの区間に stale な `recordType=event && role=user && kind=post` があり、かつ `pending-session-backfill` 未滞留の場合のみ起動する。
 - `sessions_send` は統合タイムラインへ `recordType=action` で構造化記録。
+- 現行の outbound 実行は `sessions_send` を唯一の送信手段とし、`message` は未実装のため使用しない。
 - `kind=post` は inbound 専用。
 - queue cap 既定は 20。
 - RouteDecision は `run/system/pending/drop` フラグ表現を採用し、制約は validator で担保する。
@@ -433,6 +444,6 @@ sequenceDiagram
 - heartbeat の放置判定閾値（既定値）と、逆走査上限（行数/時間窓）の既定値。
 - route 二次判定の運用値 `maxConcurrentRouteLlm` と `routeLlmTimeoutMs`。
 - notification queue 永続化要否。
-- `sessions_send` と `message` の将来使い分け。
+- `message` 実装後の切替条件（チャネル種別、監査ログ形式、失敗時フォールバック）の確定。
 - plugin 起動失敗時の既定動作（単一チャネル fail-open/fail-stop）。
 - session memory の retention と再構築ポリシー。

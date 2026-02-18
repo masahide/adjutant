@@ -174,14 +174,14 @@
 
 #### 3.2.7 イベント種別ルーティング表（初期版）
 
-| event kind                   | 条件                 | run            | pending        | system-event | 備考                                                |
-| ---------------------------- | -------------------- | -------------- | -------------- | ------------ | --------------------------------------------------- |
-| `post`                       | 受信由来 かつ 非self | router判定     | router判定     | no           | run/pending は排他。run時は本文をデバウンスで結合。 |
-| `reaction`                   | 非self               | router判定     | router判定     | yes          | run は軽量トリガー文、詳細は system event。          |
-| `notification`               | 非self               | router判定     | router判定     | yes          | run は軽量トリガー文、詳細は system event。          |
-| `post/reaction/notification` | self                 | no             | no             | no           | 完全無視（ループ防止）。                             |
-| `post`                       | self判定不可         | no             | no             | no           | fail-safe で drop（run禁止）。                       |
-| `reaction/notification`      | self判定不可         | no             | no             | yes          | fail-safe で run禁止。system-only + warn ログ。      |
+| event kind                   | 条件                 | run        | pending    | system-event | 備考                                                |
+| ---------------------------- | -------------------- | ---------- | ---------- | ------------ | --------------------------------------------------- |
+| `post`                       | 受信由来 かつ 非self | router判定 | router判定 | no           | run/pending は排他。run時は本文をデバウンスで結合。 |
+| `reaction`                   | 非self               | router判定 | router判定 | yes          | run は軽量トリガー文、詳細は system event。         |
+| `notification`               | 非self               | router判定 | router判定 | yes          | run は軽量トリガー文、詳細は system event。         |
+| `post/reaction/notification` | self                 | no         | no         | no           | 完全無視（ループ防止）。                            |
+| `post`                       | self判定不可         | no         | no         | no           | fail-safe で drop（run禁止）。                      |
+| `reaction/notification`      | self判定不可         | no         | no         | yes          | fail-safe で run禁止。system-only + warn ログ。     |
 
 - `reaction/notification` が `pending` になった場合、これら単独で heartbeat 自律起動は行わない（静音 skip）。
 - `reaction/notification` の pending は、次に `post` を契機として Fast Path または heartbeat が起動した際に、補助コンテキストとして巻き込んで回収する。
