@@ -7,6 +7,7 @@ import {
   type DispatchAdapterInput,
 } from "./dispatch-adapter.js";
 import type { ChannelNotificationInput } from "./channel-plugin.js";
+import type { DualWriteCoordinator, DualWriteRecord } from "./dual-write-coordinator.js";
 import type { SelfMessageState } from "./route-decision.js";
 import { resolveQueueKey, resolveThreadSessionKeys } from "./session-route-resolver.js";
 import { createTriggerFilter, type TriggerFilter } from "./trigger-filter.js";
@@ -28,6 +29,7 @@ export type ChannelNotificationPipelineDeps = {
   resolveSelfState?: (input: ChannelNotificationInput) => SelfMessageState;
   dispatchAdapter?: (input: DispatchAdapterInput) => ChatDispatchRequest;
   toApiRequest?: (dispatch: ChatDispatchRequest) => PostChatMessageRequest;
+  dualWriteCoordinator?: DualWriteCoordinator;
   runTarget?: "main" | "session";
   mainSessionKey?: string;
   queueConfig?: Partial<NotificationQueueConfig>;
@@ -166,6 +168,27 @@ function resolveQueueConfig(
   };
 }
 
+function buildDualWriteRecords(params: { input: ChannelNotificationInput; sessionKey: string }): {
+  timelineRecord: DualWriteRecord;
+  sessionRecord: DualWriteRecord;
+} {
+  const base = {
+    recordType: "event",
+    uid: params.input.event.uid,
+    role: "user",
+    kind: params.input.event.kind,
+    ts: params.input.event.ts,
+    accountId: params.input.accountId,
+    channelId: params.input.channelId,
+    sessionKey: params.sessionKey,
+    event: params.input.event,
+  };
+  return {
+    timelineRecord: { ...base, target: "timeline" },
+    sessionRecord: { ...base, target: "session" },
+  };
+}
+
 export type ChannelNotificationPipeline = {
   enqueue: (input: ChannelNotificationInput) => Promise<void>;
   flushSession: (sessionKey: string) => Promise<void>;
@@ -246,6 +269,33 @@ export function createChannelNotificationPipeline(
       channelKey,
     });
     const selfState = deps.resolveSelfState?.(input) ?? "non-self";
+
+    if (deps.dualWriteCoordinator) {
+      const records = buildDualWriteRecords({
+        input,
+        sessionKey: session.sessionKey,
+      });
+      const writeResult = await deps.dualWriteCoordinator.appendEvent({
+        uid: input.event.uid,
+        timelineRecord: records.timelineRecord,
+        sessionRecord: records.sessionRecord,
+      });
+      if (writeResult.status === "pending-timeline") {
+        deps.onWarn?.("pipeline-dual-write-blocked", {
+          uid: input.event.uid,
+          sessionKey: session.sessionKey,
+          reason: "pending-timeline",
+        });
+        return;
+      }
+      if (writeResult.status === "pending-session-backfill") {
+        deps.onWarn?.("pipeline-dual-write-session-backfill", {
+          uid: input.event.uid,
+          sessionKey: session.sessionKey,
+        });
+      }
+    }
+
     const decision = await triggerFilter.decide({
       event: input.event,
       selfState,

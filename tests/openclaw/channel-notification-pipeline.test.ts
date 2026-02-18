@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { createChannelNotificationPipeline } from "../../src/openclaw/channel-notification-pipeline.js";
+import type { DualWriteCoordinator } from "../../src/openclaw/dual-write-coordinator.js";
 import type { ChannelNotificationInput } from "../../src/openclaw/channel-plugin.js";
 import { createTriggerFilter } from "../../src/openclaw/trigger-filter.js";
 
@@ -47,6 +48,24 @@ function createReactionInput(uid: string): ChannelNotificationInput {
         },
       },
     },
+  };
+}
+
+function createDualWriteStub(
+  status: "committed" | "pending-timeline" | "pending-session-backfill"
+): DualWriteCoordinator {
+  return {
+    appendEvent: async () => ({ status }),
+    appendAssistant: async () => ({ status: "committed" }),
+    retryPending: async () => ({
+      timelineRecovered: 0,
+      sessionRecovered: 0,
+      pendingTimeline: 0,
+      pendingSessionBackfill: 0,
+    }),
+    hasPendingTimelineWrites: () => false,
+    hasPendingSessionBackfill: () => false,
+    listPendingSessionBackfillUids: () => [],
   };
 }
 
@@ -113,5 +132,47 @@ describe("channel-notification-pipeline", () => {
 
     assert.equal(accepted, 0);
     assert.equal(systemCount, 0);
+  });
+
+  it("dual write が pending-timeline のときは dispatch へ進めない", async () => {
+    let accepted = 0;
+    const warnings: string[] = [];
+    const pipeline = createChannelNotificationPipeline({
+      triggerFilter: createTriggerFilter({ primaryClassifier: () => "run" }),
+      dualWriteCoordinator: createDualWriteStub("pending-timeline"),
+      queueConfig: { debounceMs: 1 },
+      onWarn: (message) => warnings.push(message),
+      acceptMessage: async (request) => {
+        accepted += 1;
+        return { runId: request.idempotencyKey, status: "started" };
+      },
+    });
+
+    await pipeline.enqueue(createPostInput("uid-pending-timeline"));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    assert.equal(accepted, 0);
+    assert.equal(warnings.includes("pipeline-dual-write-blocked"), true);
+  });
+
+  it("dual write が pending-session-backfill でも run 判定なら dispatch へ進む", async () => {
+    let accepted = 0;
+    const warnings: string[] = [];
+    const pipeline = createChannelNotificationPipeline({
+      triggerFilter: createTriggerFilter({ primaryClassifier: () => "run" }),
+      dualWriteCoordinator: createDualWriteStub("pending-session-backfill"),
+      queueConfig: { debounceMs: 1 },
+      onWarn: (message) => warnings.push(message),
+      acceptMessage: async (request) => {
+        accepted += 1;
+        return { runId: request.idempotencyKey, status: "started" };
+      },
+    });
+
+    await pipeline.enqueue(createPostInput("uid-pending-session"));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    assert.equal(accepted, 1);
+    assert.equal(warnings.includes("pipeline-dual-write-session-backfill"), true);
   });
 });

@@ -9,6 +9,20 @@
 
 既存の「ハートビート補正（Slow Path）」は維持しつつ、まずは Fast Path（受信イベントの即時処理）を整備する。初期対応チャネルは Slack とし、仕様は他チャネルへ拡張可能な形で定義する。
 
+### 1.1 進捗同期メモ（2026-02-18）
+
+- モジュール実装済み（単体/統合テストあり）:
+- `src/openclaw/channel-manager.ts`
+- `src/openclaw/plugin-registry.ts`
+- `src/openclaw/channel-notification-pipeline.ts`
+- `src/openclaw/dual-write-coordinator.ts`
+- `src/openclaw/heartbeat-scanner.ts`
+- 起動配線実装済み:
+- `src/assistant/main.ts` で `ChannelManager.startChannels()` を実行
+- `src/openclaw/slack-channel-plugin.ts` を追加し、`startAccount()` から `ChannelNotificationPipeline` へ本番接続
+- `src/assistant/main.ts` で timeline/session 二重追記と `pending-session-backfill` 連携を有効化
+- `pnpm run assistant` 単体で 収集 + AI/API/UI を同時起動可能（`pnpm start` は検証用途として残置）
+
 ## 2. vendor/openclaw 調査サマリ
 
 ### 2.1 受信イベントの入口とデバウンス
@@ -101,7 +115,7 @@
 
 ### 3.2 Channel -> AI 通知パイプライン（Fast Path）
 
-新設コンポーネント（仮）: `src/assistant/channel-notification-pipeline.ts`  
+新設コンポーネント（仮）: `src/openclaw/channel-notification-pipeline.ts`  
 内部責務は OpenClaw 準拠で分離する。
 
 - `trigger-filter`:
@@ -475,8 +489,8 @@ idempotencyKey 生成規則（初期版）:
 
 - [ ] queue overflow / dedupe / debounce テスト追加
 - [ ] session lane 順序保証テスト追加
-- [ ] heartbeat 巡回（統合タイムライン逆走査 + 最新の対応境界までの区間判定で skip / stale post 有りかつ `pending-session-backfill` 未滞留時のみ自律応答起動）の E2E 観点テスト追加
-- [ ] `pnpm check` 通過
+- [x] heartbeat 巡回（統合タイムライン逆走査 + 最新の対応境界までの区間判定で skip / stale post 有りかつ `pending-session-backfill` 未滞留時のみ自律応答起動）の E2E 観点テスト追加
+- [x] `pnpm check` 通過
 
 ## 7. 懸念事項と決定事項
 

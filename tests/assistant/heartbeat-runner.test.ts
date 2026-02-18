@@ -479,6 +479,195 @@ describe("HeartbeatRunner", () => {
     }
   });
 
+  it("timeline 逆走査で stale user post が無ければ skipped(no-stale-post)", async () => {
+    const tempDir = await mkdtemp(`${tmpdir()}/adjutant-heartbeat-`);
+    try {
+      await preparePromptFiles(tempDir, "Heartbeat prompt");
+      const timelineDir = join(tempDir, "memory");
+      await mkdir(timelineDir, { recursive: true });
+      await writeFile(
+        join(timelineDir, "timeline.jsonl"),
+        [
+          JSON.stringify({
+            recordType: "event",
+            role: "user",
+            kind: "post",
+            uid: "uid-old-before-boundary",
+            ts: 0,
+          }),
+          JSON.stringify({ recordType: "action", role: "system", uid: "boundary-1", ts: 1_000 }),
+          JSON.stringify({
+            recordType: "event",
+            role: "user",
+            kind: "post",
+            uid: "uid-fresh-after-boundary",
+            ts: 9_800,
+          }),
+        ].join("\n"),
+        "utf8"
+      );
+
+      let runAgentCalled = false;
+      setHeartbeatRuntimeForTest({
+        now: () => new Date(10_000),
+        getQueueSize: () => 0,
+        runAgent: async () => {
+          runAgentCalled = true;
+          return { text: "ALERT: unexpected" };
+        },
+      });
+
+      const result = await runOnce({
+        ...createBaseConfig(tempDir),
+        heartbeatStaleMs: 1_000,
+      });
+      assert.deepEqual(result, { status: "skipped", reason: "no-stale-post" });
+      assert.equal(runAgentCalled, false);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("timeline 逆走査で stale post が pending backfill 中なら skipped(pending-session-backfill)", async () => {
+    const tempDir = await mkdtemp(`${tmpdir()}/adjutant-heartbeat-`);
+    try {
+      await preparePromptFiles(tempDir, "Heartbeat prompt");
+      const timelineDir = join(tempDir, "memory");
+      await mkdir(timelineDir, { recursive: true });
+      await writeFile(
+        join(timelineDir, "timeline.jsonl"),
+        JSON.stringify({
+          recordType: "event",
+          role: "user",
+          kind: "post",
+          uid: "uid-pending",
+          ts: 0,
+        }),
+        "utf8"
+      );
+
+      let runAgentCalled = false;
+      setHeartbeatRuntimeForTest({
+        now: () => new Date(10_000),
+        getQueueSize: () => 0,
+        runAgent: async () => {
+          runAgentCalled = true;
+          return { text: "ALERT: unexpected" };
+        },
+      });
+
+      const result = await runOnce({
+        ...createBaseConfig(tempDir),
+        heartbeatStaleMs: 1_000,
+        pendingSessionBackfillProvider: () => ["uid-pending"],
+      });
+      assert.deepEqual(result, { status: "skipped", reason: "pending-session-backfill" });
+      assert.equal(runAgentCalled, false);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("timeline 逆走査で stale user post があれば heartbeat を実行する", async () => {
+    const tempDir = await mkdtemp(`${tmpdir()}/adjutant-heartbeat-`);
+    try {
+      await preparePromptFiles(tempDir, "Heartbeat prompt");
+      const timelineDir = join(tempDir, "memory");
+      await mkdir(timelineDir, { recursive: true });
+      await writeFile(
+        join(timelineDir, "timeline.jsonl"),
+        JSON.stringify({
+          recordType: "event",
+          role: "user",
+          kind: "post",
+          uid: "uid-stale",
+          ts: 0,
+        }),
+        "utf8"
+      );
+
+      let runAgentCalled = false;
+      setHeartbeatRuntimeForTest({
+        now: () => new Date(10_000),
+        readEvents: async () => [],
+        readMemoryFiles: async () => ({
+          longTerm: null,
+          daily: null,
+          yesterday: null,
+        }),
+        buildEventContext: () => ({ text: "", truncated: false, eventCount: 0 }),
+        getQueueSize: () => 0,
+        runAgent: async () => {
+          runAgentCalled = true;
+          return { text: "HEARTBEAT_OK", modelId: "gpt-4o-mini" };
+        },
+      });
+
+      const result = await runOnce({
+        ...createBaseConfig(tempDir),
+        heartbeatStaleMs: 1_000,
+      });
+      assert.equal(result.status, "ran");
+      assert.equal(runAgentCalled, true);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("timeline 逆走査失敗は skipped(timeline-scan-failed) になり次回周期で再評価できる", async () => {
+    const tempDir = await mkdtemp(`${tmpdir()}/adjutant-heartbeat-`);
+    try {
+      await preparePromptFiles(tempDir, "Heartbeat prompt");
+      let scanCount = 0;
+      let runAgentCalled = 0;
+
+      setHeartbeatRuntimeForTest({
+        now: () => new Date(10_000),
+        getQueueSize: () => 0,
+        scanHeartbeatTimeline: async () => {
+          scanCount += 1;
+          if (scanCount === 1) {
+            throw new Error("timeline scan crashed");
+          }
+          return {
+            shouldRun: true,
+            reason: "stale-post-found",
+            stalePostUids: ["uid-stale"],
+            blockedPendingUids: [],
+            boundaryFound: false,
+            inspectedRecords: 1,
+          };
+        },
+        readEvents: async () => [],
+        readMemoryFiles: async () => ({
+          longTerm: null,
+          daily: null,
+          yesterday: null,
+        }),
+        buildEventContext: () => ({ text: "", truncated: false, eventCount: 0 }),
+        runAgent: async () => {
+          runAgentCalled += 1;
+          return { text: "HEARTBEAT_OK", modelId: "gpt-4o-mini" };
+        },
+      });
+
+      const first = await runOnce({
+        ...createBaseConfig(tempDir),
+        heartbeatStaleMs: 1_000,
+      });
+      assert.deepEqual(first, { status: "skipped", reason: "timeline-scan-failed" });
+
+      const second = await runOnce({
+        ...createBaseConfig(tempDir),
+        heartbeatStaleMs: 1_000,
+      });
+      assert.equal(second.status, "ran");
+      assert.equal(runAgentCalled, 1);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("readiness 失敗（alert path）は skipped(readiness-failed)", async () => {
     const tempDir = await mkdtemp(`${tmpdir()}/adjutant-heartbeat-`);
     try {

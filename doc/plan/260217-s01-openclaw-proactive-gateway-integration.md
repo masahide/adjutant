@@ -81,7 +81,7 @@
 | pending 一括回収                  | `doc/openclaw/ext-plan.md` の `3.2.12` |
 | accountId/sessionKey 契約         | `doc/openclaw/ext-plan.md` の `4.2`    |
 
-実装同期先（Phase 2 現時点）:
+実装同期先（Phase 4 現時点）:
 
 - ルーティング state machine / validator: `src/openclaw/route-decision.ts`
 - 非同期 trigger-filter: `src/openclaw/trigger-filter.ts`
@@ -89,6 +89,16 @@
 - `NormalizedEvent -> ChatDispatchRequest -> API request` 変換: `src/openclaw/dispatch-adapter.ts`
 - plugin registry / ChannelManager / `startAccount` 統合経路: `src/openclaw/plugin-registry.ts`, `src/openclaw/channel-manager.ts`
 - system event enqueue 接続を含む通知パイプライン: `src/openclaw/channel-notification-pipeline.ts`
+- timeline -> session 二重追記と pending/backfill 回復: `src/openclaw/dual-write-coordinator.ts`
+- heartbeat の統合タイムライン逆走査判定: `src/openclaw/heartbeat-scanner.ts`, `src/assistant/heartbeat-runner.ts`
+- heartbeat 自律 tick の E2E 観点検証: `tests/openclaw/heartbeat-e2e.test.ts`
+
+配線完了事項（2026-02-18 更新）:
+
+- `assistant` 起動経路で `ChannelManager.startChannels()` を実行（`src/assistant/main.ts`）
+- Slack plugin `startAccount()` から `ChannelNotificationPipeline` への本番接続（`src/openclaw/slack-channel-plugin.ts`）
+- timeline/session 二重追記と `pending-session-backfill` 連携を assistant runtime へ接続（`src/assistant/main.ts`）
+- `pnpm run assistant` 単体で 収集 + AI/API/UI を同時起動可能（`pnpm start` は検証用途として残置）
 
 ## 3. 前提技術スタック Context and Tech Stack
 
@@ -384,7 +394,7 @@ sequenceDiagram
 - [x] P2-A-RED RouteDecision の矛盾状態を拒否する unit test を追加する。
 - [x] P2-A-GREEN `TriggerFilter.decide(): Promise<RouteDecision>` と `decision-normalizer` を実装する。
 - [x] P2-A-REFACTOR run/pending/system/drop の分岐を state machine 化する。
-- [x] P2-A-INTEGRATION `ChannelManager` と plugin registry と `startAccount` 起動経路を統合する。
+- [x] P2-A-INTEGRATION `ChannelManager` と plugin registry と `startAccount` 契約モジュールを統合する。
 - [x] P2-A-INTEGRATION system event enqueue/drain を pipeline に接続する。
 - [x] P2-B-RED `NormalizedEvent -> ChatDispatchRequest` 変換失敗ケースを追加する。
 - [x] P2-B-GREEN dispatch adapter と API request 変換を実装する。
@@ -393,22 +403,23 @@ sequenceDiagram
 
 ### Phase 3 機能B Slow Path と二重追記回復の実装
 
-- [ ] P3-C-RED 二重追記の片側失敗と replay の失敗テストを追加する。
-- [ ] P3-C-GREEN `DualWriteCoordinator` と pending retry/backfill を実装する。
-- [ ] P3-C-REFACTOR write order と health warning を整理する。
-- [ ] P3-D-RED heartbeat 境界テスト（統合タイムライン逆走査で最新の対応境界までの区間に stale user post 無しは skip / 有りかつ `pending-session-backfill` 未滞留で起動）を追加する。
-- [ ] P3-D-GREEN `memory/timeline.jsonl` 逆走査判定と放置閾値判定を実装する。
-- [ ] P3-D-REFACTOR 逆走査 I/O 層と判定層を分離する。
+- [x] P3-C-RED 二重追記の片側失敗と replay の失敗テストを追加する。
+- [x] P3-C-GREEN `DualWriteCoordinator` と pending retry/backfill を実装する。
+- [x] P3-C-REFACTOR write order と health warning を整理する。
+- [x] P3-D-RED heartbeat 境界テスト（統合タイムライン逆走査で最新の対応境界までの区間に stale user post 無しは skip / 有りかつ `pending-session-backfill` 未滞留で起動）を追加する。
+- [x] P3-D-GREEN `memory/timeline.jsonl` 逆走査判定と放置閾値判定を実装する。
+- [x] P3-D-REFACTOR 逆走査 I/O 層と判定層を分離する。
 - [x] P3-E-RED spoke memory load 禁止の失敗テストを追加する。
 - [x] P3-E-GREEN `runAgent` に `memoryScope` 制御を追加する。
 
 ### Phase 4 統合と検証
 
 - [x] P4-01 `pnpm check` を実行し失敗を解消する。
-- [ ] P4-02 E2E で heartbeat 自律起動と skip 条件を検証する。
-- [ ] P4-03 API 最小契約（`message/sessionKey/idempotencyKey`）互換性を回帰テストする。
-- [ ] P4-04 ログと例外を確認し、逆走査判定失敗時の再試行挙動が想定どおりであることを確認する。
-- [ ] P4-05 ドキュメント更新（仕様 契約 図）を最終反映する。
+- [x] P4-02 E2E で heartbeat 自律起動と skip 条件を検証する。
+- [x] P4-03 API 最小契約（`message/sessionKey/idempotencyKey`）互換性を回帰テストする。
+- [x] P4-04 ログと例外を確認し、逆走査判定失敗時の再試行挙動が想定どおりであることを確認する。
+- [x] P4-05 ドキュメント更新（仕様 契約 図）を最終反映する。
+- [x] P4-06 単一プロセス起動配線（`assistant` で `startAccount` を起動）を実装し、2プロセス運用を解消する。
 
 ## 8. 完了の定義 Definition of Done
 
@@ -417,7 +428,7 @@ sequenceDiagram
 - [ ] 受け入れ条件 11 件がすべて満たされる。
 - [ ] RouteDecision の違法状態が validator とテストで防止される。
 - [ ] 二重追記失敗時の回復が `uid` idempotent で実証される。
-- [ ] heartbeat が「統合タイムライン逆走査で最新の対応境界までの区間に stale user post 無しは skip、有りかつ `pending-session-backfill` 未滞留で起動」を満たす。
+- [x] heartbeat が「統合タイムライン逆走査で最新の対応境界までの区間に stale user post 無しは skip、有りかつ `pending-session-backfill` 未滞留で起動」を満たす。
 - [ ] spoke セッションで MEMORY ロード禁止が守られる。
 
 ### 8.2 品質DoD Quality DoD
@@ -425,7 +436,7 @@ sequenceDiagram
 - [x] `node:test` の Unit/Integration/Contract がすべてパスする。
 - [x] `pnpm check` が成功する。
 - [ ] queue overflow timeout self判定不可のログが期待どおり出る。
-- [ ] `doc/plan/...` と `doc/openclaw/ext-plan.md` の参照整合が保たれている。
+- [x] `doc/plan/...` と `doc/openclaw/ext-plan.md` の参照整合が保たれている。
 
 ## 9. 懸念事項と未確定事項 Concerns and Questions
 

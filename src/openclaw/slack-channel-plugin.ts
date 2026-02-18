@@ -1,0 +1,261 @@
+import type { IngestionAdapter } from "../core/adapter.js";
+import type { NormalizedEvent } from "../core/events.js";
+import { JsonlWriter } from "../io/jsonlWriter.js";
+import { resolveEndpoint, type CdpEndpoint } from "../runtime/config.js";
+import { connectToSlackPage, type SlackCdpClient } from "../runtime/slackConnection.js";
+import { SlackAdapter } from "../slack/adapter.js";
+import type { ChannelGatewayContext, ChannelIngestionPlugin } from "./channel-plugin.js";
+import { join } from "node:path";
+
+type JsonlEventWriter = {
+  append: (event: NormalizedEvent) => Promise<void>;
+};
+
+type SlackAdapterFactoryInput = {
+  client: SlackCdpClient;
+  timezone: string;
+  dataDir: string;
+};
+
+type SlackChannelPluginOptions = {
+  id?: string;
+  channelId?: string;
+  dataDir: string;
+  timezone?: string;
+  accountIds?: string[];
+  defaultAccountId?: string;
+  retryBaseMs?: number;
+  retryMaxMs?: number;
+  resolveEndpoint?: () => CdpEndpoint;
+  connectToSlackPage?: (
+    host: string,
+    port: number
+  ) => Promise<{ client: SlackCdpClient; slackUrl: string }>;
+  createAdapter?: (input: SlackAdapterFactoryInput) => IngestionAdapter;
+  createWriter?: (dataDir: string) => JsonlEventWriter;
+  sleep?: (ms: number) => Promise<void>;
+  nowMs?: () => number;
+  onWarn?: (message: string, meta?: Record<string, unknown>) => void;
+};
+
+type DisconnectAwareClient = {
+  on: (event: "disconnect", handler: () => void) => void;
+  off?: (event: "disconnect", handler: () => void) => void;
+  removeListener?: (event: "disconnect", handler: () => void) => void;
+  close?: () => Promise<void> | void;
+};
+
+type ActiveAccountSession = {
+  client: DisconnectAwareClient;
+  adapter: IngestionAdapter;
+};
+
+const DEFAULT_RETRY_BASE_MS = 1000;
+const DEFAULT_RETRY_MAX_MS = 10000;
+
+function normalizeRetryMs(value: number | undefined, fallback: number): number {
+  if (!Number.isFinite(value)) {
+    return fallback;
+  }
+  return Math.max(1, Math.floor(value as number));
+}
+
+function toReason(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function resolveAccountIds(options: SlackChannelPluginOptions): string[] {
+  const explicit = (options.accountIds ?? []).map((value) => value.trim()).filter(Boolean);
+  if (explicit.length > 0) {
+    return explicit;
+  }
+  const fromEnv = process.env.ADJUTANT_SLACK_ACCOUNT_ID?.trim();
+  if (fromEnv) {
+    return [fromEnv];
+  }
+  const fallback = options.defaultAccountId?.trim() || "default";
+  return [fallback];
+}
+
+async function closeClient(
+  client: DisconnectAwareClient,
+  onWarn?: (message: string, meta?: Record<string, unknown>) => void
+): Promise<void> {
+  if (typeof client.close !== "function") {
+    return;
+  }
+  try {
+    await client.close();
+  } catch (error) {
+    onWarn?.("slack-plugin-close-client-failed", { reason: toReason(error) });
+  }
+}
+
+async function waitForDisconnectOrAbort(
+  client: DisconnectAwareClient,
+  abortSignal: AbortSignal
+): Promise<"disconnect" | "abort"> {
+  if (abortSignal.aborted) {
+    return "abort";
+  }
+  return await new Promise<"disconnect" | "abort">((resolve) => {
+    const finish = (reason: "disconnect" | "abort") => {
+      if (typeof client.off === "function") {
+        client.off("disconnect", handleDisconnect);
+      }
+      if (typeof client.removeListener === "function") {
+        client.removeListener("disconnect", handleDisconnect);
+      }
+      abortSignal.removeEventListener("abort", handleAbort);
+      resolve(reason);
+    };
+    const handleDisconnect = () => finish("disconnect");
+    const handleAbort = () => finish("abort");
+
+    client.on("disconnect", handleDisconnect);
+    abortSignal.addEventListener("abort", handleAbort, { once: true });
+  });
+}
+
+function createDefaultAdapterFactory(
+  options: SlackChannelPluginOptions
+): (input: SlackAdapterFactoryInput) => IngestionAdapter {
+  return (input) =>
+    new SlackAdapter({
+      client: input.client,
+      timezone: input.timezone,
+      now: () => new Date(),
+      channelCachePath: join(options.dataDir, "_cache", "slack", "channel-names-by-team.json"),
+      userCachePath: join(options.dataDir, "_cache", "slack", "user-names-by-team.json"),
+    });
+}
+
+export function createSlackChannelPlugin(
+  options: SlackChannelPluginOptions
+): ChannelIngestionPlugin<unknown> {
+  const pluginId = options.id?.trim() || "slack";
+  const channelId = options.channelId?.trim() || "slack";
+  const timezone = options.timezone?.trim() || process.env.ADJUTANT_TZ || "Asia/Tokyo";
+  const retryBaseMs = normalizeRetryMs(options.retryBaseMs, DEFAULT_RETRY_BASE_MS);
+  const retryMaxMs = Math.max(
+    normalizeRetryMs(options.retryMaxMs, DEFAULT_RETRY_MAX_MS),
+    retryBaseMs
+  );
+  const endpointResolver = options.resolveEndpoint ?? resolveEndpoint;
+  const connectFn = options.connectToSlackPage ?? connectToSlackPage;
+  const createAdapter = options.createAdapter ?? createDefaultAdapterFactory(options);
+  const writer = (options.createWriter ?? ((dataDir) => new JsonlWriter({ dataDir })))(
+    options.dataDir
+  );
+  const sleep =
+    options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const nowMs = options.nowMs ?? (() => Date.now());
+
+  const activeSessions = new Map<string, ActiveAccountSession>();
+  const accountIds = resolveAccountIds(options);
+
+  const stopActiveSession = async (accountId: string): Promise<void> => {
+    const active = activeSessions.get(accountId);
+    if (!active) {
+      return;
+    }
+    activeSessions.delete(accountId);
+    if (typeof active.adapter.stop === "function") {
+      try {
+        await active.adapter.stop();
+      } catch (error) {
+        options.onWarn?.("slack-plugin-stop-adapter-failed", {
+          accountId,
+          reason: toReason(error),
+        });
+      }
+    }
+    await closeClient(active.client, options.onWarn);
+  };
+
+  const startAccount = async (ctx: ChannelGatewayContext<unknown>): Promise<void> => {
+    let retryCount = 0;
+    while (!ctx.abortSignal.aborted) {
+      try {
+        const endpoint = endpointResolver();
+        const { client, slackUrl } = await connectFn(endpoint.host, endpoint.port);
+        const adapter = createAdapter({
+          client,
+          timezone,
+          dataDir: options.dataDir,
+        });
+        activeSessions.set(ctx.accountId, { client, adapter });
+        ctx.setStatus({
+          ...ctx.getStatus(),
+          accountId: ctx.accountId,
+          running: true,
+          connected: true,
+          lastError: null,
+          lastStartAt: nowMs(),
+        });
+        await adapter.start(async (event) => {
+          await writer.append(event);
+          await ctx.emit({
+            accountId: ctx.accountId,
+            channelId,
+            event,
+          });
+        });
+        retryCount = 0;
+        const reason = await waitForDisconnectOrAbort(client, ctx.abortSignal);
+        if (reason === "disconnect" && !ctx.abortSignal.aborted) {
+          options.onWarn?.("slack-plugin-disconnected", {
+            accountId: ctx.accountId,
+            slackUrl,
+          });
+        }
+      } catch (error) {
+        const reason = toReason(error);
+        ctx.setStatus({
+          ...ctx.getStatus(),
+          accountId: ctx.accountId,
+          running: true,
+          connected: false,
+          lastError: reason,
+        });
+        options.onWarn?.("slack-plugin-start-failed", {
+          accountId: ctx.accountId,
+          reason,
+        });
+      } finally {
+        await stopActiveSession(ctx.accountId);
+        ctx.setStatus({
+          ...ctx.getStatus(),
+          accountId: ctx.accountId,
+          connected: false,
+          lastStopAt: nowMs(),
+        });
+      }
+
+      if (ctx.abortSignal.aborted) {
+        break;
+      }
+
+      retryCount += 1;
+      const delayMs = Math.min(retryBaseMs * Math.max(1, retryCount), retryMaxMs);
+      await sleep(delayMs);
+    }
+  };
+
+  const stopAccount = async (ctx: ChannelGatewayContext<unknown>): Promise<void> => {
+    await stopActiveSession(ctx.accountId);
+    ctx.setStatus({
+      ...ctx.getStatus(),
+      accountId: ctx.accountId,
+      connected: false,
+      lastStopAt: nowMs(),
+    });
+  };
+
+  return {
+    id: pluginId,
+    listAccountIds: () => [...accountIds],
+    startAccount,
+    stopAccount,
+  };
+}

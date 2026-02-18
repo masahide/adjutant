@@ -60,6 +60,25 @@ describe("ApiServer", () => {
     assert.equal(body.status, "started");
   });
 
+  it("POST /api/chat/messages は追加フィールドがあっても最小契約で継続動作する", async () => {
+    await setupServer();
+    const res = await fetch(url("/api/chat/messages"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: "hello",
+        sessionKey: "main",
+        idempotencyKey: "minimal-contract-001",
+        accountId: "acc-1",
+        eventUids: ["u-1", "u-2"],
+      }),
+    });
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { runId: string; status: string };
+    assert.equal(body.runId, "minimal-contract-001");
+    assert.equal(body.status, "started");
+  });
+
   it("POST /api/chat/messages は sessionKey 欠落で 400", async () => {
     await setupServer();
     const res = await fetch(url("/api/chat/messages"), {

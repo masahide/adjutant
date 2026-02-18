@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
+import { scanHeartbeatTimeline } from "../openclaw/heartbeat-scanner.js";
 import { buildEventContext } from "./context-builder.js";
 import { readEvents } from "./event-reader.js";
 import { runAgent, type AgentRunOptions, type AgentRunResult } from "./agent-runner.js";
@@ -44,6 +45,9 @@ export type HeartbeatConfig = {
   };
   channelsConfigPath?: string;
   readinessCheck?: (kind: "ok" | "alert") => boolean;
+  timelinePath?: string;
+  heartbeatStaleMs?: number;
+  pendingSessionBackfillProvider?: () => Iterable<string>;
 };
 
 type ActiveHoursConfig = NonNullable<HeartbeatConfig["activeHours"]>;
@@ -59,6 +63,8 @@ type HeartbeatRuntime = {
   readMemoryFiles: typeof readMemoryFiles;
   buildEventContext: typeof buildEventContext;
   getQueueSize: typeof getQueueSize;
+  scanHeartbeatTimeline: typeof scanHeartbeatTimeline;
+  listPendingSessionBackfillUids: () => Iterable<string>;
   runAgent: (opts: AgentRunOptions) => Promise<HeartbeatAgentResult>;
   appendRunRecord: (dataDir: string, record: HeartbeatRunRecord) => Promise<void>;
   loadSessionEntryStore: (
@@ -81,6 +87,7 @@ const DEFAULT_INTERVAL_MS = 30 * 60 * 1000;
 const DEFAULT_TIMEOUT_MS = 30 * 1000;
 const DEFAULT_RETRY_DELAY_MS = 1000;
 const DEFAULT_ACK_MAX_CHARS = 300;
+const DEFAULT_HEARTBEAT_STALE_MS = 15 * 60 * 1000;
 const DEFAULT_HEARTBEAT_PROMPT = "# HEARTBEAT\n\nHEARTBEAT_OK の場合はそれだけを返してください。";
 const HEARTBEAT_RUN_RECORD_RELATIVE_PATH = join("_assistant", "heartbeat-runs.jsonl");
 const HEARTBEAT_DUPLICATE_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -123,6 +130,8 @@ const defaultRuntime: HeartbeatRuntime = {
   readMemoryFiles,
   buildEventContext,
   getQueueSize,
+  scanHeartbeatTimeline,
+  listPendingSessionBackfillUids: () => [],
   runAgent,
   appendRunRecord: appendRunRecordDefault,
   loadSessionEntryStore: readSessionEntryStore,
@@ -161,6 +170,14 @@ function resolveTimezone(config: HeartbeatConfig): string {
 function resolveWorkspaceDir(config: HeartbeatConfig): string {
   const configured = config.workspaceDir?.trim();
   return configured || process.cwd();
+}
+
+function resolveTimelinePath(config: HeartbeatConfig): string | null {
+  const configured = config.timelinePath?.trim() || process.env.ADJUTANT_TIMELINE_PATH?.trim();
+  if (configured) {
+    return resolvePath(configured);
+  }
+  return join(resolveWorkspaceDir(config), "memory", "timeline.jsonl");
 }
 
 function resolvePath(filePath: string): string {
@@ -225,6 +242,13 @@ function resolveAckMaxChars(config: HeartbeatConfig): number {
     return DEFAULT_ACK_MAX_CHARS;
   }
   return Math.max(0, Math.floor(config.ackMaxChars as number));
+}
+
+function resolveHeartbeatStaleMs(config: HeartbeatConfig): number {
+  if (!Number.isFinite(config.heartbeatStaleMs)) {
+    return DEFAULT_HEARTBEAT_STALE_MS;
+  }
+  return Math.max(1, Math.floor(config.heartbeatStaleMs as number));
 }
 
 function isErrno(error: unknown, code: string): boolean {
@@ -521,6 +545,74 @@ async function resolvePrecheckSkip(params: {
   return null;
 }
 
+async function resolveTimelineScanSkip(params: {
+  runtime: HeartbeatRuntime;
+  config: HeartbeatConfig;
+  runAt: Date;
+  sessionKey: string;
+  triggerReason?: string;
+}): Promise<HeartbeatRunResult | null> {
+  const timelinePath = resolveTimelinePath(params.config);
+  if (!timelinePath) {
+    return null;
+  }
+
+  try {
+    const pendingSessionBackfillUids =
+      params.config.pendingSessionBackfillProvider?.() ??
+      params.runtime.listPendingSessionBackfillUids();
+    const scanResult = await params.runtime.scanHeartbeatTimeline({
+      timelinePath,
+      nowMs: params.runAt.getTime(),
+      heartbeatStaleMs: resolveHeartbeatStaleMs(params.config),
+      pendingSessionBackfillUids,
+    });
+
+    if (scanResult.shouldRun) {
+      return null;
+    }
+
+    const result: HeartbeatRunResult = {
+      status: "skipped",
+      reason: scanResult.reason,
+    };
+    return await finalizeRun({
+      runtime: params.runtime,
+      dataDir: params.config.dataDir,
+      runAt: params.runAt,
+      sessionKey: params.sessionKey,
+      triggerReason: params.triggerReason,
+      result,
+      event: {
+        ts: params.runAt.getTime(),
+        status: "skipped",
+        reason: result.reason,
+        indicatorType: "ok",
+      },
+    });
+  } catch (error) {
+    if (isErrno(error, "ENOENT")) {
+      return null;
+    }
+    console.warn("[HeartbeatRunner] timeline scan failed:", error);
+    const result: HeartbeatRunResult = { status: "skipped", reason: "timeline-scan-failed" };
+    return await finalizeRun({
+      runtime: params.runtime,
+      dataDir: params.config.dataDir,
+      runAt: params.runAt,
+      sessionKey: params.sessionKey,
+      triggerReason: params.triggerReason,
+      result,
+      event: {
+        ts: params.runAt.getTime(),
+        status: "skipped",
+        reason: result.reason,
+        indicatorType: "ok",
+      },
+    });
+  }
+}
+
 function toBoolean(value: unknown, fallback: boolean): boolean {
   if (typeof value === "boolean") {
     return value;
@@ -694,6 +786,17 @@ export async function runOnce(
   });
   if (prechecked) {
     return prechecked;
+  }
+
+  const timelineScanned = await resolveTimelineScanSkip({
+    runtime,
+    config,
+    runAt,
+    sessionKey,
+    triggerReason: opts?.reason,
+  });
+  if (timelineScanned) {
+    return timelineScanned;
   }
 
   try {
