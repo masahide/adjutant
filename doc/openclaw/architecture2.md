@@ -40,47 +40,82 @@ OpenClawはGateway（WebSocket制御プレーン）とNode（デバイス実行�
 ### イベントフロー構成図（Mermaid）
 
 ```mermaid
-flowchart LR
+%%{init:{
+  "flowchart":{"htmlLabels":true,"useMaxWidth":true,"nodeSpacing":60,"rankSpacing":80},
+  "themeCSS":".cluster .nodeLabel{white-space:nowrap;} .node .nodeLabel{white-space:normal;}"
+}}%%
+flowchart TD
   subgraph Channels["外部チャネル / クライアント"]
-    Slack["Slack"]
-    Discord["Discord"]
-    Telegram["Telegram"]
-    OtherChannels["WhatsApp / Signal / iMessage / ..."]
+    direction TB
+    ChannelList["Slack / Discord / Telegram / WhatsApp / Signal / iMessage / ..."]
     WebUI["webchat-ui / CLI"]
   end
 
-  subgraph Gateway["Gateway (WebSocket制御プレーン)"]
-    ChannelAdapters["Channel Adapters (webhook/ws inbound/outbound)"]
-    SessionRouter["Session Router / Message Routing"]
-    AgentRuntime["Pi Agent Runtime runEmbeddedPiAgent()"]
-    Heartbeat["HEARTBEAT Runner (定期トリガ)"]
-    Skills["Agent Skills (SOUL.md / IDENTITY.md / HEARTBEAT.md ...)"]
-    MemorySearch["Memory Search (BM25 + Vector Hybrid)"]
-    ToolRouter["Tool Router (exec / nodes / browser / sessions_spawn)"]
-    NodeRegistry["Node Registry (node.invoke ルーティング)"]
-    GatewayExec["Gateway Exec Host (child_process.spawn)"]
-    SandboxExec["Sandbox Exec Host (default)"]
-    Subagent["Subagent Spawn (agent:<id>:subagent:<uuid>)"]
-  end
+  GatewayCore["Gateway（WebSocket制御プレーン）<br/>- Channel Adapters<br/>- Session Router<br/>- Pi Agent Runtime<br/>- HEARTBEAT Runner<br/>- Memory Search<br/>- Tool Router"]
 
   subgraph MemoryLayer["メモリ / ワークスペース"]
+    direction TB
     MdMemory["MEMORY.md / memory/YYYY-MM-DD.md"]
     SqlIndex["SQLite FTS5 + sqlite-vec (検索インデックス)"]
   end
 
-  subgraph Nodes["Node（オプション, role=node）"]
+  subgraph Nodes["Node（オプション・role=node）"]
+    direction LR
     NodeHost["node-host (CLI) openclaw node run"]
     MacNode["openclaw-macos"]
     MobileNode["openclaw-ios / openclaw-android"]
   end
 
-  LLM["LLM Provider (Anthropic/OpenAI/...)"]
+  ChannelList -->|inbound event| GatewayCore
+  WebUI -->|gateway rpc| GatewayCore
+  GatewayCore -->|outbound message| ChannelList
+  GatewayCore -->|stream/response| WebUI
 
-  Slack -->|inbound event| ChannelAdapters
-  Discord -->|inbound event| ChannelAdapters
-  Telegram -->|inbound event| ChannelAdapters
-  OtherChannels -->|inbound event| ChannelAdapters
-  WebUI -->|gateway rpc| SessionRouter
+  MdMemory -->|検索対象| GatewayCore
+  SqlIndex -->|検索インデックス| GatewayCore
+  GatewayCore -.記憶更新.-> MdMemory
+
+  GatewayCore -->|node.invoke.request| NodeHost
+  GatewayCore -->|node.invoke.request| MacNode
+  GatewayCore -->|node.invoke.request| MobileNode
+  NodeHost -->|node.invoke.result / node.event| GatewayCore
+  MacNode -->|node.invoke.result / node.event| GatewayCore
+  MobileNode -->|node.invoke.result / node.event| GatewayCore
+```
+
+```mermaid
+%%{init:{
+  "flowchart":{"htmlLabels":true,"useMaxWidth":true,"nodeSpacing":60,"rankSpacing":80},
+  "themeCSS":".cluster .nodeLabel{white-space:nowrap;} .node .nodeLabel{white-space:normal;}"
+}}%%
+flowchart TD
+  subgraph Gateway["Gateway内部詳細"]
+    direction TB
+
+    subgraph GControl["制御 / ルーティング層"]
+      direction LR
+      ChannelAdapters["Channel Adapters (webhook/ws inbound/outbound)"]
+      SessionRouter["Session Router / Message Routing"]
+    end
+
+    subgraph GAgent["Agent実行層"]
+      direction LR
+      Heartbeat["HEARTBEAT Runner (定期トリガ)"]
+      AgentRuntime["Pi Agent Runtime runEmbeddedPiAgent()"]
+      Skills["Agent Skills (SOUL.md / IDENTITY.md / HEARTBEAT.md ...)"]
+      MemorySearch["Memory Search (BM25 + Vector Hybrid)"]
+      LLM["LLM Provider (Anthropic/OpenAI/...)"]
+    end
+
+    subgraph GTools["Tool実行層"]
+      direction LR
+      ToolRouter["Tool Router (exec / nodes / browser / sessions_spawn)"]
+      SandboxExec["Sandbox Exec Host (default)"]
+      GatewayExec["Gateway Exec Host (child_process.spawn)"]
+      NodeRegistry["Node Registry (node.invoke ルーティング)"]
+      Subagent["Subagent Spawn (agent:<id>:subagent:<uuid>)"]
+    end
+  end
 
   ChannelAdapters --> SessionRouter
   SessionRouter --> AgentRuntime
@@ -88,9 +123,7 @@ flowchart LR
 
   AgentRuntime --> Skills
   AgentRuntime --> MemorySearch
-  MemorySearch <--> MdMemory
-  MemorySearch <--> SqlIndex
-
+  MemorySearch --> AgentRuntime
   AgentRuntime -->|model call| LLM
   LLM -->|completion/tool calls| AgentRuntime
 
@@ -100,21 +133,6 @@ flowchart LR
   ToolRouter -->|exec host=node / nodes.run| NodeRegistry
   ToolRouter -->|sessions_spawn| Subagent
   Subagent --> SessionRouter
-
-  NodeRegistry -->|node.invoke.request| NodeHost
-  NodeRegistry -->|node.invoke.request| MacNode
-  NodeRegistry -->|node.invoke.request| MobileNode
-  NodeHost -->|node.invoke.result / node.event| NodeRegistry
-  MacNode -->|node.invoke.result / node.event| NodeRegistry
-  MobileNode -->|node.invoke.result / node.event| NodeRegistry
-
-  AgentRuntime -->|reply| SessionRouter
-  SessionRouter --> ChannelAdapters
-  ChannelAdapters -->|outbound message| Slack
-  ChannelAdapters -->|outbound message| Discord
-  ChannelAdapters -->|outbound message| Telegram
-  ChannelAdapters -->|outbound message| OtherChannels
-  SessionRouter -->|stream/response| WebUI
 ```
 
 ### デバイス認証とNode同定
