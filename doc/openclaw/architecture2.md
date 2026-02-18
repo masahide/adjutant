@@ -42,12 +42,12 @@ OpenClawはGateway（WebSocket制御プレーン）とNode（デバイス実行�
 ```mermaid
 %%{init:{
   "flowchart":{"htmlLabels":true,"useMaxWidth":true,"nodeSpacing":60,"rankSpacing":80},
-  "themeCSS":".cluster .nodeLabel{white-space:nowrap;} .node .nodeLabel{white-space:normal;}"
+  "themeCSS":".cluster .nodeLabel{white-space:nowrap;} .node .nodeLabel{white-space:nowrap;}"
 }}%%
 flowchart TD
   subgraph Channels["外部チャネル / クライアント"]
     direction TB
-    ChannelList["Slack / Discord / Telegram / WhatsApp / Signal / iMessage / ..."]
+    ChannelList["Slack / Discord / Telegram<br/>/ WhatsApp / Signal / iMessage / ..."]
     WebUI["webchat-ui / CLI"]
   end
 
@@ -61,7 +61,7 @@ flowchart TD
 
   subgraph Nodes["Node（オプション・role=node）"]
     direction LR
-    NodeHost["node-host (CLI) openclaw node run"]
+    NodeHost["node-host (CLI)<br/>openclaw node run"]
     MacNode["openclaw-macos"]
     MobileNode["openclaw-ios / openclaw-android"]
   end
@@ -85,54 +85,35 @@ flowchart TD
 
 ```mermaid
 %%{init:{
-  "flowchart":{"htmlLabels":true,"useMaxWidth":true,"nodeSpacing":60,"rankSpacing":80},
-  "themeCSS":".cluster .nodeLabel{white-space:nowrap;} .node .nodeLabel{white-space:normal;}"
+  "flowchart":{"htmlLabels":true,"useMaxWidth":true,"nodeSpacing":40,"rankSpacing":50},
+  "themeCSS":".cluster .nodeLabel{white-space:nowrap;} .node .nodeLabel{white-space:nowrap;}"
 }}%%
 flowchart TD
-  subgraph Gateway["Gateway内部詳細"]
-    direction TB
+  Control["制御 / ルーティング層<br/>Channel Adapters -> Session Router"]
+  Agent["Agent実行層<br/>HEARTBEAT Runner -> Pi Agent Runtime"]
+  Tools["Tool実行層<br/>Tool Router"]
 
-    subgraph GControl["制御 / ルーティング層"]
-      direction LR
-      ChannelAdapters["Channel Adapters (webhook/ws inbound/outbound)"]
-      SessionRouter["Session Router / Message Routing"]
-    end
+  Control -->|message routing| Agent
+  Agent -->|tool call| Tools
 
-    subgraph GAgent["Agent実行層"]
-      direction LR
-      Heartbeat["HEARTBEAT Runner (定期トリガ)"]
-      AgentRuntime["Pi Agent Runtime runEmbeddedPiAgent()"]
-      Skills["Agent Skills (SOUL.md / IDENTITY.md / HEARTBEAT.md ...)"]
-      MemorySearch["Memory Search (BM25 + Vector Hybrid)"]
-      LLM["LLM Provider (Anthropic/OpenAI/...)"]
-    end
+  Skills["Agent Skills<br/>(SOUL.md / IDENTITY.md / HEARTBEAT.md ...)"]
+  MemorySearch["Memory Search<br/>(BM25 + Vector Hybrid)"]
+  LLM["LLM Provider<br/>(Anthropic/OpenAI/...)"]
 
-    subgraph GTools["Tool実行層"]
-      direction LR
-      ToolRouter["Tool Router (exec / nodes / browser / sessions_spawn)"]
-      SandboxExec["Sandbox Exec Host (default)"]
-      GatewayExec["Gateway Exec Host (child_process.spawn)"]
-      NodeRegistry["Node Registry (node.invoke ルーティング)"]
-      Subagent["Subagent Spawn (agent:<id>:subagent:<uuid>)"]
-    end
-  end
+  Agent -->|skills context| Skills
+  Agent -->|memory recall| MemorySearch
+  Agent -->|model call| LLM
+  LLM -->|completion/tool calls| Agent
 
-  ChannelAdapters --> SessionRouter
-  SessionRouter --> AgentRuntime
-  Heartbeat -->|timer tick| AgentRuntime
+  SandboxExec["Sandbox Exec Host (default)"]
+  GatewayExec["Gateway Exec Host<br/>(child_process.spawn)"]
+  NodeRegistry["Node Registry<br/>(node.invoke ルーティング)"]
+  Subagent["Subagent Spawn<br/>(agent:<id>:subagent:<uuid>)"]
 
-  AgentRuntime --> Skills
-  AgentRuntime --> MemorySearch
-  MemorySearch --> AgentRuntime
-  AgentRuntime -->|model call| LLM
-  LLM -->|completion/tool calls| AgentRuntime
-
-  AgentRuntime --> ToolRouter
-  ToolRouter -->|exec host=sandbox| SandboxExec
-  ToolRouter -->|exec host=gateway| GatewayExec
-  ToolRouter -->|exec host=node / nodes.run| NodeRegistry
-  ToolRouter -->|sessions_spawn| Subagent
-  Subagent --> SessionRouter
+  Tools -->|exec host=sandbox| SandboxExec
+  Tools -->|exec host=gateway| GatewayExec
+  Tools -->|exec host=node / nodes.run| NodeRegistry
+  Tools -->|sessions_spawn| Subagent
 ```
 
 ### デバイス認証とNode同定
