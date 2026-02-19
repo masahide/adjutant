@@ -43,6 +43,29 @@ function makeReactionEvent(uid: string): NormalizedEvent {
   };
 }
 
+function makeNotificationEvent(params: {
+  uid: string;
+  title?: string;
+  messageText?: string;
+  notificationType?: string;
+}): NormalizedEvent {
+  return {
+    schema: "adjutant.event.v1.1",
+    uid: params.uid,
+    source: "slack",
+    kind: "notification",
+    ts: "2026-02-17T00:00:00+09:00",
+    detail: {
+      slack: {
+        channel_id: "C100",
+        notification_type: params.notificationType,
+        title: params.title,
+        message_text: params.messageText,
+      },
+    },
+  };
+}
+
 describe("dispatch-adapter", () => {
   it("必須フィールド不足を拒否する", () => {
     assert.throws(
@@ -122,5 +145,51 @@ describe("dispatch-adapter", () => {
     });
 
     assert.deepEqual(dispatch.messageIds, ["1.1", "2.2"]);
+  });
+
+  it("notification の本文とタイトルを dispatch message に含める", () => {
+    const dispatch = toChatDispatchRequest({
+      accountId: "acc-1",
+      originSessionKey: "slack:channel:C100",
+      events: [
+        makePostEvent({ uid: "u-1", text: "hello" }),
+        makeNotificationEvent({
+          uid: "u-n1",
+          notificationType: "mention_notification",
+          title: "mention",
+          messageText: "ping from mention",
+        }),
+      ],
+    });
+
+    assert.equal(dispatch.message, "hello\n[Slack notification] mention: ping from mention");
+  });
+
+  it("notification 本文が無い場合は type 付き行を使う", () => {
+    const dispatch = toChatDispatchRequest({
+      accountId: "acc-1",
+      originSessionKey: "slack:channel:C100",
+      events: [
+        makeNotificationEvent({
+          uid: "u-n1",
+          notificationType: "desktop_notification",
+        }),
+      ],
+    });
+
+    assert.equal(dispatch.message, "[Slack notification] type=desktop_notification");
+  });
+
+  it("notification に表示可能な情報が無い場合は fallback trigger を使う", () => {
+    const dispatch = toChatDispatchRequest({
+      accountId: "acc-1",
+      originSessionKey: "slack:channel:C100",
+      events: [makeNotificationEvent({ uid: "u-n2" })],
+    });
+
+    assert.equal(
+      dispatch.message,
+      "[Slack trigger] New notification events were observed in this session."
+    );
   });
 });

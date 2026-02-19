@@ -13,6 +13,7 @@ const REACTION_TRIGGER_MESSAGE =
   "[Slack trigger] New reaction events were observed in this session.";
 const NOTIFICATION_TRIGGER_MESSAGE =
   "[Slack trigger] New notification events were observed in this session.";
+const NOTIFICATION_PREFIX = "[Slack notification]";
 const TRUNCATION_MARKER = "\n...[truncated]...\n";
 
 type DispatchMessageStats = {
@@ -74,6 +75,38 @@ function extractText(event: NormalizedEvent): string | null {
   return null;
 }
 
+function pickTrimmed(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function extractNotificationLine(event: NormalizedEvent): string | null {
+  if (event.kind !== "notification") {
+    return null;
+  }
+  const slack = extractSlackDetail(event);
+  const title = pickTrimmed(slack?.title);
+  const messageText = pickTrimmed(slack?.message_text);
+  const notificationType = pickTrimmed(slack?.notification_type);
+
+  if (title && messageText) {
+    return `${NOTIFICATION_PREFIX} ${title}: ${messageText}`;
+  }
+  if (messageText) {
+    return `${NOTIFICATION_PREFIX} ${messageText}`;
+  }
+  if (title) {
+    return `${NOTIFICATION_PREFIX} ${title}`;
+  }
+  if (notificationType) {
+    return `${NOTIFICATION_PREFIX} type=${notificationType}`;
+  }
+  return null;
+}
+
 function extractMessageTs(event: NormalizedEvent): string | null {
   const slack = extractSlackDetail(event);
   const messageTs = slack?.message_ts;
@@ -85,6 +118,7 @@ function extractMessageTs(event: NormalizedEvent): string | null {
 
 function buildDispatchMessage(events: NormalizedEvent[]): string {
   const postLines: string[] = [];
+  const notificationLines: string[] = [];
   let hasReaction = false;
   let hasNotification = false;
 
@@ -102,15 +136,19 @@ function buildDispatchMessage(events: NormalizedEvent[]): string {
     }
     if (event.kind === "notification") {
       hasNotification = true;
+      const notificationLine = extractNotificationLine(event);
+      if (notificationLine) {
+        notificationLines.push(notificationLine);
+      }
       continue;
     }
   }
 
-  const lines = [...postLines];
+  const lines = [...postLines, ...notificationLines];
   if (hasReaction) {
     lines.push(REACTION_TRIGGER_MESSAGE);
   }
-  if (hasNotification) {
+  if (hasNotification && notificationLines.length === 0) {
     lines.push(NOTIFICATION_TRIGGER_MESSAGE);
   }
   return lines.join("\n").trim();
