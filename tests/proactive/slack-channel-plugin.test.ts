@@ -7,8 +7,8 @@ import type {
   ChannelAccountSnapshot,
   ChannelGatewayContext,
   ChannelNotificationInput,
-} from "../../src/openclaw/channel-plugin.js";
-import { createSlackChannelPlugin } from "../../src/openclaw/slack-channel-plugin.js";
+} from "../../src/proactive/channel-plugin.js";
+import { createSlackChannelPlugin } from "../../src/proactive/slack-channel-plugin.js";
 
 class FakeClient extends EventEmitter {
   closeCount = 0;

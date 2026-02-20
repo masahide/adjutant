@@ -11,6 +11,7 @@ Slack Desktop の Chrome DevTools Protocol (CDP) からイベントを収集し�
 - チャンネル名・ユーザー名の team 単位キャッシュ (`data/_cache/slack/`)
 - オプションの Debug UI (`ADJUTANT_DEBUG_UI=1`)
 - AI アシスタント: HTTP API + SSE ストリーミング + Web UI (`src/assistant/`, `src/ui/`)
+- Slack通知の一次判定（`TriggerFilter.secondaryClassifier`）に OpenAI 軽量モデルを接続可能
 
 GitHub / ローカル Git 収集や日次要約は未実装で、仕様メモは `doc/spec.md` にあります。
 
@@ -73,6 +74,11 @@ pnpm check               # format -> typecheck -> test
 | `ADJUTANT_VITE_PORT`                       | `5173`                              | AI アシスタント Web UI（Vite）のポート                                  |
 | `ADJUTANT_WORKSPACE_DIR`                   | `ADJUTANT_DATA_DIR` と同値          | アシスタントのワークスペースディレクトリ                                |
 | `ADJUTANT_SESSION_ENTRIES_PATH`            | `./data/_assistant/sessions.json`   | アシスタントのセッションメタ情報（`sessionId`, `sessionFile`）保存先    |
+| `ADJUTANT_ROUTE_LLM_ENABLED`               | `0`                                 | Slack通知の一次判定に OpenAI route LLM を使うかどうか                   |
+| `ADJUTANT_ROUTE_LLM_MODEL`                 | `gpt-5-mini`                        | route LLM に使用する OpenAI モデル名                                    |
+| `ADJUTANT_ROUTE_LLM_TIMEOUT_MS`            | `1000`                              | route LLM 判定のタイムアウト（ミリ秒）                                  |
+| `ADJUTANT_ROUTE_LLM_MAX_CONCURRENT`        | `1`                                 | route LLM 判定の同時実行上限（1で逐次）                                 |
+| `OPENAI_API_KEY`                           | -                                   | route LLM 有効時に利用する OpenAI API キー                              |
 
 ## AI セッションコンテキスト方針
 

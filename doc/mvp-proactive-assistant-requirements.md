@@ -11,9 +11,9 @@
   - `vendor/openclaw/docs/gateway/heartbeat.md`
   - `vendor/openclaw/src/agents/pi-embedded-runner/run/attempt.ts`
 - 調査メモ:
-  - `doc/openclaw/doc0.md`
-  - `doc/openclaw/doc1.md`
-  - `doc/openclaw/doc2.md`
+  - `doc/reference/openclaw/doc0.md`
+  - `doc/reference/openclaw/doc1.md`
+  - `doc/reference/openclaw/doc2.md`
 
 ## 1. 背景と目的
 

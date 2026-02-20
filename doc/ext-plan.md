@@ -12,14 +12,14 @@
 ### 1.1 進捗同期メモ（2026-02-18）
 
 - モジュール実装済み（単体/統合テストあり）:
-- `src/openclaw/channel-manager.ts`
-- `src/openclaw/plugin-registry.ts`
-- `src/openclaw/channel-notification-pipeline.ts`
-- `src/openclaw/dual-write-coordinator.ts`
-- `src/openclaw/heartbeat-scanner.ts`
+- `src/proactive/channel-manager.ts`
+- `src/proactive/plugin-registry.ts`
+- `src/proactive/channel-notification-pipeline.ts`
+- `src/proactive/dual-write-coordinator.ts`
+- `src/proactive/heartbeat-scanner.ts`
 - 起動配線実装済み:
 - `src/assistant/main.ts` で `ChannelManager.startChannels()` を実行
-- `src/openclaw/slack-channel-plugin.ts` を追加し、`startAccount()` から `ChannelNotificationPipeline` へ本番接続
+- `src/proactive/slack-channel-plugin.ts` を追加し、`startAccount()` から `ChannelNotificationPipeline` へ本番接続
 - `src/assistant/main.ts` で timeline/session 二重追記と `pending-session-backfill` 連携を有効化
 - `pnpm run assistant` 単体で 収集 + AI/API/UI を同時起動可能（`pnpm start` は検証用途として残置）
 
@@ -115,7 +115,7 @@
 
 ### 3.2 Channel -> AI 通知パイプライン（Fast Path）
 
-新設コンポーネント（仮）: `src/openclaw/channel-notification-pipeline.ts`  
+新設コンポーネント（仮）: `src/proactive/channel-notification-pipeline.ts`  
 内部責務は OpenClaw 準拠で分離する。
 
 - `trigger-filter`:
@@ -454,41 +454,41 @@ idempotencyKey 生成規則（初期版）:
 - [x] `GatewayRuntime`（plugin registry + ChannelManager + assistant runtime）の統合起動**方針**を確定
 - [x] `ChannelIngestionPlugin` 契約（`startAccount/stopAccount/emit/status`）の**要求仕様**を確定
 - [x] Slack 起動経路を `startAccount(ctx)` へ移行する**方針**を確定
-- [ ] sessionKey解決ルール（channel/thread/account）を確定
+- [x] sessionKey解決ルール（channel/thread/account）を確定
 - [x] accountId取得方式（初期版: `ADJUTANT_SLACK_ACCOUNT_ID` -> `"default"`）を確定
 - [x] メンション/トリガー判定ルール（初期版: 全イベント、self-message除外）を確定
 - [x] `kind=post` inbound/outbound 識別ルール（受信のみ post）を確定
 - [x] `contextKey` 生成規則（post/reaction/notification）を確定
 - [x] self 判定未解決時の fail-safe ルールを確定
 - [x] truncation 情報の API 契約（構造化フィールド）を確定
-- [ ] `NormalizedEvent -> ChatHandler.acceptMessage` 変換仕様を確定
+- [x] `NormalizedEvent -> ChatHandler.acceptMessage` 変換仕様を確定
 - [x] 通知キュー設定値（cap/debounce/drop）を確定
-- [ ] `HEARTBEAT.md` / `AGENTS.md` のテンプレート配置方針を確定
+- [x] `HEARTBEAT.md` / `AGENTS.md` のテンプレート配置方針を確定
 - [x] heartbeat責務境界（統合タイムライン逆走査判定 + 条件一致時のみ自律応答）を確定
 
 ### Phase 2 キュー基盤
 
-- [ ] `ChannelManager` 実装（`startChannels/startChannel/stopChannel` + account別状態管理）
-- [ ] `trigger-filter` / `inbound-debounce-buffer` / `notification-queue` の分離実装
-- [ ] `notification-queue` 実装（有界キュー + summarize）
-- [ ] `command-queue` 拡張（lane concurrency / clear）
-- [ ] system event 連携（enqueue/drainの接続）
-- [ ] plugin registry 実装（channel plugin 登録・起動順制御）
-- [ ] `trigger-filter` / `inbound-debounce-buffer` のユニットテスト追加
-- [ ] `notification-queue` / `system-event-queue` のユニットテスト追加
-- [ ] `command-queue` lane制御のユニットテスト追加
+- [x] `ChannelManager` 実装（`startChannels/startChannel/stopChannel` + account別状態管理）
+- [x] `trigger-filter` / `inbound-debounce-buffer` / `notification-queue` の分離実装
+- [x] `notification-queue` 実装（有界キュー + summarize）
+- [x] `command-queue` 拡張（lane concurrency / clear）
+- [x] system event 連携（enqueue/drainの接続）
+- [x] plugin registry 実装（channel plugin 登録・起動順制御）
+- [x] `trigger-filter` / `inbound-debounce-buffer` のユニットテスト追加
+- [x] `notification-queue` / `system-event-queue` のユニットテスト追加
+- [x] `command-queue` lane制御のユニットテスト追加
 
 ### Phase 3 統合
 
-- [ ] Slack plugin `startAccount()` 出力を JSONL + Fast Path へ二重配送
-- [ ] ChatHandler への dispatch 変換経路を実装（idempotencyKey生成含む）
-- [ ] 2チャネル目（例: Telegram）を plugin 追加だけで接続できることを検証
-- [ ] 統合起動コマンド整理（README/起動手順更新）
+- [x] Slack plugin `startAccount()` 出力を JSONL + Fast Path へ二重配送
+- [x] ChatHandler への dispatch 変換経路を実装（idempotencyKey生成含む）
+- [x] 2チャネル目（例: Telegram）を plugin 追加だけで接続できることを検証
+- [x] 統合起動コマンド整理（README/起動手順更新）
 
 ### Phase 4 検証
 
-- [ ] queue overflow / dedupe / debounce テスト追加
-- [ ] session lane 順序保証テスト追加
+- [x] queue overflow / dedupe / debounce テスト追加
+- [x] session lane 順序保証テスト追加
 - [x] heartbeat 巡回（統合タイムライン逆走査 + 最新の対応境界までの区間判定で skip / stale post 有りかつ `pending-session-backfill` 未滞留時のみ自律応答起動）の E2E 観点テスト追加
 - [x] `pnpm check` 通過
 
@@ -503,6 +503,7 @@ idempotencyKey 生成規則（初期版）:
 - heartbeat責務は「統合タイムライン（1ファイル）逆走査判定 + 条件一致時のみ自律応答」とし、`pending-session-backfill` 滞留中は起動見送りとする（常時起動はしない）。
 - `reaction/notification` pending は単独 heartbeat では起動せず、次回 `post` 起点 run で補助コンテキストとして回収する。
 - Fast Path の対象イベントは初期版で全イベント（`post|reaction|notification`）とし、各イベントを `run/pending` へルーター判定する。
+- 軽量LLM一次判定は OpenAI を採用し、`ADJUTANT_ROUTE_LLM_ENABLED` / `ADJUTANT_ROUTE_LLM_MODEL` / `ADJUTANT_ROUTE_LLM_TIMEOUT_MS` / `ADJUTANT_ROUTE_LLM_MAX_CONCURRENT` で制御する。
 - コスト方針は「必要コストは許容、ただし無尽蔵化は避ける」とし、初期版は cap/debounce/concurrency/log で制御する。
 - デバウンス窓内で event kind 混在を許容する（初期版）。
 - `kind=post` は受信イベント専用（outbound は別 kind 扱い / Fast Path 対象外）。

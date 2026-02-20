@@ -13,11 +13,19 @@ export {
   isSystemEventContextChanged,
 } from "./system-event-queue.js";
 
-export type { CommandFn, CommandQueueOptions } from "./command-queue.js";
+export type {
+  CommandFn,
+  CommandQueueOptions,
+  LaneQueueOptions,
+  QueueWaitWarning,
+} from "./command-queue.js";
 export {
   resolveSessionLane,
   enqueueCommandInLane,
   enqueueCommand,
+  setCommandLaneConcurrency,
+  clearCommandLane,
+  CommandQueueClearedError,
   getQueueSize,
   isIdle,
   isGlobalIdle,

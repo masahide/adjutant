@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { NormalizedEvent } from "../../src/core/events.js";
-import { createTriggerFilter } from "../../src/openclaw/trigger-filter.js";
+import { createTriggerFilter } from "../../src/proactive/trigger-filter.js";
 
 function makeEvent(kind: NormalizedEvent["kind"]): NormalizedEvent {
   return {
@@ -55,6 +55,47 @@ describe("trigger-filter", () => {
     assert.equal(decision.pending, false);
     assert.equal(warnings.length, 1);
     assert.equal(warnings[0]?.message, "secondary-classifier-fallback-to-primary");
+  });
+
+  it("secondary classifier が例外を投げたら primary へフォールバックする", async () => {
+    const warnings: Array<{ message: string; meta?: Record<string, unknown> }> = [];
+    const filter = createTriggerFilter({
+      primaryClassifier: () => "pending",
+      secondaryClassifier: async () => {
+        throw new Error("llm unavailable");
+      },
+      warn: (message, meta) => warnings.push({ message, meta }),
+    });
+
+    const decision = await filter.decide({
+      event: makeEvent("post"),
+      selfState: "non-self",
+    });
+
+    assert.equal(decision.run, false);
+    assert.equal(decision.pending, true);
+    assert.equal(warnings.length, 1);
+    assert.equal(warnings[0]?.message, "secondary-classifier-fallback-to-primary");
+  });
+
+  it("secondary classifier が契約外値を返したら primary へフォールバックする", async () => {
+    const warnings: Array<{ message: string; meta?: Record<string, unknown> }> = [];
+    const filter = createTriggerFilter({
+      primaryClassifier: () => "run",
+      secondaryClassifier: async () => "invalid" as unknown as "run",
+      warn: (message, meta) => warnings.push({ message, meta }),
+    });
+
+    const decision = await filter.decide({
+      event: makeEvent("post"),
+      selfState: "non-self",
+    });
+
+    assert.equal(decision.run, true);
+    assert.equal(decision.pending, false);
+    assert.equal(warnings.length, 1);
+    assert.equal(warnings[0]?.message, "secondary-classifier-fallback-to-primary");
+    assert.equal(warnings[0]?.meta?.reason, "invalid-secondary-outcome");
   });
 
   it("self 判定不可 reaction は常に system-only", async () => {

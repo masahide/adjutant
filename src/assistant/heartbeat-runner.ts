@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
-import { scanHeartbeatTimeline } from "../openclaw/heartbeat-scanner.js";
+import { scanHeartbeatTimeline } from "../proactive/heartbeat-scanner.js";
 import { buildEventContext } from "./context-builder.js";
 import { readEvents } from "./event-reader.js";
 import { runAgent, type AgentRunOptions, type AgentRunResult } from "./agent-runner.js";

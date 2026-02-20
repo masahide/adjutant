@@ -18,7 +18,7 @@ s01（データ・キュー基盤）、s02（AI 実行層）、s03（API + UI）
 補足:
 
 - `node --import tsx --test tests/assistant/idempotency-registry.test.ts tests/assistant/chat-handler.test.ts tests/assistant/main-adapter.test.ts` は通過済み。
-- `pnpm run check` は現時点で `prettier --check`（`doc/openclaw/ext-plan.md`, `doc/openclaw/session-plan.md`, `doc/plan/260217-s01-openclaw-proactive-gateway-integration.md`）で停止し、全体完走できない。
+- `pnpm run check` は現時点で `prettier --check`（`doc/reference/openclaw/ext-plan.md`, `doc/reference/openclaw/session-plan.md`, `doc/plan/260217-s01-openclaw-proactive-gateway-integration.md`）で停止し、全体完走できない。
 
 ## 変更内容
 

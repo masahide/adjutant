@@ -53,3 +53,58 @@ OpenClawの標準機能を最大限活用し、コンテキストウィンドウ
 - **排他制御（セッションロック）の回避**: メインエージェントの実行中はセッションがロックされるため、全通知を直接メインエージェントに流し込まず、ルーター層による流量制限を徹底する。
 - **コスト最適化**: ツール実行や文脈理解を伴う重い推論（LLM）は、要対応事案とハートビートのみに限定し、無駄なAPIコールを防ぐ。
 - **情報隔離とセキュリティ**: グループチャットやパブリックチャンネル固有のセッションでは `MEMORY.md` を絶対にロードさせず 、プライバシーの保護を徹底する。司令塔のみが全容を知る設計とする。
+
+## 5. 実装で確定した追加要件（2026-02-20）
+
+### 5.1. 単一ランタイム構成
+
+- `pnpm run assistant` 起動で、API/UI・Heartbeat・ChannelManager・Slack plugin を同一プロセスで起動する。
+- チャネル連携は `ChannelIngestionPlugin` 契約（`startAccount/stopAccount`）と `ChannelManager` に統一する。
+
+### 5.2. Fast Path の判定契約
+
+- ルーター判定結果は `RouteDecision`（`run/pending/system/drop`）で表現する。
+- `drop=true` は他フラグと排他とする。
+- `run=true` と `pending=true` は同時に許可しない。
+- self-message は `post/reaction/notification` をすべて `drop` する（ループ防止）。
+- self 判定不可時の fail-safe は `post` を `drop`、`reaction/notification` を `system-only`（`run` 禁止）とする。
+
+### 5.3. 通知キューとデバウンス
+
+- 通知キューはセッション系キー単位で有界運用する。
+- 既定値は `cap=20`、`debounceMs=1000`、`dropPolicy=summarize`、`maxDispatchChars=4000`、`maxEventUidsPerDispatch=50` とする。
+- queue key は `accountId:sessionKey:senderId:threadKey` で生成し、欠落時は `unknown-sender` と `channel:{channelKey|sessionKey}` にフォールバックする。
+
+### 5.4. Dispatch/API 契約
+
+- Fast Path は `NormalizedEvent` 群を `ChatDispatchRequest` に変換し、`POST /api/chat/messages` へ送る。
+- API最小契約は `message/sessionKey/idempotencyKey` を維持する。
+- `idempotencyKey` は `sha256(sessionKey + "\\n" + sorted(eventUids).join("\\n"))` で決定的に生成する。
+- 文字数上限超過時は切り詰めを行い、`messageTruncated/originalCharCount/dispatchedCharCount` を付与する。
+
+### 5.5. 統合タイムラインとセッション JSONL の二重追記
+
+- inbound event は統合タイムライン（`memory/timeline.jsonl`）と session JSONL の二重追記を行う。
+- 書き込み順は timeline を先行し、失敗時は `pending-timeline` として run/pending 判定を停止する。
+- session 側失敗時は `pending-session-backfill` に退避し、run/pending は継続する。
+- retry は `uid` 単位で idempotent に再実行し、未解消が長時間継続した場合は warning を出す。
+
+### 5.6. Slow Path（Heartbeat）判定の具体化
+
+- 判定データソースは統合タイムライン `memory/timeline.jsonl` のみを使用する。
+- 末尾から逆走査し、最初の `role=assistant | role=tool | recordType=action` を最新対応境界として打ち切る。
+- 末尾から境界までに stale な `recordType=event && role=user && kind=post` がある場合のみ起動する。
+- 該当 `uid` が `pending-session-backfill` に存在する場合は、文脈欠落を避けるため `skip` する。
+
+### 5.7. MEMORY 権限分離（実装確定）
+
+- `runAgent` の `memoryScope` で main/spoke を分離する。
+- main セッションのみ `MEMORY.md` / `memory/*.md` をロードし、spoke セッションでは常時 skip する。
+
+### 5.8. 軽量LLM一次判定の実装拡張ポイント
+
+- `TriggerFilter` は一次判定に加えて `secondaryClassifier` を受け取れる設計とする。
+- `secondaryClassifier` は timeout（既定 `1000ms`）時に一次判定へフォールバックする。
+- route LLM の実行プロバイダは OpenAI とし、環境変数は `ADJUTANT_ROUTE_LLM_ENABLED` / `ADJUTANT_ROUTE_LLM_MODEL` / `ADJUTANT_ROUTE_LLM_TIMEOUT_MS` / `ADJUTANT_ROUTE_LLM_MAX_CONCURRENT` / `OPENAI_API_KEY` を使用する。
+- route LLM の出力契約は JSON（`{ outcome: "run" | "pending", confidence?: number, reason?: string }`）とし、契約外値・不正JSON・例外時はいずれも deterministic 判定へフォールバックする。
+- route LLM の判定監査ログは本文を含めず、`uid` / `eventKind` / `model` / `outcome` / `durationMs` / `fallback reason` を記録する。

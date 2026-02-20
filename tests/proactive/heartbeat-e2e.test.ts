@@ -10,10 +10,10 @@ import {
   setHeartbeatRuntimeForTest,
   startHeartbeat,
 } from "../../src/assistant/heartbeat-runner.js";
-import { createChannelNotificationPipeline } from "../../src/openclaw/channel-notification-pipeline.js";
-import { createDualWriteCoordinator } from "../../src/openclaw/dual-write-coordinator.js";
-import type { ChannelNotificationInput } from "../../src/openclaw/channel-plugin.js";
-import { createTriggerFilter } from "../../src/openclaw/trigger-filter.js";
+import { createChannelNotificationPipeline } from "../../src/proactive/channel-notification-pipeline.js";
+import { createDualWriteCoordinator } from "../../src/proactive/dual-write-coordinator.js";
+import type { ChannelNotificationInput } from "../../src/proactive/channel-plugin.js";
+import { createTriggerFilter } from "../../src/proactive/trigger-filter.js";
 
 async function waitUntil(
   predicate: () => boolean,

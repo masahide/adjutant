@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import {
   createDualWriteCoordinator,
   type DualWriteRecord,
-} from "../../src/openclaw/dual-write-coordinator.js";
+} from "../../src/proactive/dual-write-coordinator.js";
 
 function makeRecord(uid: string, recordType: string): DualWriteRecord {
   return {

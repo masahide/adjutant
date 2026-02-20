@@ -8,7 +8,7 @@ import {
   parseTimelineJsonl,
   scanHeartbeatTimeline,
   type HeartbeatTimelineRecord,
-} from "../../src/openclaw/heartbeat-scanner.js";
+} from "../../src/proactive/heartbeat-scanner.js";
 
 function makeRecord(overrides: Partial<HeartbeatTimelineRecord> = {}): HeartbeatTimelineRecord {
   return {

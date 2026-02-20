@@ -1,7 +1,7 @@
 # OpenClaw Proactive Gateway Integration Plan
 
 この計画書の正本は `doc/plan/260217-s01-openclaw-proactive-gateway-integration.md` とする。
-詳細仕様の正本は `doc/openclaw/ext-plan.md` とし、実装の微細規約は同ファイルを参照する。
+詳細仕様の正本は `doc/reference/openclaw/ext-plan.md` とし、実装の微細規約は同ファイルを参照する。
 
 ## 1. 概要と目的 Overview and Purpose
 
@@ -66,37 +66,37 @@
 
 実装時は以下をこの計画書の補助契約として必ず参照する。
 
-| 項目                              | 参照先                                 |
-| --------------------------------- | -------------------------------------- |
-| 処理順序 9 ステップ               | `doc/openclaw/ext-plan.md` の `3.2.1`  |
-| デバウンス後 cap 判定             | `doc/openclaw/ext-plan.md` の `3.2.2`  |
-| `kind=post` inbound/outbound 識別 | `doc/openclaw/ext-plan.md` の `3.2.4`  |
-| summarize drop policy 詳細        | `doc/openclaw/ext-plan.md` の `3.2.5`  |
-| queue key フォールバック          | `doc/openclaw/ext-plan.md` の `3.2.6`  |
-| イベント種別ルーティング表        | `doc/openclaw/ext-plan.md` の `3.2.7`  |
-| run message 生成規則              | `doc/openclaw/ext-plan.md` の `3.2.8`  |
-| run + system 重複規約             | `doc/openclaw/ext-plan.md` の `3.2.9`  |
-| contextKey 生成規則               | `doc/openclaw/ext-plan.md` の `3.2.10` |
-| dispatch サイズ上限               | `doc/openclaw/ext-plan.md` の `3.2.11` |
-| pending 一括回収                  | `doc/openclaw/ext-plan.md` の `3.2.12` |
-| accountId/sessionKey 契約         | `doc/openclaw/ext-plan.md` の `4.2`    |
+| 項目                              | 参照先                                           |
+| --------------------------------- | ------------------------------------------------ |
+| 処理順序 9 ステップ               | `doc/reference/openclaw/ext-plan.md` の `3.2.1`  |
+| デバウンス後 cap 判定             | `doc/reference/openclaw/ext-plan.md` の `3.2.2`  |
+| `kind=post` inbound/outbound 識別 | `doc/reference/openclaw/ext-plan.md` の `3.2.4`  |
+| summarize drop policy 詳細        | `doc/reference/openclaw/ext-plan.md` の `3.2.5`  |
+| queue key フォールバック          | `doc/reference/openclaw/ext-plan.md` の `3.2.6`  |
+| イベント種別ルーティング表        | `doc/reference/openclaw/ext-plan.md` の `3.2.7`  |
+| run message 生成規則              | `doc/reference/openclaw/ext-plan.md` の `3.2.8`  |
+| run + system 重複規約             | `doc/reference/openclaw/ext-plan.md` の `3.2.9`  |
+| contextKey 生成規則               | `doc/reference/openclaw/ext-plan.md` の `3.2.10` |
+| dispatch サイズ上限               | `doc/reference/openclaw/ext-plan.md` の `3.2.11` |
+| pending 一括回収                  | `doc/reference/openclaw/ext-plan.md` の `3.2.12` |
+| accountId/sessionKey 契約         | `doc/reference/openclaw/ext-plan.md` の `4.2`    |
 
 実装同期先（Phase 4 現時点）:
 
-- ルーティング state machine / validator: `src/openclaw/route-decision.ts`
-- 非同期 trigger-filter: `src/openclaw/trigger-filter.ts`
-- `resolveAgentRoute + resolveThreadSessionKeys + queue key` フォールバック: `src/openclaw/session-route-resolver.ts`
-- `NormalizedEvent -> ChatDispatchRequest -> API request` 変換: `src/openclaw/dispatch-adapter.ts`
-- plugin registry / ChannelManager / `startAccount` 統合経路: `src/openclaw/plugin-registry.ts`, `src/openclaw/channel-manager.ts`
-- system event enqueue 接続を含む通知パイプライン: `src/openclaw/channel-notification-pipeline.ts`
-- timeline -> session 二重追記と pending/backfill 回復: `src/openclaw/dual-write-coordinator.ts`
-- heartbeat の統合タイムライン逆走査判定: `src/openclaw/heartbeat-scanner.ts`, `src/assistant/heartbeat-runner.ts`
-- heartbeat 自律 tick の E2E 観点検証: `tests/openclaw/heartbeat-e2e.test.ts`
+- ルーティング state machine / validator: `src/proactive/route-decision.ts`
+- 非同期 trigger-filter: `src/proactive/trigger-filter.ts`
+- `resolveAgentRoute + resolveThreadSessionKeys + queue key` フォールバック: `src/proactive/session-route-resolver.ts`
+- `NormalizedEvent -> ChatDispatchRequest -> API request` 変換: `src/proactive/dispatch-adapter.ts`
+- plugin registry / ChannelManager / `startAccount` 統合経路: `src/proactive/plugin-registry.ts`, `src/proactive/channel-manager.ts`
+- system event enqueue 接続を含む通知パイプライン: `src/proactive/channel-notification-pipeline.ts`
+- timeline -> session 二重追記と pending/backfill 回復: `src/proactive/dual-write-coordinator.ts`
+- heartbeat の統合タイムライン逆走査判定: `src/proactive/heartbeat-scanner.ts`, `src/assistant/heartbeat-runner.ts`
+- heartbeat 自律 tick の E2E 観点検証: `tests/proactive/heartbeat-e2e.test.ts`
 
 配線完了事項（2026-02-18 更新）:
 
 - `assistant` 起動経路で `ChannelManager.startChannels()` を実行（`src/assistant/main.ts`）
-- Slack plugin `startAccount()` から `ChannelNotificationPipeline` への本番接続（`src/openclaw/slack-channel-plugin.ts`）
+- Slack plugin `startAccount()` から `ChannelNotificationPipeline` への本番接続（`src/proactive/slack-channel-plugin.ts`）
 - timeline/session 二重追記と `pending-session-backfill` 連携を assistant runtime へ接続（`src/assistant/main.ts`）
 - `pnpm run assistant` 単体で 収集 + AI/API/UI を同時起動可能（`pnpm start` は検証用途として残置）
 
@@ -384,7 +384,7 @@ sequenceDiagram
 ### Phase 1 設計と準備
 
 - [x] P1-01 仕様確定: Fast Path ルーティング、heartbeat 逆走査境界、JSONL 固定。
-- [x] P1-02 参照分離: 詳細仕様正本を `doc/openclaw/ext-plan.md` に戻し、計画書から参照マップを定義。
+- [x] P1-02 参照分離: 詳細仕様正本を `doc/reference/openclaw/ext-plan.md` に戻し、計画書から参照マップを定義。
 - [x] P1-03 契約補強: RouteDecision フラグ制約、二重追記回復契約、API 接続契約を追加。
 - [x] P1-04 testing 方針を `node:test` へ統一。
 - [x] P1-05 TODO `sessions_send` と `message` の将来使い分け規約を確定。
@@ -436,7 +436,7 @@ sequenceDiagram
 - [x] `node:test` の Unit/Integration/Contract がすべてパスする。
 - [x] `pnpm check` が成功する。
 - [ ] queue overflow timeout self判定不可のログが期待どおり出る。
-- [x] `doc/plan/...` と `doc/openclaw/ext-plan.md` の参照整合が保たれている。
+- [x] `doc/plan/...` と `doc/reference/openclaw/ext-plan.md` の参照整合が保たれている。
 
 ## 9. 懸念事項と未確定事項 Concerns and Questions
 

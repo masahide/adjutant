@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-Main runtime lives in `src/index.ts`, a TypeScript entry that connects to Chrome DevTools Protocol and normalizes Slack events. Long-form design notes sit in `docs/spec.md` and should be kept in sync with any architecture shifts. Operational helpers for CDP proxies and Slack launchers reside under `hack/`, while temporary data or build artefacts must stay outside the tracked tree.
+Main runtime lives in `src/index.ts`, a TypeScript entry that connects to Chrome DevTools Protocol and normalizes Slack events. Long-form design notes sit in `doc/spec.md` and should be kept in sync with any architecture shifts. Operational helpers for CDP proxies and Slack launchers reside under `hack/`, while temporary data or build artefacts must stay outside the tracked tree.
 
 ## Build, Test, and Development Commands
 

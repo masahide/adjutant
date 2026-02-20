@@ -6,7 +6,7 @@ import {
   resolveAgentRoute,
   resolveQueueKey,
   resolveThreadSessionKeys,
-} from "../../src/openclaw/session-route-resolver.js";
+} from "../../src/proactive/session-route-resolver.js";
 
 function makeEvent(meta?: Record<string, unknown>): NormalizedEvent {
   return {

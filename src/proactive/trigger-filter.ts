@@ -64,6 +64,13 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T
   });
 }
 
+function normalizeSecondaryOutcome(value: unknown): RouterOutcome | null {
+  if (value === "run" || value === "pending") {
+    return value;
+  }
+  return null;
+}
+
 export function createTriggerFilter(options: TriggerFilterOptions = {}): TriggerFilter {
   const primaryClassifier = options.primaryClassifier ?? defaultPrimaryClassifier;
   const secondaryTimeoutMs = Math.max(
@@ -88,8 +95,15 @@ export function createTriggerFilter(options: TriggerFilterOptions = {}): Trigger
             }),
             secondaryTimeoutMs
           );
-          if (secondaryOutcome === "run" || secondaryOutcome === "pending") {
-            routerOutcome = secondaryOutcome;
+          const normalizedOutcome = normalizeSecondaryOutcome(secondaryOutcome);
+          if (normalizedOutcome) {
+            routerOutcome = normalizedOutcome;
+          } else if (secondaryOutcome !== undefined) {
+            options.warn?.("secondary-classifier-fallback-to-primary", {
+              reason: "invalid-secondary-outcome",
+              eventKind,
+              uid: input.event.uid,
+            });
           }
         } catch (error) {
           options.warn?.("secondary-classifier-fallback-to-primary", {

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { NormalizedEvent } from "../../src/core/events.js";
-import { toApiRequest, toChatDispatchRequest } from "../../src/openclaw/dispatch-adapter.js";
+import { toApiRequest, toChatDispatchRequest } from "../../src/proactive/dispatch-adapter.js";
 
 function makePostEvent(params: {
   uid: string;

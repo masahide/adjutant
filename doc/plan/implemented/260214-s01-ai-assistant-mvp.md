@@ -1217,89 +1217,89 @@ stateDiagram-v2
 
 ### Phase 1: 基盤準備
 
-- [ ] 要件定義レビュー・確定
-- [ ] `package.json` に `"assistant"` スクリプトを追加（P-01 前提）
-- [ ] pi-coding-agent SDK の依存追加と接続確認
-- [ ] assistant-ui 基盤セットアップ（Vite + React）
-- [ ] assistant/prompts/HEARTBEAT.md テンプレート作成
-- [ ] assistant/prompts/SOUL.md テンプレート作成
-- [ ] assistant/prompts/USER.md / assistant/prompts/AGENTS.md テンプレート作成
+- [x] 要件定義レビュー・確定
+- [x] `package.json` に `"assistant"` スクリプトを追加（P-01 前提）
+- [x] pi-coding-agent SDK の依存追加と接続確認
+- [x] assistant-ui 基盤セットアップ（Vite + React）
+- [x] assistant/prompts/HEARTBEAT.md テンプレート作成
+- [x] assistant/prompts/SOUL.md テンプレート作成
+- [x] assistant/prompts/USER.md / assistant/prompts/AGENTS.md テンプレート作成
 
 ### Phase 2: EventReader + SystemEventQueue
 
-- [ ] Test: JSONL 読み込みの失敗テスト作成 (Red)
-- [ ] Impl: `readEvents()` 実装 (Green)
-- [ ] Test: SystemEventQueue の enqueue/drain テスト (Red)
-- [ ] Impl: SystemEventQueue 実装 (Green)
-- [ ] Refactor: フィルタオプション整理
+- [x] Test: JSONL 読み込みの失敗テスト作成 (Red)
+- [x] Impl: `readEvents()` 実装 (Green)
+- [x] Test: SystemEventQueue の enqueue/drain テスト (Red)
+- [x] Impl: SystemEventQueue 実装 (Green)
+- [x] Refactor: フィルタオプション整理
 
 ### Phase 3: ContextBuilder + MemoryReader + MemoryWriter
 
-- [ ] Test: イベント配列 → プロンプトテキスト変換テスト (Red)
-- [ ] Impl: `buildEventContext()` 実装 (Green)
-- [ ] Test: メモリ注入、SystemEvent 注入テスト (Red)
-- [ ] Impl: メモリ・SystemEvent コンテキスト統合 (Green)
-- [ ] Test: MemoryReader timezone 日付計算・ファイル不在時 null 返却テスト (Red)
-- [ ] Impl: `readMemoryFiles()` 実装 (Green)
-- [ ] Test: MemoryWriter ファイル追記テスト (Red)
-- [ ] Impl: `appendDailyMemory()` / `updateLongTermMemory()` 実装 (Green)
-- [ ] Refactor: トークン概算と切り詰めロジック
+- [x] Test: イベント配列 → プロンプトテキスト変換テスト (Red)
+- [x] Impl: `buildEventContext()` 実装 (Green)
+- [x] Test: メモリ注入、SystemEvent 注入テスト (Red)
+- [x] Impl: メモリ・SystemEvent コンテキスト統合 (Green)
+- [x] Test: MemoryReader timezone 日付計算・ファイル不在時 null 返却テスト (Red)
+- [x] Impl: `readMemoryFiles()` 実装 (Green)
+- [x] Test: MemoryWriter ファイル追記テスト (Red)
+- [x] Impl: `appendDailyMemory()` / `updateLongTermMemory()` 実装 (Green)
+- [x] Refactor: トークン概算と切り詰めロジック
 
 ### Phase 4: CommandQueue + HeartbeatRunner
 
-- [ ] Test: CommandQueue main レーン + session レーンの二段直列化テスト (Red)
-- [ ] Impl: CommandQueue 実装（enqueueCommandInLane + resolveSessionLane + getQueueSize(main) 判定）(Green)
-- [ ] Test: HeartbeatRunner タイマー発火テスト (Red)
-- [ ] Impl: `startHeartbeat()` 実装 (Green)
-- [ ] Test: HEARTBEAT_OK 判定、空ファイルスキップ、requests-in-flight テスト (Red)
-- [ ] Test: requests-in-flight 時の短周期再試行テスト (Red)
-- [ ] Test: `heartbeat.session` に無効/他 agent セッションを指定した場合、main セッションへフォールバックするテスト (Red)
-- [ ] Test: readiness 失敗時に `status: "skipped"` とイベントログ `status: "skipped"` が記録されるテスト (Red)
-- [ ] Test: `ok-token`/`ok-empty` の可視化判定側 readiness 失敗では `ran + ok-*` を維持するテスト (Red)
-- [ ] Test: channels heartbeat 可視性（showOk/showAlerts/useIndicator）全false時のモデル呼び出しなしテスト (Red)
-- [ ] Test: 重複排除（24h ウィンドウ + `lastHeartbeatText/lastHeartbeatSentAt`、ウィンドウ期限切れ後の再通知）(Red)
-- [ ] Test: Current time 注入テスト — Body 末尾に時刻行が付与され、既存時は重複挿入しない (Red)
-- [ ] Impl: stripHeartbeatToken、スキップロジック、重複排除、Current time 注入実装 (Green)
-- [ ] Refactor: OpenClaw パターンとの整合確認
+- [x] Test: CommandQueue main レーン + session レーンの二段直列化テスト (Red)
+- [x] Impl: CommandQueue 実装（enqueueCommandInLane + resolveSessionLane + getQueueSize(main) 判定）(Green)
+- [x] Test: HeartbeatRunner タイマー発火テスト (Red)
+- [x] Impl: `startHeartbeat()` 実装 (Green)
+- [x] Test: HEARTBEAT_OK 判定、空ファイルスキップ、requests-in-flight テスト (Red)
+- [x] Test: requests-in-flight 時の短周期再試行テスト (Red)
+- [x] Test: `heartbeat.session` に無効/他 agent セッションを指定した場合、main セッションへフォールバックするテスト (Red)
+- [x] Test: readiness 失敗時に `status: "skipped"` とイベントログ `status: "skipped"` が記録されるテスト (Red)
+- [x] Test: `ok-token`/`ok-empty` の可視化判定側 readiness 失敗では `ran + ok-*` を維持するテスト (Red)
+- [x] Test: channels heartbeat 可視性（showOk/showAlerts/useIndicator）全false時のモデル呼び出しなしテスト (Red)
+- [x] Test: 重複排除（24h ウィンドウ + `lastHeartbeatText/lastHeartbeatSentAt`、ウィンドウ期限切れ後の再通知）(Red)
+- [x] Test: Current time 注入テスト — Body 末尾に時刻行が付与され、既存時は重複挿入しない (Red)
+- [x] Impl: stripHeartbeatToken、スキップロジック、重複排除、Current time 注入実装 (Green)
+- [x] Refactor: OpenClaw パターンとの整合確認
 
 ### Phase 5: TranscriptReader + AgentRunner
 
-- [ ] Test: SDK transcript + `sessions.json` の読み取り/投影テスト（破損行スキップ含む）(Red)
-- [ ] Impl: TranscriptReader 実装 (Green)
-- [ ] Test: LLM ストリーミングのモックテスト (Red)
-- [ ] Test: セッショントランスクリプト直近窓が入力コンテキストへ注入されるテスト (Red)
-- [ ] Impl: AgentRunner 実装（SDK 利用手順: SessionManager → SettingsManager → createAgentSession → subscribe → dispose）(Green)
-- [ ] Test: メモリ書き込みガード — 明示トリガーありで memory_write が実行されるテスト (Red)
-- [ ] Test: メモリ書き込みガード — 明示トリガーなしでは memory_write が実行されないテスト (Red)
-- [ ] Test: メモリ再利用 — memory_write で保存した内容が次回ターンの入力コンテキストへ再注入されるテスト (Red)
-- [ ] Test: SDK セッション後処理テスト — 例外発生時も flush/dispose が確実に実行される (Red)
-- [ ] Test: コンテキスト超過時の切り詰め再試行テスト (Red)
-- [ ] Impl: 失敗回復ロジック（1 回再試行 + 切り詰め再試行）(Green)
-- [ ] Impl: memory_write ツール登録 + 明示トリガー判定実装 (Green)
+- [x] Test: SDK transcript + `sessions.json` の読み取り/投影テスト（破損行スキップ含む）(Red)
+- [x] Impl: TranscriptReader 実装 (Green)
+- [x] Test: LLM ストリーミングのモックテスト (Red)
+- [x] Test: セッショントランスクリプト直近窓が入力コンテキストへ注入されるテスト (Red)
+- [x] Impl: AgentRunner 実装（SDK 利用手順: SessionManager → SettingsManager → createAgentSession → subscribe → dispose）(Green)
+- [x] Test: メモリ書き込みガード — 明示トリガーありで memory_write が実行されるテスト (Red)
+- [x] Test: メモリ書き込みガード — 明示トリガーなしでは memory_write が実行されないテスト (Red)
+- [x] Test: メモリ再利用 — memory_write で保存した内容が次回ターンの入力コンテキストへ再注入されるテスト (Red)
+- [x] Test: SDK セッション後処理テスト — 例外発生時も flush/dispose が確実に実行される (Red)
+- [x] Test: コンテキスト超過時の切り詰め再試行テスト (Red)
+- [x] Impl: 失敗回復ロジック（1 回再試行 + 切り詰め再試行）(Green)
+- [x] Impl: memory_write ツール登録 + 明示トリガー判定実装 (Green)
 - [ ] Integration: AgentRunner + TranscriptReader + MemoryWriter 結合テスト
 
 ### Phase 6: API Server
 
-- [ ] Test: 2 段パターン（POST → runId → GET SSE）基本フローテスト (Red)
-- [ ] Test: POST /api/chat/messages が `status: "started"` を返す契約テスト (Red)
-- [ ] Test: idempotencyKey 冪等性テスト — TTL 内再送で既存 runId の状態を返却 (Red)
-- [ ] Test: SSE seq 連番（broadcast frame）・targeted frame の seq optional・終端 state 一意保証（`final`/`aborted`/`error`）テスト (Red)
-- [ ] Test: `state: "delta"` 0 件ケースでも `state: "final"` の `message` で本文表示を更新できるテスト (Red)
-- [ ] Test: OpenClaw 方式の chat state 変換（`delta`/`final`/`aborted`/`error`）テスト (Red)
-- [ ] Test: POST /api/chat/abort（run 単位 / sessionKey 全件） + stop トリガー経路テスト (Red)
-- [ ] Test: GET /api/chat/history?sessionKey=... / POST /api/heartbeat/run / GET /api/events/stream / GET /api/heartbeat/last（`event: heartbeat` push + snapshot 契約）テスト (Red)
-- [ ] Impl: API Server 実装（CommandQueue main + session レーン経由、`127.0.0.1` バインド、冪等キー管理）(Green)
-- [ ] Impl: POST /api/chat/abort / GET /api/chat/history?sessionKey=... / POST /api/heartbeat/run / GET /api/events/stream / GET /api/heartbeat/last 実装 (Green)
-- [ ] Impl: SSE keepalive + reconnect ポリシー
-- [ ] Integration: チャット → CommandQueue → AgentRunner → SSE の結合テスト
+- [x] Test: 2 段パターン（POST → runId → GET SSE）基本フローテスト (Red)
+- [x] Test: POST /api/chat/messages が `status: "started"` を返す契約テスト (Red)
+- [x] Test: idempotencyKey 冪等性テスト — TTL 内再送で既存 runId の状態を返却 (Red)
+- [x] Test: SSE seq 連番（broadcast frame）・targeted frame の seq optional・終端 state 一意保証（`final`/`aborted`/`error`）テスト (Red)
+- [x] Test: `state: "delta"` 0 件ケースでも `state: "final"` の `message` で本文表示を更新できるテスト (Red)
+- [x] Test: OpenClaw 方式の chat state 変換（`delta`/`final`/`aborted`/`error`）テスト (Red)
+- [x] Test: POST /api/chat/abort（run 単位 / sessionKey 全件） + stop トリガー経路テスト (Red)
+- [x] Test: GET /api/chat/history?sessionKey=... / POST /api/heartbeat/run / GET /api/events/stream / GET /api/heartbeat/last（`event: heartbeat` push + snapshot 契約）テスト (Red)
+- [x] Impl: API Server 実装（CommandQueue main + session レーン経由、`127.0.0.1` バインド、冪等キー管理）(Green)
+- [x] Impl: POST /api/chat/abort / GET /api/chat/history?sessionKey=... / POST /api/heartbeat/run / GET /api/events/stream / GET /api/heartbeat/last 実装 (Green)
+- [x] Impl: SSE keepalive + reconnect ポリシー
+- [x] Integration: チャット → CommandQueue → AgentRunner → SSE の結合テスト
 
 ### Phase 7: Web UI
 
-- [ ] assistant-ui の Thread + Composer 組み込み
-- [ ] SSE ストリーミング接続（カスタム Runtime）
-- [ ] ハートビートアラート表示コンポーネント
+- [x] assistant-ui の Thread + Composer 組み込み
+- [x] SSE ストリーミング接続（カスタム Runtime）
+- [x] ハートビートアラート表示コンポーネント
 - [ ] [MVP+ 任意] セッション切り替え UI
-- [ ] 開発サーバー設定（Vite proxy → API Server）
+- [x] 開発サーバー設定（Vite proxy → API Server）
 
 ### Phase 8: 統合と検証
 
@@ -1316,36 +1316,36 @@ stateDiagram-v2
 
 ### 8.1 機能 DoD
 
-- [ ] AC-01: Slack イベントが JSONL 追記保存される
+- [x] AC-01: Slack イベントが JSONL 追記保存される
 - [ ] AC-02: AI 応答に JSONL 由来コンテキストが取り込まれる
-- [ ] AC-03: OpenClaw 準拠の SDK 実行手順を満たす
-- [ ] AC-04: 同一 `sessionKey` で同時実行が発生しない
-- [ ] AC-05: 異なる `sessionKey` 間でコンテキストが混線しない
-- [ ] AC-06: 一時失敗時の再試行/切り詰め再試行が機能する
-- [ ] AC-07: HEARTBEAT_OK 抑制時に `ran` 維持 + `ok-*` ログが残る
-- [ ] AC-08: Heartbeat アラートが通知される
-- [ ] AC-09: `assistant/prompts/HEARTBEAT.md` 実質空で `skipped` になる
-- [ ] AC-10: `sessions.json` の Session Entry（`sessionKey -> sessionId/sessionFile`）と transcript JSONL が永続化される
-- [ ] AC-11: 明示指示時のみメモリ書き込みされ、次回ターンで再利用される。Heartbeat 実行時は書き込まれない
+- [x] AC-03: OpenClaw 準拠の SDK 実行手順を満たす
+- [x] AC-04: 同一 `sessionKey` で同時実行が発生しない
+- [x] AC-05: 異なる `sessionKey` 間でコンテキストが混線しない
+- [x] AC-06: 一時失敗時の再試行/切り詰め再試行が機能する
+- [x] AC-07: HEARTBEAT_OK 抑制時に `ran` 維持 + `ok-*` ログが残る
+- [x] AC-08: Heartbeat アラートが通知される
+- [x] AC-09: `assistant/prompts/HEARTBEAT.md` 実質空で `skipped` になる
+- [x] AC-10: `sessions.json` の Session Entry（`sessionKey -> sessionId/sessionFile`）と transcript JSONL が永続化される
+- [x] AC-11: 明示指示時のみメモリ書き込みされ、次回ターンで再利用される。Heartbeat 実行時は書き込まれない
 - [ ] AC-12: `assistant/prompts/SOUL.md` が通常対話/Heartbeat の応答方針に反映される
-- [ ] AC-13: SystemEventQueue が `sessionKey` ごとに注入・drain される
-- [ ] AC-14: UI ストリーミング完了 + `GET /api/events/stream` の `event: heartbeat` push および `GET /api/heartbeat/last` スナップショット復元が機能する
+- [x] AC-13: SystemEventQueue が `sessionKey` ごとに注入・drain される
+- [x] AC-14: UI ストリーミング完了 + `GET /api/events/stream` の `event: heartbeat` push および `GET /api/heartbeat/last` スナップショット復元が機能する
 - [ ] AC-15: 通常対話/Heartbeat の両方で `MEMORY.md` と当日・前日メモを参照する
-- [ ] AC-16: 24h 同一 Heartbeat 本文が `duplicate` で抑制され `ran` を維持する
+- [x] AC-16: 24h 同一 Heartbeat 本文が `duplicate` で抑制され `ran` を維持する
 - [ ] AC-17: セッショントランスクリプト直近窓が入力へ取り込まれる
-- [ ] AC-18: アラート配信前 readiness 失敗は `skipped` 記録、`ok-token`/`ok-empty` 側の可視化判定では `ran + ok-*` を維持する
-- [ ] AC-19: 致命的エラー時に `state: "error"` で終端し、終端 state は 1 回のみ配信される
-- [ ] AC-20: Heartbeat 送信 Body に Current time 行が重複なく注入される
-- [ ] AC-21: 同一 `idempotencyKey` 再送が冪等処理される
-- [ ] AC-22: `requests-in-flight` 時に `skipped` 記録 + 1 秒後再試行される
-- [ ] P-01: `pnpm run assistant` で起動しチャット画面が表示される
-- [ ] P-03: `heartbeat.session` の無効/他 agent 指定が main セッションへフォールバックされる
+- [x] AC-18: アラート配信前 readiness 失敗は `skipped` 記録、`ok-token`/`ok-empty` 側の可視化判定では `ran + ok-*` を維持する
+- [x] AC-19: 致命的エラー時に `state: "error"` で終端し、終端 state は 1 回のみ配信される
+- [x] AC-20: Heartbeat 送信 Body に Current time 行が重複なく注入される
+- [x] AC-21: 同一 `idempotencyKey` 再送が冪等処理される
+- [x] AC-22: `requests-in-flight` 時に `skipped` 記録 + 1 秒後再試行される
+- [x] P-01: `pnpm run assistant` で起動しチャット画面が表示される
+- [x] P-03: `heartbeat.session` の無効/他 agent 指定が main セッションへフォールバックされる
 
 ### 8.2 品質 DoD
 
 - [ ] P-02: 全テストがパスし `pnpm run check` が成功する
 - [ ] 既存の Slack 収集パイプラインに影響がない
-- [ ] API サーバーが `127.0.0.1` にのみバインドされている
+- [x] API サーバーが `127.0.0.1` にのみバインドされている
 
 ---
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { evaluateRouteState, normalizeRouteDecision } from "../../src/openclaw/route-decision.js";
+import { evaluateRouteState, normalizeRouteDecision } from "../../src/proactive/route-decision.js";
 
 describe("route-decision", () => {
   it("矛盾状態(run && pending)を拒否する", () => {

@@ -10,14 +10,19 @@ import {
   getLastHeartbeatEvent,
   type HeartbeatConfig,
 } from "./index.js";
-import { createChannelManager } from "../openclaw/channel-manager.js";
-import { createChannelNotificationPipeline } from "../openclaw/channel-notification-pipeline.js";
+import { createChannelManager } from "../proactive/channel-manager.js";
+import { createChannelNotificationPipeline } from "../proactive/channel-notification-pipeline.js";
 import {
   createDualWriteCoordinator,
   type DualWriteRecord,
-} from "../openclaw/dual-write-coordinator.js";
-import { createChannelPluginRegistry } from "../openclaw/plugin-registry.js";
-import { createSlackChannelPlugin } from "../openclaw/slack-channel-plugin.js";
+} from "../proactive/dual-write-coordinator.js";
+import { createChannelPluginRegistry } from "../proactive/plugin-registry.js";
+import {
+  createOpenAiSecondaryClassifier,
+  resolveRouteLlmRuntimeConfig,
+} from "../proactive/route-llm-classifier.js";
+import { createSlackChannelPlugin } from "../proactive/slack-channel-plugin.js";
+import { createTriggerFilter, type SecondaryClassifier } from "../proactive/trigger-filter.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import { appendFile, mkdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
@@ -85,7 +90,45 @@ const dualWriteCoordinator = createDualWriteCoordinator({
   },
 });
 
+const routeLlmConfig = resolveRouteLlmRuntimeConfig();
+let secondaryClassifier: SecondaryClassifier | undefined;
+
+if (routeLlmConfig.enabled) {
+  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  if (!apiKey) {
+    console.warn(
+      "[AssistantGateway][RouteLLM] disabled: OPENAI_API_KEY is required when ADJUTANT_ROUTE_LLM_ENABLED=1"
+    );
+  } else {
+    secondaryClassifier = createOpenAiSecondaryClassifier({
+      apiKey,
+      model: routeLlmConfig.model,
+      maxConcurrent: routeLlmConfig.maxConcurrentRouteLlm,
+      onAudit: (log) => {
+        const { event, ...meta } = log;
+        if (event === "route-llm-error") {
+          console.warn("[AssistantGateway][RouteLLM][Error]", meta);
+          return;
+        }
+        console.info("[AssistantGateway][RouteLLM]", meta);
+      },
+    });
+    console.log(
+      `[Assistant] Route LLM enabled provider=${routeLlmConfig.provider} model=${routeLlmConfig.model} timeoutMs=${routeLlmConfig.routeLlmTimeoutMs} maxConcurrent=${routeLlmConfig.maxConcurrentRouteLlm}`
+    );
+  }
+}
+
+const triggerFilter = createTriggerFilter({
+  secondaryClassifier,
+  secondaryTimeoutMs: routeLlmConfig.routeLlmTimeoutMs,
+  warn: (message, meta) => {
+    console.warn("[AssistantGateway][RouteFilter]", message, meta ?? {});
+  },
+});
+
 const pipeline = createChannelNotificationPipeline({
+  triggerFilter,
   acceptMessage: (request) => ChatHandler.acceptMessage(request),
   enqueueSystemEvent: (text, opts) => enqueueSystemEvent(text, opts),
   dualWriteCoordinator,

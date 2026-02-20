@@ -427,7 +427,7 @@ Gateway自身のchild_process.spawnもPromiseで結果を待つ設計なので�
 
 ✻ Churned for 39s
 
-❯ この情報を持ってdoc/openclaw/architecture.md の修正版をdoc/openclaw/architecture2.md に記載してほしい
+❯ この情報を持ってdoc/reference/openclaw/architecture.md の修正版をdoc/reference/openclaw/architecture2.md に記載してほしい
 
 ⏺ Read 1 file (ctrl+o to expand)
 ⎿  Interrupted · What should Claude do instead?
@@ -435,7 +435,7 @@ Gateway自身のchild_process.spawnもPromiseで結果を待つ設計なので�
 ❯ /model
 ⎿ Set model to Default (global.anthropic.claude-sonnet-4-5-20250929-v1:0)
 
-❯ この情報を持ってdoc/openclaw/architecture.md の修正版をdoc/openclaw/architecture2.md に記載してほしい
+❯ この情報を持ってdoc/reference/openclaw/architecture.md の修正版をdoc/reference/openclaw/architecture2.md に記載してほしい
 ⎿  API Error: Claude's response exceeded the 4096 output token maximum. To configure this behavior, set the CLAUDE_CODE_MAX_OUTPUT_TOKENS environment variable.
 
 ⏺ 修正版を作成します。
