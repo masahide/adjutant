@@ -345,8 +345,8 @@ sequenceDiagram
 ### Phase 4 統合と検証
 
 - [x] 全体テスト実行（`pnpm run check`）
-- [ ] 手動検証（Web Chat で BOOTSTRAP 対話開始 → 削除完了）
-- [ ] ログ検証（本文非出力、メタのみ）
+- [x] 手動検証（Web Chat で BOOTSTRAP 対話開始 → 削除完了）
+- [x] ログ検証（本文非出力、メタのみ）
 - [x] ドキュメント同期
 
 ## 8. 完了の定義 Definition of Done
@@ -363,7 +363,7 @@ sequenceDiagram
 
 - [x] 追加テストがすべてパス
 - [x] `pnpm run check` が成功
-- [ ] 本文ログを出さない
+- [x] 本文ログを出さない
 - [x] `doc/slack-proactive.md` / `doc/spec-unified.md` と実装が同期
 
 ## 9. 懸念事項と未確定事項 Concerns and Questions
