@@ -43,7 +43,9 @@ describe("JsonlWriter", () => {
     const content1 = await readFile(pathEvent1, "utf8");
     const lines1 = content1.trim().split("\n");
     assert.equal(lines1.length, 1);
-    assert.equal(JSON.parse(lines1[0]).uid, event1.uid);
+    const parsed1 = JSON.parse(lines1[0]) as { uid: string; checksum?: string };
+    assert.equal(parsed1.uid, event1.uid);
+    assert.equal(typeof parsed1.checksum, "string");
 
     const content2 = await readFile(pathEvent2, "utf8");
     const lines2 = content2.trim().split("\n");
@@ -70,6 +72,8 @@ describe("JsonlWriter", () => {
     const content = await readFile(targetPath, "utf8");
     const lines = content.trim().split("\n");
     assert.equal(lines.length, 1);
+    const parsed = JSON.parse(lines[0]) as { checksum?: string };
+    assert.equal(typeof parsed.checksum, "string");
     await rm(tmp, { recursive: true, force: true });
   });
 });

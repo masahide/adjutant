@@ -1,6 +1,7 @@
 import { appendFile, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { NormalizedEvent } from "../core/events.js";
+import { withJsonlChecksum } from "./jsonl-checksum.js";
 
 type JsonlWriterOptions = {
   dataDir: string;
@@ -16,7 +17,7 @@ export class JsonlWriter {
     const normalized = this.ensureLoggedAt(event);
     const { dir, file } = this.resolvePaths(dataDir, normalized);
     await mkdir(dir, { recursive: true });
-    const line = `${JSON.stringify(normalized)}\n`;
+    const line = `${JSON.stringify(withJsonlChecksum(normalized as Record<string, unknown>))}\n`;
     await this.appendWithRetry(file, line);
   }
 

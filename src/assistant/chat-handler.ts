@@ -7,6 +7,7 @@ import type {
 import type { StreamEvent, AgentRunStatus } from "./types.js";
 import * as IdempotencyRegistry from "./idempotency-registry.js";
 import * as StreamEventBridge from "./stream-event-bridge.js";
+import { createHash } from "node:crypto";
 import {
   drainSystemEvents,
   resolveSessionLane,
@@ -27,6 +28,9 @@ export type ChatHandlerConfig = {
   workspaceDir: string;
   timezone: string;
   idempotencyTtlSec: number;
+  idempotencyStorePath?: string;
+  idempotencyMaxEntries?: number;
+  idempotencyStoreFailureMode?: "open" | "closed";
 };
 
 const DEFAULT_CONFIG: Partial<ChatHandlerConfig> = {
@@ -43,6 +47,12 @@ const activeRuns = new Map<
 
 export function configure(userConfig: ChatHandlerConfig): void {
   config = { ...DEFAULT_CONFIG, ...userConfig };
+  IdempotencyRegistry.configureRegistry({
+    storePath: userConfig.idempotencyStorePath,
+    maxEntries: userConfig.idempotencyMaxEntries,
+    storeFailureMode: userConfig.idempotencyStoreFailureMode,
+  });
+  IdempotencyRegistry.loadFromStore();
 }
 
 function getConfig(): ChatHandlerConfig {
@@ -84,11 +94,17 @@ export function acceptMessage(req: PostChatMessageRequest): PostChatMessageRespo
     throw new ValidationError("message is required");
   }
 
+  const fingerprint = buildRequestFingerprint(req);
   const dedup = IdempotencyRegistry.getOrCreate(
     req.sessionKey,
     req.idempotencyKey,
+    fingerprint,
     cfg.idempotencyTtlSec
   );
+
+  if (dedup.kind === "conflict") {
+    throw new IdempotencyPayloadMismatchError();
+  }
 
   if (dedup.kind === "existing") {
     return { runId: dedup.runId, status: dedup.status };
@@ -99,6 +115,17 @@ export function acceptMessage(req: PostChatMessageRequest): PostChatMessageRespo
   startRun(runId, storeKey, req.sessionKey, req.message);
 
   return { runId, status: "started" };
+}
+
+function buildRequestFingerprint(req: PostChatMessageRequest): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        sessionKey: req.sessionKey.trim(),
+        message: req.message.trim(),
+      })
+    )
+    .digest("hex");
 }
 
 function startRun(runId: string, storeKey: string, sessionKey: string, message: string): void {
@@ -257,6 +284,14 @@ export class ValidationError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "ValidationError";
+  }
+}
+
+export class IdempotencyPayloadMismatchError extends Error {
+  readonly code = "IDEMPOTENCY_PAYLOAD_MISMATCH";
+  constructor() {
+    super("same idempotency key was used with different payload");
+    this.name = "IdempotencyPayloadMismatchError";
   }
 }
 

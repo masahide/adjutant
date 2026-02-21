@@ -2,6 +2,7 @@ export type PostChatMessageRequest = {
   message: string;
   sessionKey: string;
   idempotencyKey: string;
+  clientMessageId?: string;
 };
 
 export type PostChatMessageResponse = {
@@ -23,4 +24,5 @@ export type PostChatAbortResponse = {
 
 export type DedupResult =
   | { kind: "new"; runId: string; storeKey: string }
-  | { kind: "existing"; runId: string; storeKey: string; status: "in_flight" | "ok" | "error" };
+  | { kind: "existing"; runId: string; storeKey: string; status: "in_flight" | "ok" | "error" }
+  | { kind: "conflict"; runId: string; storeKey: string; status: "in_flight" | "ok" | "error" };

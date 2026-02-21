@@ -7,6 +7,8 @@ import { SlackAdapter } from "./slack/adapter.js";
 import { SlackIngestor } from "./pipeline/slackIngestor.js";
 import { DebugUiServer } from "./debug/debugUi.js";
 import type { SlackCdpClient } from "./runtime/slackConnection.js";
+import { computeFullJitterDelayMs } from "./runtime/retry-policy.js";
+import { listJsonlFiles, recoverJsonlFiles } from "./io/jsonl-recovery.js";
 import path from "node:path";
 
 type ActiveSession = {
@@ -51,6 +53,22 @@ async function main() {
 
   const dataDir = resolveDataDir();
   console.log(`[Adjutant] dataDir -> ${dataDir}`);
+
+  const recoverTargets = await listJsonlFiles(dataDir);
+  if (recoverTargets.length > 0) {
+    const recovered = await recoverJsonlFiles(recoverTargets);
+    const repaired = recovered.filter((item) => item.repaired);
+    if (repaired.length > 0) {
+      console.warn(
+        `[Adjutant] JSONL recovery repaired ${repaired.length} file(s):`,
+        repaired.map((item) => ({
+          filePath: item.filePath,
+          reason: item.reason,
+          truncatedBytes: item.truncatedBytes,
+        }))
+      );
+    }
+  }
 
   const timezone = process.env.ADJUTANT_TZ || "Asia/Tokyo";
   console.log(`[Adjutant] timezone -> ${timezone}`);
@@ -274,7 +292,11 @@ async function main() {
 
     if (!continueRunning) break;
 
-    const delayMs = Math.min(BASE_RETRY_DELAY_MS * Math.max(1, retryCount), MAX_RETRY_DELAY_MS);
+    const delayMs = computeFullJitterDelayMs({
+      attempt: Math.max(1, retryCount),
+      baseMs: BASE_RETRY_DELAY_MS,
+      capMs: MAX_RETRY_DELAY_MS,
+    });
     console.log(`[Adjutant] Retrying connection in ${delayMs}ms...`);
     await sleep(delayMs);
   }

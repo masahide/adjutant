@@ -147,6 +147,7 @@ describe("slack-channel-plugin", () => {
       sleep: async (ms) => {
         sleepDurations.push(ms);
       },
+      random: () => 1,
       onWarn: (message) => {
         warnings.push(message);
       },

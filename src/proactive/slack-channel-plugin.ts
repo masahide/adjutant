@@ -2,6 +2,7 @@ import type { IngestionAdapter } from "../core/adapter.js";
 import type { NormalizedEvent } from "../core/events.js";
 import { JsonlWriter } from "../io/jsonlWriter.js";
 import { resolveEndpoint, type CdpEndpoint } from "../runtime/config.js";
+import { computeFullJitterDelayMs } from "../runtime/retry-policy.js";
 import { connectToSlackPage, type SlackCdpClient } from "../runtime/slackConnection.js";
 import { SlackAdapter } from "../slack/adapter.js";
 import type { ChannelGatewayContext, ChannelIngestionPlugin } from "./channel-plugin.js";
@@ -35,6 +36,7 @@ type SlackChannelPluginOptions = {
   createWriter?: (dataDir: string) => JsonlEventWriter;
   sleep?: (ms: number) => Promise<void>;
   nowMs?: () => number;
+  random?: () => number;
   onWarn?: (message: string, meta?: Record<string, unknown>) => void;
 };
 
@@ -150,6 +152,7 @@ export function createSlackChannelPlugin(
   const sleep =
     options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const nowMs = options.nowMs ?? (() => Date.now());
+  const random = options.random ?? Math.random;
 
   const activeSessions = new Map<string, ActiveAccountSession>();
   const accountIds = resolveAccountIds(options);
@@ -237,7 +240,12 @@ export function createSlackChannelPlugin(
       }
 
       retryCount += 1;
-      const delayMs = Math.min(retryBaseMs * Math.max(1, retryCount), retryMaxMs);
+      const delayMs = computeFullJitterDelayMs({
+        attempt: retryCount,
+        baseMs: retryBaseMs,
+        capMs: retryMaxMs,
+        random,
+      });
       await sleep(delayMs);
     }
   };

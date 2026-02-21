@@ -198,6 +198,23 @@ describe("ChatHandler", () => {
     );
   });
 
+  it("同一 key で payload が異なる再送は ID mismatch error", () => {
+    ChatHandler.acceptMessage({
+      message: "hello",
+      sessionKey: "main",
+      idempotencyKey: "msg-001",
+    });
+    assert.throws(
+      () =>
+        ChatHandler.acceptMessage({
+          message: "changed",
+          sessionKey: "main",
+          idempotencyKey: "msg-001",
+        }),
+      { name: "IdempotencyPayloadMismatchError" }
+    );
+  });
+
   it("異なる sessionKey で同一 idempotencyKey は別 run になる", () => {
     const a = ChatHandler.acceptMessage({
       message: "hello",

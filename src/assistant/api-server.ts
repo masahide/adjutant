@@ -3,6 +3,7 @@ import type { HeartbeatEventPayload } from "./types.js";
 import * as ChatHandler from "./chat-handler.js";
 import * as StreamEventBridge from "./stream-event-bridge.js";
 import { loadMessages } from "./index.js";
+import { ApiError, isApiError, type ApiErrorCode } from "./errors.js";
 
 export type HeartbeatProvider = {
   onHeartbeatEvent: (listener: (evt: HeartbeatEventPayload) => void) => () => void;
@@ -36,7 +37,11 @@ export function createApiServer(userConfig?: Partial<ApiServerConfig>): {
       await handleRequest(req, res, cfg, sseConnections);
     } catch (err) {
       if (!res.headersSent) {
-        sendJson(res, 500, { error: "Internal Server Error" });
+        if (isApiError(err)) {
+          sendApiError(res, err);
+        } else {
+          sendError(res, 500, "INTERNAL_ERROR", "Internal Server Error");
+        }
       }
       console.error("[ApiServer] Unhandled error:", err);
     }
@@ -69,6 +74,26 @@ function sendJson(res: ServerResponse, status: number, data: unknown): void {
   res.end(JSON.stringify(data));
 }
 
+function sendError(
+  res: ServerResponse,
+  status: number,
+  code: ApiErrorCode,
+  message: string,
+  retryable: boolean = false,
+  details?: Record<string, unknown>
+): void {
+  sendJson(res, status, {
+    error: message,
+    code,
+    retryable,
+    ...(details ? { details } : {}),
+  });
+}
+
+function sendApiError(res: ServerResponse, error: ApiError): void {
+  sendError(res, error.status, error.code, error.message, error.retryable, error.details);
+}
+
 async function readBody(req: IncomingMessage): Promise<string> {
   const chunks: Buffer[] = [];
   for await (const chunk of req) {
@@ -86,11 +111,11 @@ async function readJsonBody(
   try {
     parsed = JSON.parse(raw);
   } catch {
-    sendJson(res, 400, { error: "Invalid JSON" });
+    sendError(res, 400, "INVALID_JSON", "Invalid JSON");
     return null;
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    sendJson(res, 400, { error: "Request body must be a JSON object" });
+    sendError(res, 400, "INVALID_REQUEST", "Request body must be a JSON object");
     return null;
   }
   return parsed as Record<string, unknown>;
@@ -125,7 +150,7 @@ async function handleRequest(
   // TODO: restrict CORS origin to Vite dev server / production domain
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Last-Event-ID, Idempotency-Key");
 
   if (method === "OPTIONS") {
     res.writeHead(204);
@@ -142,7 +167,7 @@ async function handleRequest(
 
   const streamMatch = path.match(/^\/api\/chat\/runs\/([^/]+)\/stream$/);
   if (method === "GET" && streamMatch && streamMatch[1]) {
-    return handleStreamRun(decodeURIComponent(streamMatch[1]), res, sseConnections);
+    return handleStreamRun(req, decodeURIComponent(streamMatch[1]), res, sseConnections);
   }
 
   if (method === "GET" && path === "/api/chat/history") {
@@ -170,13 +195,15 @@ async function handlePostChatMessages(req: IncomingMessage, res: ServerResponse)
   if (!body) return;
 
   try {
-    const result = ChatHandler.acceptMessage(
-      body as unknown as { message: string; sessionKey: string; idempotencyKey: string }
-    );
+    const result = ChatHandler.acceptMessage(resolveChatRequest(req, body));
     sendJson(res, 200, result);
   } catch (err) {
     if (err instanceof ChatHandler.ValidationError) {
-      sendJson(res, 400, { error: err.message });
+      sendError(res, 400, "INVALID_REQUEST", err.message);
+    } else if (err instanceof ChatHandler.IdempotencyPayloadMismatchError) {
+      sendError(res, 409, "IDEMPOTENCY_PAYLOAD_MISMATCH", err.message);
+    } else if (isApiError(err)) {
+      sendApiError(res, err);
     } else {
       throw err;
     }
@@ -197,18 +224,114 @@ async function handlePostChatAbort(req: IncomingMessage, res: ServerResponse): P
   sendJson(res, 200, result);
 }
 
+function parseLastEventId(value: string): { runId: string; seq: number } | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const idx = trimmed.lastIndexOf(":");
+  if (idx <= 0 || idx === trimmed.length - 1) {
+    return null;
+  }
+  const runId = trimmed.slice(0, idx);
+  const seqRaw = trimmed.slice(idx + 1);
+  const seq = Number.parseInt(seqRaw, 10);
+  if (!Number.isFinite(seq) || seq < 0) {
+    return null;
+  }
+  return { runId, seq };
+}
+
+function readHeader(req: IncomingMessage, name: string): string | null {
+  const raw = req.headers[name.toLowerCase()];
+  if (Array.isArray(raw)) {
+    return raw[0] ?? null;
+  }
+  return typeof raw === "string" ? raw : null;
+}
+
+function takeNonEmptyString(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function resolveChatRequest(
+  req: IncomingMessage,
+  body: Record<string, unknown>
+): { message: string; sessionKey: string; idempotencyKey: string; clientMessageId?: string } {
+  const message = takeNonEmptyString(body.message);
+  const sessionKey = takeNonEmptyString(body.sessionKey);
+  const headerKey = takeNonEmptyString(readHeader(req, "idempotency-key"));
+  const clientMessageId = takeNonEmptyString(body.clientMessageId);
+  const bodyIdempotencyKey = takeNonEmptyString(body.idempotencyKey);
+  const effectiveIdempotencyKey = headerKey ?? clientMessageId ?? bodyIdempotencyKey;
+
+  if (!message) {
+    throw new ChatHandler.ValidationError("message is required");
+  }
+  if (!sessionKey) {
+    throw new ChatHandler.ValidationError("sessionKey is required");
+  }
+  if (!effectiveIdempotencyKey) {
+    throw new ChatHandler.ValidationError(
+      "idempotency key is required via Idempotency-Key, clientMessageId, or idempotencyKey"
+    );
+  }
+
+  return {
+    message,
+    sessionKey,
+    idempotencyKey: effectiveIdempotencyKey,
+    ...(clientMessageId ? { clientMessageId } : {}),
+  };
+}
+
 function handleStreamRun(
+  req: IncomingMessage,
   runId: string,
   res: ServerResponse,
   sseConnections: Set<ServerResponse>
 ): void {
+  const headerValue = readHeader(req, "last-event-id");
+  const parsedLastEventId = headerValue ? parseLastEventId(headerValue) : null;
+  if (headerValue && !parsedLastEventId) {
+    sendError(res, 400, "INVALID_REQUEST", "Last-Event-ID must be formatted as <runId>:<seq>");
+    return;
+  }
+  if (parsedLastEventId && parsedLastEventId.runId !== runId) {
+    sendError(res, 400, "INVALID_REQUEST", "Last-Event-ID runId mismatch");
+    return;
+  }
+
+  const { events, unsubscribe, replay } = StreamEventBridge.subscribe(runId, {
+    afterSeq: parsedLastEventId?.seq,
+  });
+  if (replay.status === "expired") {
+    sendError(
+      res,
+      409,
+      "LAST_EVENT_ID_EXPIRED",
+      "SSE replay buffer no longer has requested events",
+      false,
+      {
+        minAvailableSeq: replay.minAvailableSeq,
+        maxAvailableSeq: replay.maxAvailableSeq,
+      }
+    );
+    return;
+  }
+
   const cleanupSse = startSseStream(res, sseConnections);
-  const { events, unsubscribe } = StreamEventBridge.subscribe(runId);
 
   const pump = async () => {
     try {
       for await (const event of events) {
-        res.write(`event: chat\ndata: ${JSON.stringify(event)}\n\n`);
+        res.write(
+          `id: ${event.runId}:${event.seq}\nevent: chat\ndata: ${JSON.stringify(event)}\n\n`
+        );
         if (event.state === "final" || event.state === "aborted" || event.state === "error") {
           break;
         }
@@ -231,7 +354,7 @@ function handleStreamRun(
 
 async function handleGetChatHistory(sessionKey: string | null, res: ServerResponse): Promise<void> {
   if (!sessionKey) {
-    sendJson(res, 400, { error: "sessionKey is required" });
+    sendError(res, 400, "INVALID_REQUEST", "sessionKey is required");
     return;
   }
 
@@ -249,7 +372,7 @@ async function handlePostHeartbeatRun(
   cfg: ApiServerConfig
 ): Promise<void> {
   if (!cfg.heartbeatProvider) {
-    sendJson(res, 501, { error: "HeartbeatRunner not configured" });
+    sendError(res, 501, "INVALID_REQUEST", "HeartbeatRunner not configured");
     return;
   }
 
@@ -258,7 +381,7 @@ async function handlePostHeartbeatRun(
   try {
     if (raw.trim()) parsed = JSON.parse(raw);
   } catch {
-    sendJson(res, 400, { error: "Invalid JSON" });
+    sendError(res, 400, "INVALID_JSON", "Invalid JSON");
     return;
   }
 

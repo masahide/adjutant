@@ -26,7 +26,8 @@ describe("StreamEventBridge", () => {
   });
 
   it("emit + subscribe でイベントを受信できる", async () => {
-    const { events, unsubscribe } = Bridge.subscribe("run-1");
+    const { events, unsubscribe, replay } = Bridge.subscribe("run-1");
+    assert.equal(replay.status, "ok");
     Bridge.emit(makeEvent("run-1", 1, "delta", "hello"));
     Bridge.emit(makeEvent("run-1", 2, "final", "done"));
 
@@ -80,5 +81,33 @@ describe("StreamEventBridge", () => {
     assert.equal(Bridge.hasRun("none"), false);
     Bridge.emit(makeEvent("run-1", 1, "delta"));
     assert.equal(Bridge.hasRun("run-1"), true);
+  });
+
+  it("Last-Event-ID 用に afterSeq 以降のみ replay できる", async () => {
+    Bridge.emit(makeEvent("run-1", 1, "delta", "a"));
+    Bridge.emit(makeEvent("run-1", 2, "delta", "b"));
+    Bridge.emit(makeEvent("run-1", 3, "final", "c"));
+
+    const { events, replay } = Bridge.subscribe("run-1", { afterSeq: 1 });
+    assert.equal(replay.status, "ok");
+    const seqs: number[] = [];
+    for await (const event of events) {
+      seqs.push(event.seq);
+    }
+    assert.deepEqual(seqs, [2, 3]);
+  });
+
+  it("replay バッファ範囲外は expired を返す", () => {
+    Bridge.configureReplay({ maxEventsPerRun: 2 });
+    Bridge.emit(makeEvent("run-1", 1, "delta", "a"));
+    Bridge.emit(makeEvent("run-1", 2, "delta", "b"));
+    Bridge.emit(makeEvent("run-1", 3, "final", "c"));
+
+    const result = Bridge.subscribe("run-1", { afterSeq: 0 });
+    assert.equal(result.replay.status, "expired");
+    if (result.replay.status === "expired") {
+      assert.equal(result.replay.minAvailableSeq, 2);
+      assert.equal(result.replay.maxAvailableSeq, 3);
+    }
   });
 });

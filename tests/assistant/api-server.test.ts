@@ -2,6 +2,7 @@ import { describe, it, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { createApiServer } from "../../src/assistant/api-server.js";
 import * as ChatHandler from "../../src/assistant/chat-handler.js";
+import * as StreamEventBridge from "../../src/assistant/stream-event-bridge.js";
 import type { StreamEvent } from "../../src/assistant/types.js";
 import {
   configureChatHandlerForTest,
@@ -14,8 +15,15 @@ function makeStubAgent(): ChatHandler.AgentRunFn {
       runId,
       sessionKey,
       seq: 0,
+      state: "delta",
+      message: { role: "assistant", content: [{ type: "text", text: "stub " }] },
+    } satisfies StreamEvent);
+    onDelta({
+      runId,
+      sessionKey,
+      seq: 0,
       state: "final",
-      message: { role: "assistant", content: [{ type: "text", text: "stub reply" }] },
+      message: { role: "assistant", content: [{ type: "text", text: "reply" }] },
     } satisfies StreamEvent);
     return { status: "completed" };
   };
@@ -146,6 +154,59 @@ describe("ApiServer", () => {
 
     const text = await res.text();
     assert.ok(text.includes("event: chat"), "SSE should contain event: chat");
+    assert.ok(text.includes("id: stream-001:1"), "SSE should contain id field");
+  });
+
+  it("GET /api/chat/runs/:runId/stream は Last-Event-ID 以降のみ再送する", async () => {
+    await setupServer();
+
+    await fetch(url("/api/chat/messages"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: "hello",
+        sessionKey: "main",
+        idempotencyKey: "replay-001",
+      }),
+    });
+    await new Promise((r) => setTimeout(r, 100));
+
+    const res = await fetch(url("/api/chat/runs/replay-001/stream"), {
+      headers: { "Last-Event-ID": "replay-001:1" },
+    });
+    assert.equal(res.status, 200);
+    const text = await res.text();
+    const lines = text
+      .split("\n")
+      .filter((line) => line.startsWith("data: "))
+      .map((line) => JSON.parse(line.slice("data: ".length)) as StreamEvent);
+    assert.deepEqual(
+      lines.map((line) => line.seq),
+      [2]
+    );
+  });
+
+  it("GET /api/chat/runs/:runId/stream は古すぎる Last-Event-ID で 409", async () => {
+    await setupServer();
+    StreamEventBridge.configureReplay({ maxEventsPerRun: 1 });
+
+    await fetch(url("/api/chat/messages"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: "hello",
+        sessionKey: "main",
+        idempotencyKey: "expired-001",
+      }),
+    });
+    await new Promise((r) => setTimeout(r, 100));
+
+    const res = await fetch(url("/api/chat/runs/expired-001/stream"), {
+      headers: { "Last-Event-ID": "expired-001:0" },
+    });
+    assert.equal(res.status, 409);
+    const body = (await res.json()) as { code: string };
+    assert.equal(body.code, "LAST_EVENT_ID_EXPIRED");
   });
 
   it("GET /api/chat/history は sessionKey 必須", async () => {
@@ -247,6 +308,67 @@ describe("ApiServer", () => {
       json2.status === "in_flight" || json2.status === "ok",
       `expected in_flight or ok, got ${json2.status}`
     );
+  });
+
+  it("POST /api/chat/messages は Idempotency-Key ヘッダを優先する", async () => {
+    await setupServer();
+    const res = await fetch(url("/api/chat/messages"), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": "header-priority-001",
+      },
+      body: JSON.stringify({
+        message: "hello",
+        sessionKey: "main",
+        idempotencyKey: "body-ignored-001",
+      }),
+    });
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { runId: string };
+    assert.equal(body.runId, "header-priority-001");
+  });
+
+  it("POST /api/chat/messages は clientMessageId を互換受理する", async () => {
+    await setupServer();
+    const res = await fetch(url("/api/chat/messages"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: "hello",
+        sessionKey: "main",
+        clientMessageId: "legacy-client-msg-001",
+      }),
+    });
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { runId: string };
+    assert.equal(body.runId, "legacy-client-msg-001");
+  });
+
+  it("POST /api/chat/messages は同一キーで payload が異なると 409", async () => {
+    await setupServer();
+    await fetch(url("/api/chat/messages"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: "hello",
+        sessionKey: "main",
+        idempotencyKey: "mismatch-001",
+      }),
+    });
+
+    const res = await fetch(url("/api/chat/messages"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: "hello changed",
+        sessionKey: "main",
+        idempotencyKey: "mismatch-001",
+      }),
+    });
+    assert.equal(res.status, 409);
+    const body = (await res.json()) as { code: string };
+    assert.equal(body.code, "IDEMPOTENCY_PAYLOAD_MISMATCH");
   });
 
   it("seq は runId ごとに単調増加する", async () => {

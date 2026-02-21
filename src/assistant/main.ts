@@ -1,5 +1,6 @@
 import { createApiServer } from "./api-server.js";
 import * as ChatHandler from "./chat-handler.js";
+import * as StreamEventBridge from "./stream-event-bridge.js";
 import { createAgentRunAdapter } from "./main.adapter.js";
 import {
   enqueueSystemEvent,
@@ -23,6 +24,7 @@ import {
 } from "../proactive/route-llm-classifier.js";
 import { createSlackChannelPlugin } from "../proactive/slack-channel-plugin.js";
 import { createTriggerFilter, type SecondaryClassifier } from "../proactive/trigger-filter.js";
+import { listJsonlFiles, recoverJsonlFiles } from "../io/jsonl-recovery.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import { appendFile, mkdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
@@ -42,6 +44,16 @@ const TIMELINE_PATH =
   process.env.ADJUTANT_TIMELINE_PATH?.trim() || join(WORKSPACE_DIR, "memory", "timeline.jsonl");
 
 const DEFAULT_DUAL_WRITE_RETRY_INTERVAL_MS = 5000;
+const IDEMPOTENCY_STORE_PATH =
+  process.env.ADJUTANT_IDEMPOTENCY_STORE_PATH?.trim() ||
+  join(WORKSPACE_DIR, "memory", "idempotency.jsonl");
+const IDEMPOTENCY_MAX_ENTRIES = Number(process.env.ADJUTANT_IDEMPOTENCY_MAX_ENTRIES ?? "5000");
+const IDEMPOTENCY_STORE_FAILURE_MODE =
+  process.env.ADJUTANT_IDEMPOTENCY_STORE_FAILURE_MODE === "closed" ? "closed" : "open";
+const SSE_REPLAY_BUFFER_SIZE = Number(process.env.ADJUTANT_SSE_REPLAY_BUFFER_SIZE ?? "512");
+const SSE_REPLAY_MAX_AGE_MS = Number(process.env.ADJUTANT_SSE_REPLAY_MAX_AGE_MS ?? "300000");
+const SLACK_RETRY_BASE_MS = Number(process.env.ADJUTANT_SLACK_RETRY_BASE_MS ?? "1000");
+const SLACK_RETRY_MAX_MS = Number(process.env.ADJUTANT_SLACK_RETRY_MAX_MS ?? "10000");
 
 function toReason(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -63,12 +75,46 @@ const agentRunFn = createAgentRunAdapter(
   runAgent
 );
 
+const jsonlRecoveryTargets = new Set<string>([TIMELINE_PATH, IDEMPOTENCY_STORE_PATH]);
+for (const filePath of await listJsonlFiles(join(WORKSPACE_DIR, "memory", "sessions"))) {
+  jsonlRecoveryTargets.add(filePath);
+}
+for (const filePath of await listJsonlFiles(DATA_DIR)) {
+  jsonlRecoveryTargets.add(filePath);
+}
+const jsonlRecoveryResults = await recoverJsonlFiles(jsonlRecoveryTargets);
+const repairedJsonl = jsonlRecoveryResults.filter((result) => result.repaired);
+if (repairedJsonl.length > 0) {
+  console.warn(
+    "[AssistantGateway] JSONL recovery repaired files",
+    repairedJsonl.map((item) => ({
+      filePath: item.filePath,
+      reason: item.reason,
+      truncatedBytes: item.truncatedBytes,
+    }))
+  );
+}
+
+StreamEventBridge.configureReplay({
+  maxEventsPerRun: Number.isFinite(SSE_REPLAY_BUFFER_SIZE)
+    ? Math.max(1, Math.floor(SSE_REPLAY_BUFFER_SIZE))
+    : 512,
+  maxAgeMs: Number.isFinite(SSE_REPLAY_MAX_AGE_MS)
+    ? Math.max(1000, Math.floor(SSE_REPLAY_MAX_AGE_MS))
+    : 300_000,
+});
+
 ChatHandler.configure({
   runAgent: agentRunFn,
   dataDir: DATA_DIR,
   workspaceDir: WORKSPACE_DIR,
   timezone: TIMEZONE,
   idempotencyTtlSec: 300,
+  idempotencyStorePath: IDEMPOTENCY_STORE_PATH,
+  idempotencyMaxEntries: Number.isFinite(IDEMPOTENCY_MAX_ENTRIES)
+    ? Math.max(100, Math.floor(IDEMPOTENCY_MAX_ENTRIES))
+    : 5000,
+  idempotencyStoreFailureMode: IDEMPOTENCY_STORE_FAILURE_MODE,
 });
 
 const dualWriteCoordinator = createDualWriteCoordinator({
@@ -144,6 +190,12 @@ pluginRegistry.register(
   createSlackChannelPlugin({
     dataDir: DATA_DIR,
     timezone: TIMEZONE,
+    retryBaseMs: Number.isFinite(SLACK_RETRY_BASE_MS)
+      ? Math.max(1, Math.floor(SLACK_RETRY_BASE_MS))
+      : 1000,
+    retryMaxMs: Number.isFinite(SLACK_RETRY_MAX_MS)
+      ? Math.max(1, Math.floor(SLACK_RETRY_MAX_MS))
+      : 10000,
     onWarn: (message, meta) => {
       console.warn("[AssistantGateway][SlackPlugin]", message, meta ?? {});
     },
