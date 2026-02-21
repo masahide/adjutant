@@ -146,3 +146,12 @@ OpenClawの標準機能を最大限活用し、コンテキストウィンドウ
   - `ADJUTANT_MEMORY_FLUSH_SOFT_THRESHOLD_TOKENS=4000`
   - `ADJUTANT_MEMORY_FLUSH_PROMPT=<既定 pre-compaction prompt>`
   - `ADJUTANT_MEMORY_FLUSH_SYSTEM_PROMPT=<既定 system prompt>`
+
+### 5.11. 初回実行リチュアル（openclaw準拠 BOOTSTRAP 注入）契約（実装確定）
+
+- `origin=user` の main セッション実行時は、workspace bootstrap files を `Project Context` として prompt へ注入する。
+- 注入対象は `AGENTS.md` / `SOUL.md` / `TOOLS.md` / `IDENTITY.md` / `USER.md` / `HEARTBEAT.md` / `BOOTSTRAP.md`（存在時）/ `MEMORY.md` / `memory.md`（存在時）とする。
+- `BOOTSTRAP.md` は workspace が brand-new のときのみ自動生成し、削除後は次ターンから注入しない。
+- workspace 未作成時は `runAgent` 実行時に自動作成し、`AGENTS.md` / `SOUL.md` / `TOOLS.md` / `IDENTITY.md` / `USER.md` / `HEARTBEAT.md` を missing 補完する。
+- 非注入条件は `origin=pipeline` / `isHeartbeat=true` / `memoryScope=spoke` とする。
+- `/api/chat/messages` は `origin?: "user" | "pipeline" | "system"` を受け付け、未指定時は `user` として扱う。

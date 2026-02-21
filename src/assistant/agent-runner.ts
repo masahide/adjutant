@@ -13,6 +13,11 @@ import { access, rename } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { appendDailyMemory, updateLongTermMemory } from "./memory-writer.js";
 import { readMemoryFiles } from "./memory-reader.js";
+import {
+  buildBootstrapContextFiles,
+  renderProjectContext,
+  type EmbeddedContextFile,
+} from "./bootstrap-context.js";
 import { normalizeSessionKey, normalizeTimezone } from "./shared-normalizers.js";
 import {
   createCompactionEventTracker,
@@ -31,12 +36,17 @@ import {
   type SessionEntryStore,
 } from "./session-entry-store.js";
 import { createMemoryToolDefinitions } from "./memory-search/index.js";
+import {
+  ensureWorkspaceBootstrapFiles,
+  loadWorkspaceBootstrapFiles,
+} from "./workspace-bootstrap.js";
 
 export type AgentRunOptions = {
   runId: string;
   prompt: string;
   systemPrompt?: string;
   sessionKey: string;
+  origin?: "user" | "pipeline" | "system";
   memoryScope?: "auto" | "main" | "spoke";
   sessionId?: string;
   model?: string;
@@ -100,6 +110,8 @@ type AgentRunnerRuntime = {
   isWorkspaceWritable: (workspaceDir: string) => Promise<boolean>;
   isModelAvailable: (model?: string) => boolean;
   repairSessionData: (sessionKey: string, sessionEntriesPath?: string) => Promise<boolean>;
+  ensureWorkspaceBootstrapFiles: typeof ensureWorkspaceBootstrapFiles;
+  loadWorkspaceBootstrapFiles: typeof loadWorkspaceBootstrapFiles;
 };
 
 const lockTails = new Map<string, Promise<void>>();
@@ -366,6 +378,8 @@ const defaultRuntime: AgentRunnerRuntime = {
     await writeSessionEntryStore(state.store, state.path);
     return true;
   },
+  ensureWorkspaceBootstrapFiles,
+  loadWorkspaceBootstrapFiles,
 };
 
 function getRuntime(): AgentRunnerRuntime {
@@ -525,6 +539,23 @@ function resolveMemoryScope(opts: AgentRunOptions, sessionKey: string): "main" |
   return sessionKey === "main" ? "main" : "spoke";
 }
 
+function shouldInjectBootstrapContext(
+  opts: AgentRunOptions,
+  sessionKey: string,
+  memoryScope: "main" | "spoke"
+): boolean {
+  if (opts.origin !== "user") {
+    return false;
+  }
+  if (opts.isHeartbeat) {
+    return false;
+  }
+  if (sessionKey !== "main") {
+    return false;
+  }
+  return memoryScope === "main";
+}
+
 function classifyError(
   error: unknown
 ): "transient" | "context_overflow" | "model_unavailable" | "unknown" {
@@ -580,6 +611,14 @@ function resolveTimezone(opts: AgentRunOptions): string {
 function resolveWorkspaceDir(opts: AgentRunOptions): string {
   const workspace = opts.workspaceDir?.trim();
   return workspace || process.cwd();
+}
+
+function appendProjectContext(prompt: string, contextFiles: EmbeddedContextFile[]): string {
+  const projectContext = renderProjectContext(contextFiles).trim();
+  if (!projectContext) {
+    return prompt;
+  }
+  return `${projectContext}\n\n${prompt}`;
 }
 
 function parseMemoryWriteArgs(
@@ -933,6 +972,9 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
   const memoryWriteEnabled = shouldEnableMemoryWrite(opts);
   const memoryScope = resolveMemoryScope(opts, sessionKey);
   const compactionSettings = resolveCompactionRuntimeSettings();
+  if (opts.origin === "user") {
+    await runtime.ensureWorkspaceBootstrapFiles(workspaceDir);
+  }
   const memory =
     memoryScope === "main"
       ? await runtime.readMemoryFiles({
@@ -946,6 +988,19 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
     longTerm: memory.longTerm,
     daily: memory.daily,
   });
+  if (shouldInjectBootstrapContext(opts, sessionKey, memoryScope)) {
+    const files = await runtime.loadWorkspaceBootstrapFiles(workspaceDir);
+    const contextFiles = buildBootstrapContextFiles(files, {
+      onWarn: (message, meta) => {
+        console.warn("[AgentRunner][BootstrapContext]", message, {
+          sessionKey,
+          origin: opts.origin,
+          ...(meta ?? {}),
+        });
+      },
+    });
+    prompt = appendProjectContext(prompt, contextFiles);
+  }
 
   let releaseLock: (() => void | Promise<void>) | undefined;
   let session: SessionLike | undefined;

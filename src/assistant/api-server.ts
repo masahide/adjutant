@@ -258,16 +258,30 @@ function takeNonEmptyString(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function takeOrigin(value: unknown): "user" | "pipeline" | "system" | null {
+  if (value === "user" || value === "pipeline" || value === "system") {
+    return value;
+  }
+  return null;
+}
+
 function resolveChatRequest(
   req: IncomingMessage,
   body: Record<string, unknown>
-): { message: string; sessionKey: string; idempotencyKey: string; clientMessageId?: string } {
+): {
+  message: string;
+  sessionKey: string;
+  idempotencyKey: string;
+  origin?: "user" | "pipeline" | "system";
+  clientMessageId?: string;
+} {
   const message = takeNonEmptyString(body.message);
   const sessionKey = takeNonEmptyString(body.sessionKey);
   const headerKey = takeNonEmptyString(readHeader(req, "idempotency-key"));
   const clientMessageId = takeNonEmptyString(body.clientMessageId);
   const bodyIdempotencyKey = takeNonEmptyString(body.idempotencyKey);
   const effectiveIdempotencyKey = headerKey ?? clientMessageId ?? bodyIdempotencyKey;
+  const origin = takeOrigin(body.origin);
 
   if (!message) {
     throw new ChatHandler.ValidationError("message is required");
@@ -285,6 +299,7 @@ function resolveChatRequest(
     message,
     sessionKey,
     idempotencyKey: effectiveIdempotencyKey,
+    ...(origin ? { origin } : {}),
     ...(clientMessageId ? { clientMessageId } : {}),
   };
 }

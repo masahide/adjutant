@@ -32,6 +32,7 @@ describe("createAgentRunAdapter", () => {
       prompt: "test",
       sessionKey: "main",
       runId: "r1",
+      origin: "user",
       onDelta: (ev) => collected.push(ev),
     });
 
@@ -70,6 +71,7 @@ describe("createAgentRunAdapter", () => {
       prompt: "test",
       sessionKey: "main",
       runId: "r1",
+      origin: "user",
       onDelta: () => {},
     });
 
@@ -87,6 +89,7 @@ describe("createAgentRunAdapter", () => {
       prompt: "test",
       sessionKey: "main",
       runId: "r1",
+      origin: "user",
       onDelta: (ev) => collected.push(ev),
     });
 
@@ -113,6 +116,7 @@ describe("createAgentRunAdapter", () => {
       prompt: "hello",
       sessionKey: "sess",
       runId: "r1",
+      origin: "user",
       onDelta: () => {},
     });
 
@@ -124,6 +128,7 @@ describe("createAgentRunAdapter", () => {
     assert.equal(args.prompt, "hello");
     assert.equal(args.sessionKey, "sess");
     assert.equal(args.runId, "r1");
+    assert.equal(args.origin, "user");
   });
 
   it("model 未指定の場合は runAgent に渡さない", async () => {
@@ -136,6 +141,7 @@ describe("createAgentRunAdapter", () => {
       prompt: "hello",
       sessionKey: "main",
       runId: "r1",
+      origin: "user",
       onDelta: () => {},
     });
 
@@ -156,6 +162,7 @@ describe("createAgentRunAdapter", () => {
       prompt: "hello",
       sessionKey: "my-session",
       runId: "r1",
+      origin: "user",
       onDelta: () => {},
     });
 
@@ -176,6 +183,7 @@ describe("createAgentRunAdapter", () => {
       prompt: "hello",
       sessionKey: "main",
       runId: "r1",
+      origin: "user",
       onDelta: () => {},
     });
 

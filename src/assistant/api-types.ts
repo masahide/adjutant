@@ -2,6 +2,7 @@ export type PostChatMessageRequest = {
   message: string;
   sessionKey: string;
   idempotencyKey: string;
+  origin?: "user" | "pipeline" | "system";
   clientMessageId?: string;
 };
 

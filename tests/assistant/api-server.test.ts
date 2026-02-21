@@ -87,6 +87,34 @@ describe("ApiServer", () => {
     assert.equal(body.status, "started");
   });
 
+  it("POST /api/chat/messages は origin を受理して runAgent へ渡す", async () => {
+    let capturedOrigin: string | undefined;
+    await setupServer(async ({ runId, sessionKey, origin, onDelta }) => {
+      capturedOrigin = origin;
+      onDelta({
+        runId,
+        sessionKey,
+        seq: 0,
+        state: "final",
+        message: { role: "assistant", content: [{ type: "text", text: "reply" }] },
+      } satisfies StreamEvent);
+      return { status: "completed" };
+    });
+
+    const res = await fetch(url("/api/chat/messages"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: "hello",
+        sessionKey: "main",
+        idempotencyKey: "origin-propagation-001",
+        origin: "pipeline",
+      }),
+    });
+    assert.equal(res.status, 200);
+    assert.equal(capturedOrigin, "pipeline");
+  });
+
   it("POST /api/chat/messages は sessionKey 欠落で 400", async () => {
     await setupServer();
     const res = await fetch(url("/api/chat/messages"), {

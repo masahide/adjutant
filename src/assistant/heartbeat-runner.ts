@@ -863,6 +863,7 @@ export async function runOnce(
         prompt: body,
         systemPrompt,
         sessionKey,
+        origin: "system",
         isHeartbeat: true,
         model: config.model,
         workspaceDir,

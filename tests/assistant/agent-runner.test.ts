@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
-import { access, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -1293,5 +1293,194 @@ describe("AgentRunner", () => {
     });
 
     assert.deepEqual(scopes, ["main", "spoke"]);
+  });
+
+  it("origin=user かつ main では BOOTSTRAP を含む Project Context を注入する", async () => {
+    const rootDir = await mkdtemp(`${tmpdir()}/adjutant-bootstrap-`);
+    const workspaceDir = join(rootDir, "workspace");
+    const sessionEntriesPath = join(rootDir, "sessions.json");
+    let capturedPrompt = "";
+
+    try {
+      setAgentRunnerRuntimeForTest({
+        ...inMemorySessionStoreRuntime(),
+        nowMs: () => 1000,
+        acquireLock: async () => () => undefined,
+        openSessionManager: () => ({}),
+        readMemoryFiles: async () => ({ longTerm: null, daily: null, yesterday: null }),
+        createSession: async () => ({
+          session: {
+            subscribe: () => () => undefined,
+            prompt: async (prompt) => {
+              capturedPrompt = prompt;
+            },
+            dispose: () => undefined,
+          },
+        }),
+      });
+
+      await runAgent({
+        runId: "run-bootstrap-inject-main",
+        prompt: "hello",
+        sessionKey: "main",
+        origin: "user",
+        workspaceDir,
+        sessionEntriesPath,
+      });
+
+      assert.equal(capturedPrompt.includes("# Project Context"), true);
+      assert.equal(capturedPrompt.includes("## BOOTSTRAP.md"), true);
+      assert.equal(await pathExists(join(workspaceDir, "AGENTS.md")), true);
+      assert.equal(await pathExists(join(workspaceDir, "SOUL.md")), true);
+      assert.equal(await pathExists(join(workspaceDir, "TOOLS.md")), true);
+      assert.equal(await pathExists(join(workspaceDir, "IDENTITY.md")), true);
+      assert.equal(await pathExists(join(workspaceDir, "USER.md")), true);
+      assert.equal(await pathExists(join(workspaceDir, "HEARTBEAT.md")), true);
+      assert.equal(await pathExists(join(workspaceDir, "BOOTSTRAP.md")), true);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("origin=pipeline では BOOTSTRAP context を注入しない", async () => {
+    const rootDir = await mkdtemp(`${tmpdir()}/adjutant-bootstrap-`);
+    const workspaceDir = join(rootDir, "workspace");
+    const sessionEntriesPath = join(rootDir, "sessions.json");
+    let capturedPrompt = "";
+
+    try {
+      await mkdir(workspaceDir, { recursive: true });
+      await writeFile(join(workspaceDir, "BOOTSTRAP.md"), "bootstrap-content", "utf8");
+
+      setAgentRunnerRuntimeForTest({
+        ...inMemorySessionStoreRuntime(),
+        nowMs: () => 1000,
+        acquireLock: async () => () => undefined,
+        openSessionManager: () => ({}),
+        readMemoryFiles: async () => ({ longTerm: null, daily: null, yesterday: null }),
+        createSession: async () => ({
+          session: {
+            subscribe: () => () => undefined,
+            prompt: async (prompt) => {
+              capturedPrompt = prompt;
+            },
+            dispose: () => undefined,
+          },
+        }),
+      });
+
+      await runAgent({
+        runId: "run-bootstrap-skip-pipeline",
+        prompt: "hello",
+        sessionKey: "main",
+        origin: "pipeline",
+        workspaceDir,
+        sessionEntriesPath,
+      });
+
+      assert.equal(capturedPrompt.includes("# Project Context"), false);
+      assert.equal(capturedPrompt.includes("BOOTSTRAP.md"), false);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("isHeartbeat=true では BOOTSTRAP context を注入しない", async () => {
+    const rootDir = await mkdtemp(`${tmpdir()}/adjutant-bootstrap-`);
+    const workspaceDir = join(rootDir, "workspace");
+    const sessionEntriesPath = join(rootDir, "sessions.json");
+    let capturedPrompt = "";
+
+    try {
+      setAgentRunnerRuntimeForTest({
+        ...inMemorySessionStoreRuntime(),
+        nowMs: () => 1000,
+        acquireLock: async () => () => undefined,
+        openSessionManager: () => ({}),
+        readMemoryFiles: async () => ({ longTerm: null, daily: null, yesterday: null }),
+        createSession: async () => ({
+          session: {
+            subscribe: () => () => undefined,
+            prompt: async (prompt) => {
+              capturedPrompt = prompt;
+            },
+            dispose: () => undefined,
+          },
+        }),
+      });
+
+      await runAgent({
+        runId: "run-bootstrap-skip-heartbeat",
+        prompt: "hello",
+        sessionKey: "main",
+        origin: "user",
+        isHeartbeat: true,
+        workspaceDir,
+        sessionEntriesPath,
+      });
+
+      assert.equal(capturedPrompt.includes("# Project Context"), false);
+      assert.equal(capturedPrompt.includes("BOOTSTRAP.md"), false);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("BOOTSTRAP.md 削除後は次ターンで注入されない", async () => {
+    const rootDir = await mkdtemp(`${tmpdir()}/adjutant-bootstrap-`);
+    const workspaceDir = join(rootDir, "workspace");
+    const sessionEntriesPath = join(rootDir, "sessions.json");
+    const prompts: string[] = [];
+
+    try {
+      setAgentRunnerRuntimeForTest({
+        ...inMemorySessionStoreRuntime(),
+        nowMs: (() => {
+          let tick = 1000;
+          return () => {
+            tick += 1;
+            return tick;
+          };
+        })(),
+        acquireLock: async () => () => undefined,
+        openSessionManager: () => ({}),
+        readMemoryFiles: async () => ({ longTerm: null, daily: null, yesterday: null }),
+        createSession: async () => ({
+          session: {
+            subscribe: () => () => undefined,
+            prompt: async (prompt) => {
+              prompts.push(prompt);
+            },
+            dispose: () => undefined,
+          },
+        }),
+      });
+
+      await runAgent({
+        runId: "run-bootstrap-delete-1",
+        prompt: "hello",
+        sessionKey: "main",
+        origin: "user",
+        workspaceDir,
+        sessionEntriesPath,
+      });
+
+      await rm(join(workspaceDir, "BOOTSTRAP.md"), { force: true });
+
+      await runAgent({
+        runId: "run-bootstrap-delete-2",
+        prompt: "hello again",
+        sessionKey: "main",
+        origin: "user",
+        workspaceDir,
+        sessionEntriesPath,
+      });
+
+      assert.equal(prompts.length >= 2, true);
+      assert.equal(prompts[0]?.includes("## BOOTSTRAP.md"), true);
+      assert.equal(prompts[1]?.includes("## BOOTSTRAP.md"), false);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
   });
 });

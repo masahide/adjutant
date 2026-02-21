@@ -19,6 +19,7 @@ export type AgentRunFn = (opts: {
   prompt: string;
   sessionKey: string;
   runId: string;
+  origin: "user" | "pipeline" | "system";
   onDelta: (event: StreamEvent) => void;
 }) => Promise<{ status: "completed" | "failed"; reason?: string }>;
 
@@ -112,23 +113,31 @@ export function acceptMessage(req: PostChatMessageRequest): PostChatMessageRespo
 
   const { runId, storeKey } = dedup;
 
-  startRun(runId, storeKey, req.sessionKey, req.message);
+  startRun(runId, storeKey, req.sessionKey, req.message, normalizeOrigin(req.origin));
 
   return { runId, status: "started" };
 }
 
 function buildRequestFingerprint(req: PostChatMessageRequest): string {
+  const origin = normalizeOrigin(req.origin);
   return createHash("sha256")
     .update(
       JSON.stringify({
         sessionKey: req.sessionKey.trim(),
         message: req.message.trim(),
+        origin,
       })
     )
     .digest("hex");
 }
 
-function startRun(runId: string, storeKey: string, sessionKey: string, message: string): void {
+function startRun(
+  runId: string,
+  storeKey: string,
+  sessionKey: string,
+  message: string,
+  origin: "user" | "pipeline" | "system"
+): void {
   const cfg = getConfig();
   let aborted = false;
   const seqRef = { value: 0 };
@@ -167,6 +176,7 @@ function startRun(runId: string, storeKey: string, sessionKey: string, message: 
           prompt,
           sessionKey,
           runId,
+          origin,
           onDelta: (event) => {
             if (!aborted) {
               StreamEventBridge.emit({ ...event, seq: ++seqRef.value });
@@ -212,6 +222,13 @@ function startRun(runId: string, storeKey: string, sessionKey: string, message: 
       }
     })
   );
+}
+
+function normalizeOrigin(value: unknown): "user" | "pipeline" | "system" {
+  if (value === "pipeline" || value === "system") {
+    return value;
+  }
+  return "user";
 }
 
 function renderSystemEventsSection(systemEvents: string[]): string | null {

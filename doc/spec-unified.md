@@ -721,6 +721,7 @@ type ChatDispatchRequest = {
 - `notification`: 軽量トリガー文（詳細は system event 側）
 - `idempotencyKey`: `sha256(sessionKey + "\n" + sorted(eventUids).join("\n"))`
 - `message` は `maxDispatchChars` を上限とし、超過時は切り詰め + `messageTruncated=true` を付与
+- Fast Path から API へ渡す `PostChatMessageRequest` には `origin: "pipeline"` を付与する
 
 ### 9.8 sessionKey マッピング規則（Slack）
 
@@ -794,15 +795,15 @@ accountId 解決順:
 
 ### 12.1 エンドポイント一覧
 
-| メソッド | パス                           | 入力                                                                                                   | 出力                                     |
-| -------- | ------------------------------ | ------------------------------------------------------------------------------------------------------ | ---------------------------------------- |
-| `POST`   | `/api/chat/messages`           | Header: `Idempotency-Key`（任意） / Body: `{ message, sessionKey, idempotencyKey?, clientMessageId? }` | `{ runId, status }`                      |
-| `POST`   | `/api/chat/abort`              | Body: `{ sessionKey, runId? }`                                                                         | `{ ok, aborted, runIds }`                |
-| `GET`    | `/api/chat/runs/:runId/stream` | Header: `Last-Event-ID`（任意, `<runId>:<seq>`）                                                       | SSE (`event: chat`, `id: <runId>:<seq>`) |
-| `GET`    | `/api/chat/history`            | Query: `sessionKey`                                                                                    | `{ sessionKey, sessionId, messages }`    |
-| `POST`   | `/api/heartbeat/run`           | Body: `{ reason? }`                                                                                    | `HeartbeatRunResult`                     |
-| `GET`    | `/api/events/stream`           | なし                                                                                                   | SSE (`event: heartbeat`)                 |
-| `GET`    | `/api/heartbeat/last`          | なし                                                                                                   | `HeartbeatEventPayload \| null`          |
+| メソッド | パス                           | 入力                                                                                                            | 出力                                     |
+| -------- | ------------------------------ | --------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| `POST`   | `/api/chat/messages`           | Header: `Idempotency-Key`（任意） / Body: `{ message, sessionKey, idempotencyKey?, clientMessageId?, origin? }` | `{ runId, status }`                      |
+| `POST`   | `/api/chat/abort`              | Body: `{ sessionKey, runId? }`                                                                                  | `{ ok, aborted, runIds }`                |
+| `GET`    | `/api/chat/runs/:runId/stream` | Header: `Last-Event-ID`（任意, `<runId>:<seq>`）                                                                | SSE (`event: chat`, `id: <runId>:<seq>`) |
+| `GET`    | `/api/chat/history`            | Query: `sessionKey`                                                                                             | `{ sessionKey, sessionId, messages }`    |
+| `POST`   | `/api/heartbeat/run`           | Body: `{ reason? }`                                                                                             | `HeartbeatRunResult`                     |
+| `GET`    | `/api/events/stream`           | なし                                                                                                            | SSE (`event: heartbeat`)                 |
+| `GET`    | `/api/heartbeat/last`          | なし                                                                                                            | `HeartbeatEventPayload \| null`          |
 
 ### 12.2 冪等キー解決規則
 
@@ -813,6 +814,11 @@ accountId 解決順:
 3. Body `idempotencyKey`
 
 どれも無い場合は `400 INVALID_REQUEST` を返す。
+
+`origin` の扱い:
+
+- 受理値は `"user" | "pipeline" | "system"`。
+- 未指定時は `user` として扱う。
 
 移行方針:
 
@@ -828,7 +834,7 @@ accountId 解決順:
 curl -sS -X POST http://127.0.0.1:3100/api/chat/messages \
   -H 'Content-Type: application/json' \
   -H 'Idempotency-Key: msg-20260221-001' \
-  -d '{"sessionKey":"main","message":"hello","clientMessageId":"legacy-001"}'
+  -d '{"sessionKey":"main","message":"hello","origin":"user","clientMessageId":"legacy-001"}'
 ```
 
 成功レスポンス:
@@ -959,6 +965,14 @@ classDiagram
   - `contextTokens?: number | null`
   - `contextWindowTokens?: number | null`
 - spoke / heartbeat / workspace read-only の場合は pre-compaction memory flush を実行しない。
+
+### 13.2 初回実行リチュアル（BOOTSTRAP 注入）
+
+- `origin=user` かつ `sessionKey=main` の `runAgent` 実行では、workspace bootstrap files を `Project Context` として prompt に注入する。
+- 注入対象は `AGENTS.md` / `SOUL.md` / `TOOLS.md` / `IDENTITY.md` / `USER.md` / `HEARTBEAT.md` / `BOOTSTRAP.md`（存在時）に加え、存在時のみ `MEMORY.md` / `memory.md` を含む。
+- workspace 未作成時は自動作成し、`AGENTS.md` / `SOUL.md` / `TOOLS.md` / `IDENTITY.md` / `USER.md` / `HEARTBEAT.md` を missing 補完する。
+- `BOOTSTRAP.md` は brand-new workspace の初期化時のみ作成する。削除後は次ターンから注入しない。
+- `origin=pipeline` / `isHeartbeat=true` / `memoryScope=spoke` では注入しない。
 
 ---
 

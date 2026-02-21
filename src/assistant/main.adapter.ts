@@ -16,12 +16,13 @@ function isCodexModel(model?: string): boolean {
 }
 
 export function createAgentRunAdapter(cfg: AdapterConfig, runAgentFn: AgentRunFnLike): AgentRunFn {
-  return async ({ prompt, sessionKey, runId, onDelta }) => {
+  return async ({ prompt, sessionKey, runId, origin, onDelta }) => {
     try {
       const result = await runAgentFn({
         runId,
         prompt,
         sessionKey,
+        origin,
         sessionId: isCodexModel(cfg.model) ? sessionKey : undefined,
         workspaceDir: cfg.workspaceDir,
         timezone: cfg.timezone,

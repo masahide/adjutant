@@ -317,54 +317,54 @@ sequenceDiagram
 
 ### Phase 1 設計と準備
 
-- [ ] 要件と仕様の確定（openclaw準拠の注入方式、除外条件）
-- [ ] インターフェース契約の確定（`origin`, context file 契約）
-- [ ] Mermaid図の更新（本計画書）
-- [ ] 型定義の作成（`WorkspaceBootstrapFile`, `EmbeddedContextFile`）
-- [ ] テスト追加方針の確定（`tests/assistant/agent-runner.test.ts` ほか）
+- [x] 要件と仕様の確定（openclaw準拠の注入方式、除外条件）
+- [x] インターフェース契約の確定（`origin`, context file 契約）
+- [x] Mermaid図の更新（本計画書）
+- [x] 型定義の作成（`WorkspaceBootstrapFile`, `EmbeddedContextFile`）
+- [x] テスト追加方針の確定（`tests/assistant/agent-runner.test.ts` ほか）
 
 ### Phase 2 openclaw準拠ローダー実装
 
-- [ ] Test Red: workspace 未存在時の自動作成失敗テスト
-- [ ] Impl Green: `workspace-bootstrap.ts` 実装（mkdir + missing テンプレート投入）
-- [ ] Integration: brand-new 判定時のみ `BOOTSTRAP.md` 作成されるテスト
-- [ ] Test Red: workspace bootstrap file 一覧読込の失敗テスト
-- [ ] Impl Green: `bootstrap-context.ts` 実装（読込 + セッションフィルタ）
-- [ ] Refactor: ファイル列挙とトリミング処理の分離
-- [ ] Integration: `BOOTSTRAP.md` を含む context 生成テスト
-- [ ] Docs: `doc/slack-proactive.md` に起動条件を追記
+- [x] Test Red: workspace 未存在時の自動作成失敗テスト
+- [x] Impl Green: `workspace-bootstrap.ts` 実装（mkdir + missing テンプレート投入）
+- [x] Integration: brand-new 判定時のみ `BOOTSTRAP.md` 作成されるテスト
+- [x] Test Red: workspace bootstrap file 一覧読込の失敗テスト
+- [x] Impl Green: `bootstrap-context.ts` 実装（読込 + セッションフィルタ）
+- [x] Refactor: ファイル列挙とトリミング処理の分離
+- [x] Integration: `BOOTSTRAP.md` を含む context 生成テスト
+- [x] Docs: `doc/slack-proactive.md` に起動条件を追記
 
 ### Phase 3 runAgent統合
 
-- [ ] Test Red: main/user で Project Context 注入される失敗テスト
-- [ ] Impl Green: `agent-runner.ts` に context 注入統合
-- [ ] Refactor: prompt 合成責務の整理
-- [ ] Integration: 削除前は毎ターン注入、削除後は非注入
-- [ ] Docs: `doc/spec-unified.md` に注入契約追記
+- [x] Test Red: main/user で Project Context 注入される失敗テスト
+- [x] Impl Green: `agent-runner.ts` に context 注入統合
+- [x] Refactor: prompt 合成責務の整理
+- [x] Integration: 削除前は毎ターン注入、削除後は非注入
+- [x] Docs: `doc/spec-unified.md` に注入契約追記
 
 ### Phase 4 統合と検証
 
-- [ ] 全体テスト実行（`pnpm run check`）
+- [x] 全体テスト実行（`pnpm run check`）
 - [ ] 手動検証（Web Chat で BOOTSTRAP 対話開始 → 削除完了）
 - [ ] ログ検証（本文非出力、メタのみ）
-- [ ] ドキュメント同期
+- [x] ドキュメント同期
 
 ## 8. 完了の定義 Definition of Done
 
 ### 8.1 機能DoD Functional DoD
 
-- [ ] `BOOTSTRAP.md` 存在時に main/user の実行で注入される
-- [ ] workspace 未作成でも初回実行で自動作成される
-- [ ] `BOOTSTRAP.md` が残る限り継続注入される
-- [ ] `BOOTSTRAP.md` 削除後は自動的に非注入となる
-- [ ] `origin=pipeline` / heartbeat / spoke では注入されない
+- [x] `BOOTSTRAP.md` 存在時に main/user の実行で注入される
+- [x] workspace 未作成でも初回実行で自動作成される
+- [x] `BOOTSTRAP.md` が残る限り継続注入される
+- [x] `BOOTSTRAP.md` 削除後は自動的に非注入となる
+- [x] `origin=pipeline` / heartbeat / spoke では注入されない
 
 ### 8.2 品質DoD Quality DoD
 
-- [ ] 追加テストがすべてパス
-- [ ] `pnpm run check` が成功
+- [x] 追加テストがすべてパス
+- [x] `pnpm run check` が成功
 - [ ] 本文ログを出さない
-- [ ] `doc/slack-proactive.md` / `doc/spec-unified.md` と実装が同期
+- [x] `doc/slack-proactive.md` / `doc/spec-unified.md` と実装が同期
 
 ## 9. 懸念事項と未確定事項 Concerns and Questions
 

@@ -215,6 +215,25 @@ describe("ChatHandler", () => {
     );
   });
 
+  it("同一 key で origin が異なる再送は ID mismatch error", () => {
+    ChatHandler.acceptMessage({
+      message: "hello",
+      sessionKey: "main",
+      idempotencyKey: "origin-mismatch-001",
+      origin: "user",
+    });
+    assert.throws(
+      () =>
+        ChatHandler.acceptMessage({
+          message: "hello",
+          sessionKey: "main",
+          idempotencyKey: "origin-mismatch-001",
+          origin: "pipeline",
+        }),
+      { name: "IdempotencyPayloadMismatchError" }
+    );
+  });
+
   it("異なる sessionKey で同一 idempotencyKey は別 run になる", () => {
     const a = ChatHandler.acceptMessage({
       message: "hello",

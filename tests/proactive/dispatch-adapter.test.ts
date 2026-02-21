@@ -108,6 +108,7 @@ describe("dispatch-adapter", () => {
       message: "world\nhello",
       sessionKey: "slack:channel:C100",
       idempotencyKey: dispatch.idempotencyKey,
+      origin: "pipeline",
     });
   });
 
