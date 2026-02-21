@@ -3,6 +3,9 @@ import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
 import { scanHeartbeatTimeline } from "../proactive/heartbeat-scanner.js";
 import { buildEventContext } from "./context-builder.js";
+import { HeartbeatExecution } from "./heartbeat-execution.js";
+import { HeartbeatPrecheck } from "./heartbeat-precheck.js";
+import { HeartbeatResultWriter } from "./heartbeat-result-writer.js";
 import { readEvents } from "./event-reader.js";
 import { runAgent, type AgentRunOptions, type AgentRunResult } from "./agent-runner.js";
 import { getQueueSize } from "./command-queue.js";
@@ -415,37 +418,6 @@ function toReason(error: unknown): string {
   return "heartbeat-runner-error";
 }
 
-function buildRunRecord(params: {
-  runAt: Date;
-  sessionKey: string;
-  result: HeartbeatRunResult;
-  triggerReason?: string;
-  modelId?: string;
-  preview?: string;
-}): HeartbeatRunRecord {
-  return {
-    schema: "adjutant.heartbeat.result.v1",
-    runAt: params.runAt.toISOString(),
-    sessionKey: params.sessionKey,
-    result: params.result,
-    triggerReason: params.triggerReason,
-    modelId: params.modelId,
-    preview: params.preview,
-  };
-}
-
-async function persistRunRecord(
-  runtime: HeartbeatRuntime,
-  dataDir: string,
-  record: HeartbeatRunRecord
-) {
-  try {
-    await runtime.appendRunRecord(dataDir, record);
-  } catch (error) {
-    console.warn("[HeartbeatRunner] failed to append run record:", error);
-  }
-}
-
 type FinalizeRunOptions = {
   runtime: HeartbeatRuntime;
   dataDir: string;
@@ -461,23 +433,23 @@ type FinalizeRunOptions = {
 };
 
 async function finalizeRun(options: FinalizeRunOptions): Promise<HeartbeatRunResult> {
-  emitHeartbeatEvent({
-    ts: options.event.ts ?? options.runtime.now().getTime(),
-    ...options.event,
+  const writer = new HeartbeatResultWriter({
+    now: options.runtime.now,
+    emitHeartbeatEvent,
+    appendRunRecord: options.runtime.appendRunRecord,
+    onWarn: (_message, meta) => {
+      console.warn("[HeartbeatRunner] failed to append run record:", meta ?? {});
+    },
   });
-  await persistRunRecord(
-    options.runtime,
-    options.dataDir,
-    buildRunRecord({
-      runAt: options.runAt,
-      sessionKey: options.sessionKey,
-      result: options.result,
-      triggerReason: options.triggerReason,
-      modelId: options.record?.modelId,
-      preview: options.record?.preview,
-    })
-  );
-  return options.result;
+  return await writer.finalize({
+    dataDir: options.dataDir,
+    runAt: options.runAt,
+    sessionKey: options.sessionKey,
+    triggerReason: options.triggerReason,
+    result: options.result,
+    event: options.event,
+    record: options.record,
+  });
 }
 
 async function resolvePrecheckSkip(params: {
@@ -777,26 +749,27 @@ export async function runOnce(
   const requestedSessionKey = normalizeSessionKey(config.sessionKey);
   const sessionKey = resolveSessionKeyWithFallback(sessionStore, requestedSessionKey);
 
-  const prechecked = await resolvePrecheckSkip({
-    runtime,
-    config,
-    runAt,
-    sessionKey,
-    triggerReason: opts?.reason,
-  });
-  if (prechecked) {
-    return prechecked;
-  }
-
-  const timelineScanned = await resolveTimelineScanSkip({
-    runtime,
-    config,
-    runAt,
-    sessionKey,
-    triggerReason: opts?.reason,
-  });
-  if (timelineScanned) {
-    return timelineScanned;
+  const precheck = new HeartbeatPrecheck([
+    async () =>
+      await resolvePrecheckSkip({
+        runtime,
+        config,
+        runAt,
+        sessionKey,
+        triggerReason: opts?.reason,
+      }),
+    async () =>
+      await resolveTimelineScanSkip({
+        runtime,
+        config,
+        runAt,
+        sessionKey,
+        triggerReason: opts?.reason,
+      }),
+  ]);
+  const skippedByPrecheck = await precheck.evaluate();
+  if (skippedByPrecheck) {
+    return skippedByPrecheck;
   }
 
   try {
@@ -857,7 +830,8 @@ export async function runOnce(
       timezone
     );
 
-    const agentResult = await runWithTimeout(runtime, timeoutMs, async () => {
+    const execution = new HeartbeatExecution(runtime);
+    const agentResult = await execution.runWithTimeout(timeoutMs, async () => {
       return await runtime.runAgent({
         runId: `hb-${runAt.getTime()}`,
         prompt: body,

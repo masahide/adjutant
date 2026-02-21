@@ -54,6 +54,7 @@ export {
 
 export type { AgentRunOptions, AgentRunResult } from "./agent-runner.js";
 export { runAgent } from "./agent-runner.js";
+export type { ResolvedAgentRunContext } from "./agent-run-context.js";
 
 export type { HeartbeatConfig } from "./heartbeat-runner.js";
 export {

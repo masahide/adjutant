@@ -1,6 +1,10 @@
 import OpenAI from "openai";
 import type { NormalizedEvent } from "../core/events.js";
 import type { RouterOutcome } from "./route-decision.js";
+import {
+  normalizeRouteClassifierDecision,
+  type RouteClassifierDecision,
+} from "./route-classifier-decision.js";
 import type { SecondaryClassifier } from "./trigger-filter.js";
 
 const DEFAULT_ROUTE_LLM_MODEL = "gpt-5-mini";
@@ -54,11 +58,6 @@ export type OpenAiSecondaryClassifierOptions = {
   client?: OpenAiChatCompletionClient;
   maxEventTextChars?: number;
   onAudit?: (log: RouteLlmAuditLog) => void;
-};
-
-type ParsedRouteDecision = {
-  outcome: RouterOutcome;
-  confidence?: number;
 };
 
 const ROUTE_SYSTEM_PROMPT = [
@@ -157,7 +156,7 @@ function stripCodeFence(content: string): string {
     .trim();
 }
 
-function parseRouteDecision(rawContent: string): ParsedRouteDecision {
+function parseRouteDecision(rawContent: string): RouteClassifierDecision {
   const normalizedContent = stripCodeFence(rawContent);
   let parsed: unknown;
   try {
@@ -166,26 +165,7 @@ function parseRouteDecision(rawContent: string): ParsedRouteDecision {
     const reason = error instanceof Error ? error.message : String(error);
     throw new Error(`route-llm-invalid-json: ${reason}`);
   }
-  const payload = asRecord(parsed);
-  if (!payload) {
-    throw new Error("route-llm-invalid-json: expected object");
-  }
-
-  const outcome = payload.outcome;
-  if (outcome !== "run" && outcome !== "pending") {
-    throw new Error("route-llm-invalid-outcome");
-  }
-
-  const confidence = payload.confidence;
-  const normalizedConfidence =
-    typeof confidence === "number" && Number.isFinite(confidence)
-      ? Math.max(0, Math.min(1, confidence))
-      : undefined;
-
-  return {
-    outcome,
-    confidence: normalizedConfidence,
-  };
+  return normalizeRouteClassifierDecision(parsed);
 }
 
 function createConcurrencyLimiter(maxConcurrent: number) {

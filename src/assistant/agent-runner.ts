@@ -1,24 +1,10 @@
-import {
-  AuthStorage,
-  type ContextUsage,
-  createAgentSession,
-  ModelRegistry,
-  readOnlyTools,
-  SessionManager,
-  SettingsManager,
-  type ToolDefinition,
-} from "@mariozechner/pi-coding-agent";
+import { SessionManager } from "@mariozechner/pi-coding-agent";
 import { constants as fsConstants } from "node:fs";
 import { access, rename } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative } from "node:path";
+import { dirname, join } from "node:path";
 import { appendDailyMemory, updateLongTermMemory } from "./memory-writer.js";
 import { readMemoryFiles } from "./memory-reader.js";
-import {
-  buildBootstrapContextFiles,
-  renderProjectContext,
-  type EmbeddedContextFile,
-} from "./bootstrap-context.js";
-import { normalizeSessionKey, normalizeTimezone } from "./shared-normalizers.js";
+import { renderProjectContext, type EmbeddedContextFile } from "./bootstrap-context.js";
 import {
   createCompactionEventTracker,
   resolveCompactionRuntimeSettings,
@@ -27,7 +13,6 @@ import {
   type CompactionEventTracker,
 } from "./compaction-runtime.js";
 import {
-  resolveSessionEntriesPath,
   readSessionEntryStore,
   writeSessionEntryStore,
   getSessionEntry,
@@ -35,11 +20,29 @@ import {
   parseIsoMs,
   type SessionEntryStore,
 } from "./session-entry-store.js";
-import { createMemoryToolDefinitions } from "./memory-search/index.js";
 import {
   ensureWorkspaceBootstrapFiles,
   loadWorkspaceBootstrapFiles,
 } from "./workspace-bootstrap.js";
+import {
+  createAgentSessionFromSdk,
+  isAgentModelAvailable,
+  type AgentSessionLike,
+} from "./agent-session-factory.js";
+import { createAgentEventSubscriber } from "./agent-event-subscriber.js";
+import {
+  buildAgentPrompt,
+  resolveAgentRunContext,
+  shouldInjectBootstrapContext,
+} from "./agent-prompt-builder.js";
+import { normalizeTimezone } from "./shared-normalizers.js";
+import {
+  createSessionWithRecovery as createSessionWithRecoveryFromRepository,
+  persistSessionStore as persistSessionStoreFromRepository,
+  resolveSessionFilePath,
+  resolveSessionMetadata as resolveSessionMetadataFromRepository,
+  toSessionStoreLockKey,
+} from "./session-store-repository.js";
 
 export type AgentRunOptions = {
   runId: string;
@@ -70,16 +73,7 @@ export type AgentRunResult = {
 
 type UnknownRecord = Record<string, unknown>;
 
-type SessionLike = {
-  subscribe: (listener: (event: unknown) => void) => () => void;
-  prompt: (text: string) => Promise<void>;
-  getContextUsage?: () => ContextUsage | undefined;
-  compact?: (customInstructions?: string) => Promise<unknown>;
-  dispose: () => void;
-  sessionId?: string;
-  sessionFile?: string;
-  model?: unknown;
-};
+type SessionLike = AgentSessionLike;
 
 type AgentRunnerRuntime = {
   nowMs: () => number;
@@ -118,114 +112,15 @@ const lockTails = new Map<string, Promise<void>>();
 
 let runtimeOverride: Partial<AgentRunnerRuntime> | null = null;
 
-function resolveSessionFilePath(sessionEntriesPath: string, sessionFile: string): string {
-  if (isAbsolute(sessionFile)) {
-    return sessionFile;
-  }
-  return join(dirname(sessionEntriesPath), sessionFile);
-}
-
-function toSessionStoreLockKey(sessionEntriesPath: string): string {
-  return `session-entry-store:${sessionEntriesPath}`;
-}
-
 function relativizeSessionFilePath(sessionEntriesPath: string, sessionFile: string): string {
-  if (!sessionFile || !isAbsolute(sessionFile)) {
+  if (!sessionFile.startsWith("/")) {
     return sessionFile;
   }
-  const relPath = relative(dirname(sessionEntriesPath), sessionFile);
+  const relPath = sessionFile.replace(`${dirname(sessionEntriesPath)}/`, "");
   if (!relPath || relPath.startsWith("..")) {
     return sessionFile;
   }
   return relPath;
-}
-
-function parseModelSpecifier(model: string): { provider: string; modelId: string } | null {
-  const specifier = model.trim();
-  if (!specifier) {
-    return null;
-  }
-  const firstSlash = specifier.indexOf("/");
-  if (firstSlash <= 0 || firstSlash === specifier.length - 1) {
-    return null;
-  }
-  const provider = specifier.slice(0, firstSlash).trim();
-  const modelId = specifier.slice(firstSlash + 1).trim();
-  if (!provider || !modelId) {
-    return null;
-  }
-  return { provider, modelId };
-}
-
-function resolveModelSelection(
-  modelRegistry: ModelRegistry,
-  model: string | undefined
-): { matched: boolean; model?: unknown; provider?: string; modelId?: string } {
-  const specifier = model?.trim();
-  if (!specifier) {
-    return { matched: false };
-  }
-
-  const explicit = parseModelSpecifier(specifier);
-  if (explicit) {
-    const found = modelRegistry.find(explicit.provider, explicit.modelId);
-    if (found) {
-      return {
-        matched: true,
-        model: found,
-        provider: found.provider,
-        modelId: found.id,
-      };
-    }
-    return {
-      matched: false,
-      provider: explicit.provider,
-      modelId: explicit.modelId,
-    };
-  }
-
-  const byId = modelRegistry
-    .getAll()
-    .filter((candidate) => candidate.id.toLowerCase() === specifier.toLowerCase());
-  if (byId.length === 0) {
-    return {
-      matched: false,
-      modelId: specifier,
-    };
-  }
-  const selected = byId[0];
-  return {
-    matched: true,
-    model: selected,
-    provider: selected.provider,
-    modelId: selected.id,
-  };
-}
-
-function createMemoryWriteToolDefinition(): ToolDefinition {
-  return {
-    name: "memory_write",
-    label: "Memory Write",
-    description: "Persist notable user preference or context into assistant memory.",
-    parameters: {
-      type: "object",
-      properties: {
-        content: { type: "string", minLength: 1 },
-        scope: { enum: ["daily", "long-term"] },
-      },
-      required: ["content"],
-      additionalProperties: false,
-    } as never,
-    execute: async (_toolCallId, params) => {
-      const record = params as { scope?: unknown; content?: unknown };
-      const scope = record.scope === "long-term" ? "long-term" : "daily";
-      const content = typeof record.content === "string" ? record.content : "";
-      return {
-        content: [{ type: "text", text: `memory_write accepted (${scope})` }],
-        details: { scope, content },
-      };
-    },
-  };
 }
 
 function createLockAcquirer(): AgentRunnerRuntime["acquireLock"] {
@@ -289,46 +184,18 @@ const defaultRuntime: AgentRunnerRuntime = {
     memoryWriteEnabled,
     memoryScope,
     workspaceDir,
-  }) => {
-    const authStorage = new AuthStorage();
-    const modelRegistry = new ModelRegistry(authStorage);
-    const resolvedModel = resolveModelSelection(modelRegistry, model);
-    const settingsOverrides: { defaultProvider?: string; defaultModel?: string } = {};
-    if (resolvedModel.provider) {
-      settingsOverrides.defaultProvider = resolvedModel.provider;
-    }
-    if (resolvedModel.modelId) {
-      settingsOverrides.defaultModel = resolvedModel.modelId;
-    }
-    const settingsManager = SettingsManager.inMemory(settingsOverrides);
-    const customTools: ToolDefinition[] = [];
-    if (memoryScope === "main") {
-      customTools.push(
-        ...createMemoryToolDefinitions({
-          workspaceDir,
-          onWarn: (message, meta) => {
-            console.warn("[AgentRunner][MemoryTools]", message, meta ?? {});
-          },
-        })
-      );
-    }
-    if (memoryWriteEnabled) {
-      customTools.push(createMemoryWriteToolDefinition());
-    }
-
-    const created = await createAgentSession({
-      cwd: workspaceDir,
-      sessionManager: sessionManager as SessionManager,
-      settingsManager,
-      modelRegistry,
-      model: resolvedModel.model as never,
-      tools: isHeartbeat ? readOnlyTools : undefined,
-      customTools,
-    });
-    return {
-      session: created.session as SessionLike,
-    };
-  },
+  }) =>
+    await createAgentSessionFromSdk({
+      sessionManager,
+      model,
+      isHeartbeat,
+      memoryWriteEnabled,
+      memoryScope,
+      workspaceDir,
+      onWarn: (message, meta) => {
+        console.warn("[AgentRunner][MemoryTools]", message, meta ?? {});
+      },
+    }),
   readMemoryFiles,
   appendDailyMemory,
   updateLongTermMemory,
@@ -342,14 +209,7 @@ const defaultRuntime: AgentRunnerRuntime = {
       return false;
     }
   },
-  isModelAvailable: (model) => {
-    const specifier = model?.trim();
-    if (!specifier) {
-      return true;
-    }
-    const modelRegistry = new ModelRegistry(new AuthStorage());
-    return resolveModelSelection(modelRegistry, specifier).matched;
-  },
+  isModelAvailable: isAgentModelAvailable,
   repairSessionData: async (sessionKey, sessionEntriesPath) => {
     const state = await readSessionEntryStore(sessionEntriesPath);
     const entry = getSessionEntry(state.store, sessionKey);
@@ -537,23 +397,6 @@ function resolveMemoryScope(opts: AgentRunOptions, sessionKey: string): "main" |
     return opts.memoryScope;
   }
   return sessionKey === "main" ? "main" : "spoke";
-}
-
-function shouldInjectBootstrapContext(
-  opts: AgentRunOptions,
-  sessionKey: string,
-  memoryScope: "main" | "spoke"
-): boolean {
-  if (opts.origin !== "user") {
-    return false;
-  }
-  if (opts.isHeartbeat) {
-    return false;
-  }
-  if (sessionKey !== "main") {
-    return false;
-  }
-  return memoryScope === "main";
 }
 
 function classifyError(
@@ -960,47 +803,43 @@ async function runPreCompactionMemoryFlush(params: {
 export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
   const runtime = getRuntime();
   const startedAtMs = runtime.nowMs();
+  const context = resolveAgentRunContext(opts);
 
-  if (opts.model && !runtime.isModelAvailable(opts.model)) {
-    throw new Error(`model unavailable: ${opts.model}`);
+  if (context.model && !runtime.isModelAvailable(context.model)) {
+    throw new Error(`model unavailable: ${context.model}`);
   }
 
-  const sessionKey = normalizeSessionKey(opts.sessionKey);
-  const workspaceDir = resolveWorkspaceDir(opts);
-  const timezone = resolveTimezone(opts);
-  const sessionEntriesPath = resolveSessionEntriesPath(opts.sessionEntriesPath);
-  const memoryWriteEnabled = shouldEnableMemoryWrite(opts);
-  const memoryScope = resolveMemoryScope(opts, sessionKey);
   const compactionSettings = resolveCompactionRuntimeSettings();
-  if (opts.origin === "user") {
-    await runtime.ensureWorkspaceBootstrapFiles(workspaceDir);
+  if (context.origin === "user") {
+    await runtime.ensureWorkspaceBootstrapFiles(context.workspaceDir);
   }
   const memory =
-    memoryScope === "main"
+    context.memoryScope === "main"
       ? await runtime.readMemoryFiles({
-          workspaceDir,
-          timezone,
+          workspaceDir: context.workspaceDir,
+          timezone: context.timezone,
         })
       : { longTerm: null, daily: null, yesterday: null };
 
-  let prompt = withSystemPrompt(opts.prompt, opts.systemPrompt);
-  prompt = appendMemoryContext(prompt, {
-    longTerm: memory.longTerm,
-    daily: memory.daily,
+  const bootstrapFiles = shouldInjectBootstrapContext(context)
+    ? await runtime.loadWorkspaceBootstrapFiles(context.workspaceDir)
+    : undefined;
+  const prompt = buildAgentPrompt({
+    basePrompt: context.prompt,
+    systemPrompt: context.systemPrompt,
+    memory: {
+      longTerm: memory.longTerm,
+      daily: memory.daily,
+    },
+    bootstrapFiles,
+    onBootstrapWarn: (message, meta) => {
+      console.warn("[AgentRunner][BootstrapContext]", message, {
+        sessionKey: context.sessionKey,
+        origin: context.origin,
+        ...(meta ?? {}),
+      });
+    },
   });
-  if (shouldInjectBootstrapContext(opts, sessionKey, memoryScope)) {
-    const files = await runtime.loadWorkspaceBootstrapFiles(workspaceDir);
-    const contextFiles = buildBootstrapContextFiles(files, {
-      onWarn: (message, meta) => {
-        console.warn("[AgentRunner][BootstrapContext]", message, {
-          sessionKey,
-          origin: opts.origin,
-          ...(meta ?? {}),
-        });
-      },
-    });
-    prompt = appendProjectContext(prompt, contextFiles);
-  }
 
   let releaseLock: (() => void | Promise<void>) | undefined;
   let session: SessionLike | undefined;
@@ -1020,47 +859,48 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
   let isSilentTurn = false;
 
   try {
-    releaseLock = await runtime.acquireLock(toSessionStoreLockKey(sessionEntriesPath));
-    sessionStoreState = await runtime.loadSessionEntryStore(sessionEntriesPath);
-    const sessionEntry = getSessionEntry(sessionStoreState.store, sessionKey);
+    releaseLock = await runtime.acquireLock(toSessionStoreLockKey(context.sessionEntriesPath));
+    sessionStoreState = await runtime.loadSessionEntryStore(context.sessionEntriesPath);
+    const sessionEntry = getSessionEntry(sessionStoreState.store, context.sessionKey);
     const sessionCompactionMetadata = resolveSessionCompactionMetadata(sessionEntry);
     compactionTracker = createCompactionEventTracker(sessionCompactionMetadata.compactionCount);
-    const createdState = await createSessionWithRecovery({
+    const createdState = await createSessionWithRecoveryFromRepository({
       runtime,
-      sessionKey,
-      sessionId: opts.sessionId,
-      sessionEntriesPath,
+      sessionKey: context.sessionKey,
+      sessionId: context.sessionId,
+      sessionEntriesPath: context.sessionEntriesPath,
       sessionStoreState,
-      workspaceDir,
-      model: opts.model,
-      isHeartbeat: opts.isHeartbeat,
-      memoryWriteEnabled,
-      memoryScope,
+      workspaceDir: context.workspaceDir,
+      model: context.model,
+      isHeartbeat: context.isHeartbeat,
+      memoryWriteEnabled: context.memoryWriteEnabled,
+      memoryScope: context.memoryScope,
     });
     sessionStoreState = createdState.sessionStoreState;
     previousUpdatedAt = createdState.previousUpdatedAt;
     const created = createdState.created;
     session = created.session;
 
-    const subscribed = subscribeSessionEvents({
+    const subscribed = createAgentEventSubscriber({
       session: created.session,
-      opts,
       runtime,
-      memoryWriteEnabled,
-      workspaceDir,
-      timezone,
+      memoryWriteEnabled: context.memoryWriteEnabled,
+      workspaceDir: context.workspaceDir,
+      timezone: context.timezone,
       compactionTracker,
       isSilentTurn: () => isSilentTurn,
+      onTextDelta: opts.onTextDelta,
+      onToolCall: opts.onToolCall,
     });
     unsubscribe = subscribed.unsubscribe;
 
     memoryFlushMetadata = await runPreCompactionMemoryFlush({
       session: created.session,
       runtime,
-      sessionKey,
-      isHeartbeat: Boolean(opts.isHeartbeat),
-      memoryScope,
-      workspaceDir,
+      sessionKey: context.sessionKey,
+      isHeartbeat: context.isHeartbeat,
+      memoryScope: context.memoryScope,
+      workspaceDir: context.workspaceDir,
       settings: compactionSettings.memoryFlush,
       metadata: sessionCompactionMetadata,
       compactionTracker,
@@ -1087,17 +927,17 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
     const durationMs = Math.max(0, runtime.nowMs() - startedAtMs);
     output = subscribed.output.text;
     toolCalls = subscribed.toolCalls;
-    sessionMetadata = resolveSessionMetadata(created.session);
+    sessionMetadata = resolveSessionMetadataFromRepository(created.session);
 
     if (sessionStoreState && sessionMetadata) {
-      await persistSessionStore({
+      await persistSessionStoreFromRepository({
         runtime,
         sessionStoreState,
-        sessionKey,
+        sessionKey: context.sessionKey,
         sessionMetadata,
-        explicitSessionId: opts.sessionId?.trim(),
+        explicitSessionId: context.sessionId?.trim(),
         nowIso: new Date(runtime.nowMs()).toISOString(),
-        isHeartbeat: opts.isHeartbeat,
+        isHeartbeat: context.isHeartbeat,
         previousUpdatedAt,
         compactionTracker,
         memoryFlushMetadata,
@@ -1105,12 +945,12 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
     }
 
     return {
-      runId: opts.runId,
+      runId: context.runId,
       text: output.trim(),
       toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
-      sessionId: opts.sessionId?.trim() || sessionMetadata?.sessionId,
+      sessionId: context.sessionId?.trim() || sessionMetadata?.sessionId,
       durationMs,
-      modelId: sessionMetadata?.modelId ?? opts.model,
+      modelId: sessionMetadata?.modelId ?? context.model,
     };
   } finally {
     try {

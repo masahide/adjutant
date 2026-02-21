@@ -135,6 +135,8 @@
   - `AgentEventSubscriber.subscribe(...)`
   - `SessionStoreRepository.load/save(...)`
   - `HeartbeatPrecheck.evaluate(...)`
+  - `HeartbeatExecution.runWithTimeout(...)`
+  - `HeartbeatResultWriter.finalize(...)`
   - `SlackIngressRequestParser.parse(...)`
 
 - 設定I/O
@@ -227,6 +229,14 @@ classDiagram
     +runAgent()
   }
 
+  class ResolvedAgentRunContext {
+    +sessionKey
+    +origin
+    +memoryScope
+    +workspaceDir
+    +timezone
+  }
+
   class AgentPromptBuilder {
     +build()
   }
@@ -252,6 +262,14 @@ classDiagram
     +evaluate()
   }
 
+  class HeartbeatExecution {
+    +runWithTimeout()
+  }
+
+  class HeartbeatResultWriter {
+    +finalize()
+  }
+
   class SlackIngressFacade {
     +handleRequest()
     +handleWebSocketFrame()
@@ -266,21 +284,43 @@ classDiagram
   }
 
   class RuntimeConfigLoader {
-    +loadAssistantConfig()
+    +loadAppRuntimeConfig()
     +loadCollectorConfig()
+  }
+
+  class AppRuntimeConfig {
+    +assistant
+    +routeLlm
+    +heartbeat
+    +slack
+  }
+
+  class RouteClassifierDecision {
+    +outcome
+    +confidence
+    +reason
+  }
+
+  class RouteLlmClassifier {
+    +classify()
   }
 
   ApiServer --> ChatHandler
   ChatHandler --> AgentRunner
+  AgentRunner --> ResolvedAgentRunContext
   AgentRunner --> AgentPromptBuilder
   AgentRunner --> AgentSessionFactory
   AgentRunner --> AgentEventSubscriber
   AgentRunner --> SessionStoreRepository
   HeartbeatRunner --> HeartbeatPrecheck
+  HeartbeatRunner --> HeartbeatExecution
+  HeartbeatRunner --> HeartbeatResultWriter
   SlackIngressFacade --> SlackIngressRequestParser
   SlackIngressFacade --> SlackResponseCacheUpdater
   AgentRunner --> RuntimeConfigLoader
   HeartbeatRunner --> RuntimeConfigLoader
+  RuntimeConfigLoader --> AppRuntimeConfig
+  RouteLlmClassifier --> RouteClassifierDecision
 ```
 
 ### 5.3 その他の図 Optional
@@ -290,6 +330,7 @@ sequenceDiagram
   participant API as ApiServer
   participant CH as ChatHandler
   participant AR as AgentRunner
+  participant RC as RuntimeConfigLoader
   participant PB as AgentPromptBuilder
   participant SF as AgentSessionFactory
   participant ES as AgentEventSubscriber
@@ -297,6 +338,7 @@ sequenceDiagram
 
   API->>CH: acceptMessage(req)
   CH->>AR: runAgent(opts)
+  AR->>RC: loadAppRuntimeConfig()
   AR->>SS: load(sessionKey)
   AR->>PB: build(context)
   AR->>SF: create(context)
@@ -325,7 +367,20 @@ sequenceDiagram
   - `NormalizedEvent` 形状固定
   - route判定のfallback契約固定
 
-### 6.2 カバレッジ対象
+### 6.2 テスト基盤確認結果
+
+- 既存helper再利用
+  - `tests/assistant/chat-handler-test-helpers.ts` を chat/api-server 系で継続利用
+  - reset 系 helper（queue/stream/system events）を流用し、Phase 2 以降の分割テストでも再利用
+
+- fixture整理方針
+  - 現時点は `tests/fixtures/` を現状維持（新規fixture導入は Red テストで必要になった時のみ）
+  - `mkdtemp` 利用の一時workspace生成を優先し、固定fixture肥大化を避ける
+
+- 追加で固定した契約テスト
+  - `tests/proactive/route-classifier-decision.test.ts` を追加し、`RouteClassifierDecision` の正規化契約を固定
+
+### 6.3 カバレッジ対象
 
 - 重要ロジック
   - run lifecycle
@@ -349,23 +404,23 @@ sequenceDiagram
 
 - [x] 要件と仕様の確定（本計画の合意、優先度P0/P1/P2の確定）
 - [x] インターフェース契約の確定（新規内部I/Fと保持する外部契約の凍結）
-- [ ] Mermaid図の作成 更新（本ファイル）
-- [ ] インターフェース 型定義の作成（`ResolvedAgentRunContext`, `AppRuntimeConfig`, `RouteClassifierDecision`）
-- [ ] テスト基盤の確認（既存helper再利用、必要ならfixture整理）
+- [x] Mermaid図の作成 更新（本ファイル）
+- [x] インターフェース 型定義の作成（`ResolvedAgentRunContext`, `AppRuntimeConfig`, `RouteClassifierDecision`）
+- [x] テスト基盤の確認（既存helper再利用、必要ならfixture整理）
 
 ### Phase 2 `agent-runner` / `heartbeat-runner` 分割（P0）
 
-- [ ] Test `agent-runner` 分割前提の失敗テストを追加 Red
-- [ ] Impl `AgentPromptBuilder` / `AgentSessionFactory` / `AgentEventSubscriber` / `SessionStoreRepository` の最小実装 Green
-- [ ] Refactor `runAgent` 本体を orchestration のみに縮小（目標 300行以下）
-- [ ] Integration chat run の既存e2eを更新し回帰防止
-- [ ] Docs 契約変更点（内部）を計画書へ反映
+- [x] Test `agent-runner` 分割前提の失敗テストを追加 Red
+- [x] Impl `AgentPromptBuilder` / `AgentSessionFactory` / `AgentEventSubscriber` / `SessionStoreRepository` の最小実装 Green
+- [x] Refactor `runAgent` 本体を orchestration のみに縮小（目標 300行以下）
+- [x] Integration chat run の既存e2eを更新し回帰防止
+- [x] Docs 契約変更点（内部）を計画書へ反映
 
-- [ ] Test `heartbeat-runner` precheck/execution分離の失敗テストを追加 Red
-- [ ] Impl `HeartbeatPrecheck` / `HeartbeatExecution` / `HeartbeatResultWriter` の最小実装 Green
-- [ ] Refactor `runOnce` の責務を分離（判定と副作用の分割）
-- [ ] Integration heartbeat e2e と重複通知抑止テストを更新
-- [ ] Docs 契約・図の更新
+- [x] Test `heartbeat-runner` precheck/execution分離の失敗テストを追加 Red
+- [x] Impl `HeartbeatPrecheck` / `HeartbeatExecution` / `HeartbeatResultWriter` の最小実装 Green
+- [x] Refactor `runOnce` の責務を分離（判定と副作用の分割）
+- [x] Integration heartbeat e2e と重複通知抑止テストを更新
+- [x] Docs 契約・図の更新
 
 ### Phase 3 `slackIngressHandlers` 分割 + 設定集約（P0/P1）
 
