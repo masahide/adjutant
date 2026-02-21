@@ -1,5 +1,6 @@
 import {
   AuthStorage,
+  type ContextUsage,
   createAgentSession,
   ModelRegistry,
   readOnlyTools,
@@ -7,11 +8,19 @@ import {
   SettingsManager,
   type ToolDefinition,
 } from "@mariozechner/pi-coding-agent";
-import { rename } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
+import { access, rename } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { appendDailyMemory, updateLongTermMemory } from "./memory-writer.js";
 import { readMemoryFiles } from "./memory-reader.js";
 import { normalizeSessionKey, normalizeTimezone } from "./shared-normalizers.js";
+import {
+  createCompactionEventTracker,
+  resolveCompactionRuntimeSettings,
+  resolveSessionCompactionMetadata,
+  shouldRunPreCompactionMemoryFlush,
+  type CompactionEventTracker,
+} from "./compaction-runtime.js";
 import {
   resolveSessionEntriesPath,
   readSessionEntryStore,
@@ -54,6 +63,8 @@ type UnknownRecord = Record<string, unknown>;
 type SessionLike = {
   subscribe: (listener: (event: unknown) => void) => () => void;
   prompt: (text: string) => Promise<void>;
+  getContextUsage?: () => ContextUsage | undefined;
+  compact?: (customInstructions?: string) => Promise<unknown>;
   dispose: () => void;
   sessionId?: string;
   sessionFile?: string;
@@ -86,6 +97,7 @@ type AgentRunnerRuntime = {
     customPath?: string
   ) => Promise<{ path: string; store: SessionEntryStore }>;
   saveSessionEntryStore: (store: SessionEntryStore, customPath?: string) => Promise<string>;
+  isWorkspaceWritable: (workspaceDir: string) => Promise<boolean>;
   isModelAvailable: (model?: string) => boolean;
   repairSessionData: (sessionKey: string, sessionEntriesPath?: string) => Promise<boolean>;
 };
@@ -310,6 +322,14 @@ const defaultRuntime: AgentRunnerRuntime = {
   updateLongTermMemory,
   loadSessionEntryStore: readSessionEntryStore,
   saveSessionEntryStore: writeSessionEntryStore,
+  isWorkspaceWritable: async (workspaceDir) => {
+    try {
+      await access(workspaceDir, fsConstants.W_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  },
   isModelAvailable: (model) => {
     const specifier = model?.trim();
     if (!specifier) {
@@ -592,6 +612,14 @@ function parseMemoryWriteArgs(
   return { scope: "daily", content };
 }
 
+function parseNonNegativeInt(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+  const int = Math.floor(value);
+  return int >= 0 ? int : null;
+}
+
 type SessionStoreState = { path: string; store: SessionEntryStore };
 
 async function createSessionWithRecovery(params: {
@@ -659,19 +687,25 @@ function subscribeSessionEvents(params: {
   memoryWriteEnabled: boolean;
   workspaceDir: string;
   timezone: string;
+  compactionTracker: CompactionEventTracker;
+  isSilentTurn: () => boolean;
 }): {
   unsubscribe: () => void;
   output: { text: string };
   toolCalls: Array<{ name: string; result: unknown }>;
   memoryWriteTasks: Promise<void>[];
+  waitForSettledMemoryWrites: () => Promise<void>;
 } {
   const output = { text: "" };
   const toolCalls: Array<{ name: string; result: unknown }> = [];
   const memoryWriteTasks: Promise<void>[] = [];
+  let settledMemoryTaskCount = 0;
 
   const unsubscribe = params.session.subscribe((event) => {
+    params.compactionTracker.onEvent(event);
+
     const delta = tryGetTextDelta(event);
-    if (delta) {
+    if (delta && !params.isSilentTurn()) {
       output.text += delta;
       params.opts.onTextDelta?.(delta);
     }
@@ -702,7 +736,9 @@ function subscribeSessionEvents(params: {
           })()
         );
       }
-      params.opts.onToolCall?.(toolCall.name, toolCall.args);
+      if (!params.isSilentTurn()) {
+        params.opts.onToolCall?.(toolCall.name, toolCall.args);
+      }
     }
 
     const toolResult = tryGetToolResult(event);
@@ -712,16 +748,34 @@ function subscribeSessionEvents(params: {
     if (toolResult.name === "memory_write" && !params.memoryWriteEnabled) {
       return;
     }
+    if (params.isSilentTurn()) {
+      return;
+    }
     toolCalls.push(toolResult);
   });
 
-  return { unsubscribe, output, toolCalls, memoryWriteTasks };
+  return {
+    unsubscribe,
+    output,
+    toolCalls,
+    memoryWriteTasks,
+    waitForSettledMemoryWrites: async () => {
+      const pending = memoryWriteTasks.slice(settledMemoryTaskCount);
+      settledMemoryTaskCount = memoryWriteTasks.length;
+      if (pending.length > 0) {
+        await Promise.all(pending);
+      }
+    },
+  };
 }
 
 async function promptWithRetry(params: {
   session: SessionLike;
   prompt: string;
   runtime: AgentRunnerRuntime;
+  compactionEnabled: boolean;
+  onCompactionCompleted?: () => void;
+  getCompactionCount?: () => number;
 }): Promise<void> {
   let prompt = params.prompt;
   let attempts = 0;
@@ -739,6 +793,15 @@ async function promptWithRetry(params: {
       }
       if (category === "context_overflow" && attempts < 1) {
         attempts += 1;
+        if (params.compactionEnabled && typeof params.session.compact === "function") {
+          const before = params.getCompactionCount?.();
+          await params.session.compact();
+          const after = params.getCompactionCount?.();
+          if (before === undefined || after === undefined || after <= before) {
+            params.onCompactionCompleted?.();
+          }
+          continue;
+        }
         prompt = shrinkPrompt(prompt);
         continue;
       }
@@ -756,6 +819,11 @@ async function persistSessionStore(params: {
   nowIso: string;
   isHeartbeat?: boolean;
   previousUpdatedAt: string | null;
+  compactionTracker: CompactionEventTracker;
+  memoryFlushMetadata?: {
+    executedAtIso: string;
+    compactionCountAtFlush: number;
+  };
 }): Promise<void> {
   const entry = upsertSessionEntry(params.sessionStoreState.store, params.sessionKey);
   const sessionId = params.explicitSessionId || params.sessionMetadata.sessionId;
@@ -773,10 +841,81 @@ async function persistSessionStore(params: {
     isHeartbeat: params.isHeartbeat,
     previousUpdatedAt: params.previousUpdatedAt,
   });
+
+  const storedCompactionCount = parseNonNegativeInt(entry.compactionCount) ?? 0;
+  const trackedCompactionCount = params.compactionTracker.getCompactionCount();
+  entry.compactionCount = Math.max(storedCompactionCount, trackedCompactionCount);
+
+  const context = params.compactionTracker.getContextSnapshot();
+  entry.contextTokens = context.contextTokens;
+  entry.contextWindowTokens = context.contextWindowTokens;
+
+  if (params.memoryFlushMetadata) {
+    entry.memoryFlushAt = params.memoryFlushMetadata.executedAtIso;
+    entry.memoryFlushCompactionCount = params.memoryFlushMetadata.compactionCountAtFlush;
+  }
+
   await params.runtime.saveSessionEntryStore(
     params.sessionStoreState.store,
     params.sessionStoreState.path
   );
+}
+
+async function runPreCompactionMemoryFlush(params: {
+  session: SessionLike;
+  runtime: AgentRunnerRuntime;
+  sessionKey: string;
+  isHeartbeat: boolean;
+  memoryScope: "main" | "spoke";
+  workspaceDir: string;
+  settings: ReturnType<typeof resolveCompactionRuntimeSettings>["memoryFlush"];
+  metadata: ReturnType<typeof resolveSessionCompactionMetadata>;
+  compactionTracker: CompactionEventTracker;
+  setSilentTurn: (silent: boolean) => void;
+  waitForSettledMemoryWrites: () => Promise<void>;
+}): Promise<
+  | {
+      executedAtIso: string;
+      compactionCountAtFlush: number;
+    }
+  | undefined
+> {
+  const contextUsage = params.session.getContextUsage?.();
+  params.compactionTracker.setContextUsage(contextUsage);
+  const workspaceWritable = await params.runtime.isWorkspaceWritable(params.workspaceDir);
+  const decision = shouldRunPreCompactionMemoryFlush({
+    settings: params.settings,
+    metadata: params.metadata,
+    contextUsage,
+    isMainSession: params.memoryScope === "main",
+    isHeartbeat: params.isHeartbeat,
+    workspaceWritable,
+  });
+  if (!decision.shouldRun) {
+    return undefined;
+  }
+
+  params.setSilentTurn(true);
+  try {
+    await params.session.prompt(
+      withSystemPrompt(params.settings.prompt, params.settings.systemPrompt)
+    );
+    await params.waitForSettledMemoryWrites();
+    params.compactionTracker.markFlushTriggered();
+    return {
+      executedAtIso: new Date(params.runtime.nowMs()).toISOString(),
+      compactionCountAtFlush: params.compactionTracker.getCompactionCount(),
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn("[AgentRunner][MemoryFlush] flush turn failed", {
+      sessionKey: params.sessionKey,
+      reason: message,
+    });
+    return undefined;
+  } finally {
+    params.setSilentTurn(false);
+  }
 }
 
 export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
@@ -793,6 +932,7 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
   const sessionEntriesPath = resolveSessionEntriesPath(opts.sessionEntriesPath);
   const memoryWriteEnabled = shouldEnableMemoryWrite(opts);
   const memoryScope = resolveMemoryScope(opts, sessionKey);
+  const compactionSettings = resolveCompactionRuntimeSettings();
   const memory =
     memoryScope === "main"
       ? await runtime.readMemoryFiles({
@@ -815,10 +955,21 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
   let sessionMetadata: { sessionId?: string; sessionFile?: string; modelId?: string } | null = null;
   let previousUpdatedAt: string | null = null;
   let sessionStoreState: SessionStoreState | null = null;
+  let compactionTracker = createCompactionEventTracker(0);
+  let memoryFlushMetadata:
+    | {
+        executedAtIso: string;
+        compactionCountAtFlush: number;
+      }
+    | undefined;
+  let isSilentTurn = false;
 
   try {
     releaseLock = await runtime.acquireLock(toSessionStoreLockKey(sessionEntriesPath));
     sessionStoreState = await runtime.loadSessionEntryStore(sessionEntriesPath);
+    const sessionEntry = getSessionEntry(sessionStoreState.store, sessionKey);
+    const sessionCompactionMetadata = resolveSessionCompactionMetadata(sessionEntry);
+    compactionTracker = createCompactionEventTracker(sessionCompactionMetadata.compactionCount);
     const createdState = await createSessionWithRecovery({
       runtime,
       sessionKey,
@@ -843,18 +994,40 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
       memoryWriteEnabled,
       workspaceDir,
       timezone,
+      compactionTracker,
+      isSilentTurn: () => isSilentTurn,
     });
     unsubscribe = subscribed.unsubscribe;
+
+    memoryFlushMetadata = await runPreCompactionMemoryFlush({
+      session: created.session,
+      runtime,
+      sessionKey,
+      isHeartbeat: Boolean(opts.isHeartbeat),
+      memoryScope,
+      workspaceDir,
+      settings: compactionSettings.memoryFlush,
+      metadata: sessionCompactionMetadata,
+      compactionTracker,
+      setSilentTurn: (silent) => {
+        isSilentTurn = silent;
+      },
+      waitForSettledMemoryWrites: subscribed.waitForSettledMemoryWrites,
+    });
 
     await promptWithRetry({
       session: created.session,
       prompt,
       runtime,
+      compactionEnabled: compactionSettings.compactionEnabled,
+      onCompactionCompleted: () => {
+        compactionTracker.markCompactionCompleted("overflow");
+      },
+      getCompactionCount: () => compactionTracker.getCompactionCount(),
     });
 
-    if (subscribed.memoryWriteTasks.length > 0) {
-      await Promise.all(subscribed.memoryWriteTasks);
-    }
+    await subscribed.waitForSettledMemoryWrites();
+    compactionTracker.setContextUsage(created.session.getContextUsage?.());
 
     const durationMs = Math.max(0, runtime.nowMs() - startedAtMs);
     output = subscribed.output.text;
@@ -871,6 +1044,8 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
         nowIso: new Date(runtime.nowMs()).toISOString(),
         isHeartbeat: opts.isHeartbeat,
         previousUpdatedAt,
+        compactionTracker,
+        memoryFlushMetadata,
       });
     }
 

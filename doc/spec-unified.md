@@ -945,6 +945,21 @@ classDiagram
 - `memory_get` は path allowlist（`MEMORY.md`, `memory/*.md`）+ symlink 拒否 + `.md` 限定で安全に行単位取得する
 - `sqlite-vec` ロード失敗時は fail-fast（`index_unavailable`）で機能無効化する
 
+### 13.1 Pre-Compaction Memory Flush / Context Compaction
+
+- `runAgent` は main セッションで通常 prompt 実行前に `getContextUsage()` を参照し、閾値超過時のみ pre-compaction memory flush turn を実行する。
+- flush 判定式は `threshold = contextWindow - reserveTokensFloor - softThresholdTokens`。
+- 同一 compaction cycle では `memoryFlushCompactionCount === compactionCount` をガードとして flush を最大 1 回に制限する。
+- flush turn は silent 実行され、flush 中の text delta / tool result はユーザー応答へ含めない。
+- `context_overflow` では `session.compact()` を優先し、compaction 後に同一 prompt を 1 回再試行する（`compact()` 不可時のみ縮約 fallback）。
+- `sessions.json` は以下のメタデータを保持する。
+  - `compactionCount?: number`
+  - `memoryFlushAt?: string`
+  - `memoryFlushCompactionCount?: number`
+  - `contextTokens?: number | null`
+  - `contextWindowTokens?: number | null`
+- spoke / heartbeat / workspace read-only の場合は pre-compaction memory flush を実行しない。
+
 ---
 
 ## 14. 設定
@@ -965,20 +980,26 @@ classDiagram
 
 ### 14.2 AI アシスタント設定
 
-| 変数                                      | 既定値                     | 用途                                    |
-| ----------------------------------------- | -------------------------- | --------------------------------------- |
-| `ADJUTANT_API_PORT`                       | `3100`                     | API サーバーポート                      |
-| `ADJUTANT_API_HOST`                       | `127.0.0.1`                | API サーバーホスト                      |
-| `ADJUTANT_DATA_DIR`                       | `data`                     | データディレクトリ                      |
-| `ADJUTANT_WORKSPACE_DIR`                  | `$ADJUTANT_DATA_DIR`       | ワークスペースディレクトリ              |
-| `ADJUTANT_MODEL`                          | (SDK デフォルト)           | LLM モデル指定（`provider/model` 形式） |
-| `ADJUTANT_IDEMPOTENCY_STORE_PATH`         | `memory/idempotency.jsonl` | 冪等レジストリ永続ファイル              |
-| `ADJUTANT_IDEMPOTENCY_MAX_ENTRIES`        | `5000`                     | 冪等レジストリ最大保持件数              |
-| `ADJUTANT_IDEMPOTENCY_STORE_FAILURE_MODE` | `open`                     | ストア破損時の方針（`open`/`closed`）   |
-| `ADJUTANT_SSE_REPLAY_BUFFER_SIZE`         | `512`                      | run ごとの SSE 再送バッファ上限         |
-| `ADJUTANT_SSE_REPLAY_MAX_AGE_MS`          | `300000`                   | 完了 run の SSE 保持期間                |
-| `ADJUTANT_VITE_PORT`                      | `5173`                     | Vite dev server ポート                  |
-| `PI_CACHE_RETENTION`                      | `long`                     | プロンプトキャッシュ保持期間            |
+| 変数                                          | 既定値                     | 用途                                    |
+| --------------------------------------------- | -------------------------- | --------------------------------------- |
+| `ADJUTANT_API_PORT`                           | `3100`                     | API サーバーポート                      |
+| `ADJUTANT_API_HOST`                           | `127.0.0.1`                | API サーバーホスト                      |
+| `ADJUTANT_DATA_DIR`                           | `data`                     | データディレクトリ                      |
+| `ADJUTANT_WORKSPACE_DIR`                      | `$ADJUTANT_DATA_DIR`       | ワークスペースディレクトリ              |
+| `ADJUTANT_MODEL`                              | (SDK デフォルト)           | LLM モデル指定（`provider/model` 形式） |
+| `ADJUTANT_IDEMPOTENCY_STORE_PATH`             | `memory/idempotency.jsonl` | 冪等レジストリ永続ファイル              |
+| `ADJUTANT_IDEMPOTENCY_MAX_ENTRIES`            | `5000`                     | 冪等レジストリ最大保持件数              |
+| `ADJUTANT_IDEMPOTENCY_STORE_FAILURE_MODE`     | `open`                     | ストア破損時の方針（`open`/`closed`）   |
+| `ADJUTANT_SSE_REPLAY_BUFFER_SIZE`             | `512`                      | run ごとの SSE 再送バッファ上限         |
+| `ADJUTANT_SSE_REPLAY_MAX_AGE_MS`              | `300000`                   | 完了 run の SSE 保持期間                |
+| `ADJUTANT_VITE_PORT`                          | `5173`                     | Vite dev server ポート                  |
+| `PI_CACHE_RETENTION`                          | `long`                     | プロンプトキャッシュ保持期間            |
+| `ADJUTANT_COMPACTION_ENABLED`                 | `true`                     | overflow 回復で compaction 優先を有効化 |
+| `ADJUTANT_COMPACTION_RESERVE_TOKENS_FLOOR`    | `20000`                    | pre-flush 判定の reserve floor          |
+| `ADJUTANT_MEMORY_FLUSH_ENABLED`               | `true`                     | pre-compaction memory flush の有効化    |
+| `ADJUTANT_MEMORY_FLUSH_SOFT_THRESHOLD_TOKENS` | `4000`                     | pre-flush soft threshold                |
+| `ADJUTANT_MEMORY_FLUSH_PROMPT`                | 既定 prompt                | flush turn の user prompt               |
+| `ADJUTANT_MEMORY_FLUSH_SYSTEM_PROMPT`         | 既定 system prompt         | flush turn の system prompt             |
 
 ### 14.3 Heartbeat 設定
 

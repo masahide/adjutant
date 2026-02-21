@@ -5,6 +5,11 @@ export type SessionEntryRecord = Record<string, unknown> & {
   sessionId?: unknown;
   sessionFile?: unknown;
   updatedAt?: unknown;
+  compactionCount?: unknown;
+  memoryFlushAt?: unknown;
+  memoryFlushCompactionCount?: unknown;
+  contextTokens?: unknown;
+  contextWindowTokens?: unknown;
   agent?: unknown;
   lastHeartbeatText?: unknown;
   lastHeartbeatSentAt?: unknown;

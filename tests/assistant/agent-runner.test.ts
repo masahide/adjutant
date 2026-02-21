@@ -8,6 +8,7 @@ import {
   runAgent,
   setAgentRunnerRuntimeForTest,
 } from "../../src/assistant/agent-runner.js";
+import { DEFAULT_MEMORY_FLUSH_PROMPT } from "../../src/assistant/compaction-runtime.js";
 
 async function pathExists(path: string): Promise<boolean> {
   try {
@@ -25,6 +26,25 @@ function inMemorySessionStoreRuntime() {
     saveSessionEntryStore: async () => "/tmp/none",
     repairSessionData: async () => false,
   };
+}
+
+async function withEnv(vars: Record<string, string>, run: () => Promise<void>): Promise<void> {
+  const previous = new Map<string, string | undefined>();
+  for (const [key, value] of Object.entries(vars)) {
+    previous.set(key, process.env[key]);
+    process.env[key] = value;
+  }
+  try {
+    await run();
+  } finally {
+    for (const [key, value] of previous.entries()) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
 }
 
 describe("AgentRunner", () => {
@@ -536,6 +556,427 @@ describe("AgentRunner", () => {
     assert.equal(calls, 2);
     assert.equal(prompts.length, 2);
     assert.equal((prompts[1]?.length ?? 0) < (prompts[0]?.length ?? 0), true);
+  });
+
+  it("pre-compaction memory flush は閾値超過時のみ実行される", async () => {
+    await withEnv(
+      {
+        ADJUTANT_MEMORY_FLUSH_ENABLED: "true",
+        ADJUTANT_COMPACTION_RESERVE_TOKENS_FLOOR: "10000",
+        ADJUTANT_MEMORY_FLUSH_SOFT_THRESHOLD_TOKENS: "10000",
+      },
+      async () => {
+        const promptsHigh: string[] = [];
+        setAgentRunnerRuntimeForTest({
+          ...inMemorySessionStoreRuntime(),
+          nowMs: () => 1000,
+          acquireLock: async () => () => undefined,
+          openSessionManager: () => ({}),
+          readMemoryFiles: async () => ({ longTerm: null, daily: null, yesterday: null }),
+          createSession: async () => ({
+            session: {
+              subscribe: () => () => undefined,
+              getContextUsage: () => ({ tokens: 80_000, contextWindow: 100_000, percent: 80 }),
+              prompt: async (text) => {
+                promptsHigh.push(text);
+              },
+              dispose: () => undefined,
+            },
+          }),
+        });
+
+        await runAgent({
+          runId: "run-preflush-high",
+          prompt: "hello",
+          sessionKey: "main",
+        });
+
+        assert.equal(promptsHigh.length, 2);
+        assert.equal(promptsHigh[0]?.includes(DEFAULT_MEMORY_FLUSH_PROMPT), true);
+        assert.equal(promptsHigh[1], "hello");
+
+        const promptsLow: string[] = [];
+        setAgentRunnerRuntimeForTest({
+          ...inMemorySessionStoreRuntime(),
+          nowMs: () => 1000,
+          acquireLock: async () => () => undefined,
+          openSessionManager: () => ({}),
+          readMemoryFiles: async () => ({ longTerm: null, daily: null, yesterday: null }),
+          createSession: async () => ({
+            session: {
+              subscribe: () => () => undefined,
+              getContextUsage: () => ({ tokens: 79_999, contextWindow: 100_000, percent: 80 }),
+              prompt: async (text) => {
+                promptsLow.push(text);
+              },
+              dispose: () => undefined,
+            },
+          }),
+        });
+
+        await runAgent({
+          runId: "run-preflush-low",
+          prompt: "hello",
+          sessionKey: "main",
+        });
+
+        assert.equal(promptsLow.length, 1);
+        assert.equal(promptsLow[0], "hello");
+      }
+    );
+  });
+
+  it("flush turn の中間出力は結果本文に混入せず memory_write は実行される", async () => {
+    await withEnv(
+      {
+        ADJUTANT_MEMORY_FLUSH_ENABLED: "true",
+        ADJUTANT_COMPACTION_RESERVE_TOKENS_FLOOR: "10000",
+        ADJUTANT_MEMORY_FLUSH_SOFT_THRESHOLD_TOKENS: "10000",
+      },
+      async () => {
+        const tempDir = await mkdtemp(`${tmpdir()}/adjutant-agent-flush-`);
+        let listener: ((event: unknown) => void) | undefined;
+        let promptCount = 0;
+        try {
+          setAgentRunnerRuntimeForTest({
+            ...inMemorySessionStoreRuntime(),
+            nowMs: (() => {
+              let tick = 1000;
+              return () => {
+                tick += 1;
+                return tick;
+              };
+            })(),
+            acquireLock: async () => () => undefined,
+            openSessionManager: () => ({}),
+            readMemoryFiles: async () => ({ longTerm: null, daily: null, yesterday: null }),
+            createSession: async () => ({
+              session: {
+                subscribe: (cb) => {
+                  listener = cb;
+                  return () => undefined;
+                },
+                getContextUsage: () => ({ tokens: 80_000, contextWindow: 100_000, percent: 80 }),
+                prompt: async () => {
+                  promptCount += 1;
+                  if (promptCount === 1) {
+                    listener?.({
+                      type: "message_update",
+                      assistantMessageEvent: { type: "text_delta", delta: "hidden-flush" },
+                    });
+                    listener?.({
+                      type: "tool_execution_start",
+                      toolName: "memory_write",
+                      args: { scope: "daily", content: "flush-memory-note" },
+                    });
+                    return;
+                  }
+                  listener?.({
+                    type: "message_update",
+                    assistantMessageEvent: { type: "text_delta", delta: "visible-reply" },
+                  });
+                },
+                dispose: () => undefined,
+              },
+            }),
+          });
+
+          const result = await runAgent({
+            runId: "run-flush-silent",
+            prompt: "hello",
+            sessionKey: "main",
+            memoryWriteRequested: true,
+            workspaceDir: tempDir,
+            timezone: "UTC",
+          });
+
+          assert.equal(result.text, "visible-reply");
+          assert.equal(promptCount, 2);
+
+          const memoryDir = join(tempDir, "memory");
+          const files = await readdir(memoryDir);
+          assert.equal(files.length > 0, true);
+          const daily = await readFile(join(memoryDir, files[0] ?? ""), "utf8");
+          assert.equal(daily.includes("flush-memory-note"), true);
+        } finally {
+          await rm(tempDir, { recursive: true, force: true });
+        }
+      }
+    );
+  });
+
+  it("auto_compaction_end 発火で compactionCount が更新される", async () => {
+    await withEnv(
+      {
+        ADJUTANT_MEMORY_FLUSH_ENABLED: "false",
+      },
+      async () => {
+        const persisted: Record<string, Record<string, unknown>> = {
+          main: { compactionCount: 1 },
+        };
+        let listener: ((event: unknown) => void) | undefined;
+
+        setAgentRunnerRuntimeForTest({
+          nowMs: () => 1000,
+          acquireLock: async () => () => undefined,
+          readMemoryFiles: async () => ({ longTerm: null, daily: null, yesterday: null }),
+          loadSessionEntryStore: async () => ({
+            path: "/tmp/adjutant-sessions.json",
+            store: structuredClone(persisted),
+          }),
+          saveSessionEntryStore: async (store) => {
+            for (const key of Object.keys(persisted)) {
+              delete persisted[key];
+            }
+            Object.assign(persisted, structuredClone(store));
+            return "/tmp/adjutant-sessions.json";
+          },
+          openSessionManager: () => ({}),
+          repairSessionData: async () => false,
+          createSession: async () => ({
+            session: {
+              subscribe: (cb) => {
+                listener = cb;
+                return () => undefined;
+              },
+              prompt: async () => {
+                listener?.({
+                  type: "auto_compaction_end",
+                  aborted: false,
+                  willRetry: false,
+                  result: { summary: "compacted" },
+                });
+              },
+              dispose: () => undefined,
+            },
+          }),
+        });
+
+        await runAgent({
+          runId: "run-compaction-event",
+          prompt: "hello",
+          sessionKey: "main",
+          sessionEntriesPath: "/tmp/adjutant-sessions.json",
+        });
+
+        assert.equal(persisted.main?.compactionCount, 2);
+      }
+    );
+  });
+
+  it("context_overflow 時は compact() を優先して再試行する", async () => {
+    let calls = 0;
+    let compactCalls = 0;
+    const prompts: string[] = [];
+
+    setAgentRunnerRuntimeForTest({
+      ...inMemorySessionStoreRuntime(),
+      nowMs: () => 1000 + calls,
+      acquireLock: async () => () => undefined,
+      openSessionManager: () => ({}),
+      createSession: async () => ({
+        session: {
+          subscribe: () => () => undefined,
+          prompt: async (text) => {
+            prompts.push(text);
+            calls += 1;
+            if (calls === 1) {
+              throw new Error("context window too long");
+            }
+          },
+          compact: async () => {
+            compactCalls += 1;
+          },
+          dispose: () => undefined,
+        },
+      }),
+    });
+
+    await runAgent({
+      runId: "run-retry-context-compact",
+      prompt: "x".repeat(1200),
+      sessionKey: "slack:channel:C1",
+    });
+
+    assert.equal(calls, 2);
+    assert.equal(compactCalls, 1);
+    assert.equal(prompts[1], prompts[0]);
+  });
+
+  it("workspace が read-only の場合は memory flush をスキップする", async () => {
+    await withEnv(
+      {
+        ADJUTANT_MEMORY_FLUSH_ENABLED: "true",
+        ADJUTANT_COMPACTION_RESERVE_TOKENS_FLOOR: "10000",
+        ADJUTANT_MEMORY_FLUSH_SOFT_THRESHOLD_TOKENS: "10000",
+      },
+      async () => {
+        const prompts: string[] = [];
+
+        setAgentRunnerRuntimeForTest({
+          ...inMemorySessionStoreRuntime(),
+          nowMs: () => 1000,
+          acquireLock: async () => () => undefined,
+          openSessionManager: () => ({}),
+          isWorkspaceWritable: async () => false,
+          readMemoryFiles: async () => ({ longTerm: null, daily: null, yesterday: null }),
+          createSession: async () => ({
+            session: {
+              subscribe: () => () => undefined,
+              getContextUsage: () => ({ tokens: 80_000, contextWindow: 100_000, percent: 80 }),
+              prompt: async (text) => {
+                prompts.push(text);
+              },
+              dispose: () => undefined,
+            },
+          }),
+        });
+
+        await runAgent({
+          runId: "run-preflush-readonly",
+          prompt: "hello",
+          sessionKey: "main",
+        });
+
+        assert.deepEqual(prompts, ["hello"]);
+      }
+    );
+  });
+
+  it("context tokens が null の場合は memory flush をスキップする", async () => {
+    await withEnv(
+      {
+        ADJUTANT_MEMORY_FLUSH_ENABLED: "true",
+        ADJUTANT_COMPACTION_RESERVE_TOKENS_FLOOR: "10000",
+        ADJUTANT_MEMORY_FLUSH_SOFT_THRESHOLD_TOKENS: "10000",
+      },
+      async () => {
+        const prompts: string[] = [];
+
+        setAgentRunnerRuntimeForTest({
+          ...inMemorySessionStoreRuntime(),
+          nowMs: () => 1000,
+          acquireLock: async () => () => undefined,
+          openSessionManager: () => ({}),
+          readMemoryFiles: async () => ({ longTerm: null, daily: null, yesterday: null }),
+          createSession: async () => ({
+            session: {
+              subscribe: () => () => undefined,
+              getContextUsage: () => ({ tokens: null, contextWindow: 100_000, percent: null }),
+              prompt: async (text) => {
+                prompts.push(text);
+              },
+              dispose: () => undefined,
+            },
+          }),
+        });
+
+        await runAgent({
+          runId: "run-preflush-null-tokens",
+          prompt: "hello",
+          sessionKey: "main",
+        });
+
+        assert.deepEqual(prompts, ["hello"]);
+      }
+    );
+  });
+
+  it("同一 compaction cycle では memory flush を再実行しない", async () => {
+    await withEnv(
+      {
+        ADJUTANT_MEMORY_FLUSH_ENABLED: "true",
+        ADJUTANT_COMPACTION_RESERVE_TOKENS_FLOOR: "10000",
+        ADJUTANT_MEMORY_FLUSH_SOFT_THRESHOLD_TOKENS: "10000",
+      },
+      async () => {
+        const prompts: string[] = [];
+        const persisted: Record<string, Record<string, unknown>> = {
+          main: {
+            compactionCount: 3,
+            memoryFlushCompactionCount: 3,
+          },
+        };
+
+        setAgentRunnerRuntimeForTest({
+          nowMs: () => 1000,
+          acquireLock: async () => () => undefined,
+          readMemoryFiles: async () => ({ longTerm: null, daily: null, yesterday: null }),
+          loadSessionEntryStore: async () => ({
+            path: "/tmp/adjutant-sessions.json",
+            store: structuredClone(persisted),
+          }),
+          saveSessionEntryStore: async (store) => {
+            for (const key of Object.keys(persisted)) {
+              delete persisted[key];
+            }
+            Object.assign(persisted, structuredClone(store));
+            return "/tmp/adjutant-sessions.json";
+          },
+          openSessionManager: () => ({}),
+          repairSessionData: async () => false,
+          createSession: async () => ({
+            session: {
+              subscribe: () => () => undefined,
+              getContextUsage: () => ({ tokens: 80_000, contextWindow: 100_000, percent: 80 }),
+              prompt: async (text) => {
+                prompts.push(text);
+              },
+              dispose: () => undefined,
+            },
+          }),
+        });
+
+        await runAgent({
+          runId: "run-preflush-cycle-guard",
+          prompt: "hello",
+          sessionKey: "main",
+          sessionEntriesPath: "/tmp/adjutant-sessions.json",
+        });
+
+        assert.deepEqual(prompts, ["hello"]);
+      }
+    );
+  });
+
+  it("isHeartbeat=true では pre-compaction memory flush を実行しない", async () => {
+    await withEnv(
+      {
+        ADJUTANT_MEMORY_FLUSH_ENABLED: "true",
+        ADJUTANT_COMPACTION_RESERVE_TOKENS_FLOOR: "10000",
+        ADJUTANT_MEMORY_FLUSH_SOFT_THRESHOLD_TOKENS: "10000",
+      },
+      async () => {
+        const prompts: string[] = [];
+
+        setAgentRunnerRuntimeForTest({
+          ...inMemorySessionStoreRuntime(),
+          nowMs: () => 1000,
+          acquireLock: async () => () => undefined,
+          openSessionManager: () => ({}),
+          readMemoryFiles: async () => ({ longTerm: null, daily: null, yesterday: null }),
+          createSession: async () => ({
+            session: {
+              subscribe: () => () => undefined,
+              getContextUsage: () => ({ tokens: 80_000, contextWindow: 100_000, percent: 80 }),
+              prompt: async (text) => {
+                prompts.push(text);
+              },
+              dispose: () => undefined,
+            },
+          }),
+        });
+
+        await runAgent({
+          runId: "run-preflush-heartbeat-skip",
+          prompt: "heartbeat",
+          sessionKey: "main",
+          isHeartbeat: true,
+        });
+
+        assert.deepEqual(prompts, ["heartbeat"]);
+      }
+    );
   });
 
   it("モデル利用不可は即座に失敗する", async () => {

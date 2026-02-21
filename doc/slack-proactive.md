@@ -124,3 +124,25 @@ OpenClawの標準機能を最大限活用し、コンテキストウィンドウ
   - `ADJUTANT_MEMORY_SEARCH_MIN_SCORE=0`
   - `ADJUTANT_MEMORY_SEARCH_VECTOR_ENABLED=true`
   - `ADJUTANT_MEMORY_SEARCH_SQLITE_VEC_PATH=""`（空文字時は sqlite-vec 既定探索）
+
+### 5.10. Pre-Compaction Memory Flush / Context Compaction 契約（実装確定）
+
+- `runAgent` は main セッション実行時、通常プロンプト前に `getContextUsage()` を参照し、閾値超過時のみ pre-compaction memory flush turn を実行する。
+- flush 判定式は `threshold = contextWindow - reserveTokensFloor - softThresholdTokens` とし、`tokens >= threshold` の場合のみ実行する。
+- 同一 compaction cycle での重複実行を避けるため、`sessions.json` の `memoryFlushCompactionCount === compactionCount` の場合は flush をスキップする。
+- flush turn の中間出力（text delta / tool result）はユーザー向け応答へ混入させない。`memory_write` の副作用（`MEMORY.md` / `memory/*.md` 更新）のみ許可する。
+- `context_overflow` 発生時は `shrinkPrompt` より `session.compact()` を優先し、compaction 後に同一 prompt で 1 回再試行する。
+- `sessions.json` の拡張項目は以下を採用する:
+  - `compactionCount?: number`
+  - `memoryFlushAt?: string`（ISO8601）
+  - `memoryFlushCompactionCount?: number`
+  - `contextTokens?: number | null`
+  - `contextWindowTokens?: number | null`
+- spoke / heartbeat / workspace read-only の条件では pre-compaction memory flush を実行しない。
+- 環境変数と既定値は以下を採用する:
+  - `ADJUTANT_COMPACTION_ENABLED=true`
+  - `ADJUTANT_COMPACTION_RESERVE_TOKENS_FLOOR=20000`
+  - `ADJUTANT_MEMORY_FLUSH_ENABLED=true`
+  - `ADJUTANT_MEMORY_FLUSH_SOFT_THRESHOLD_TOKENS=4000`
+  - `ADJUTANT_MEMORY_FLUSH_PROMPT=<既定 pre-compaction prompt>`
+  - `ADJUTANT_MEMORY_FLUSH_SYSTEM_PROMPT=<既定 system prompt>`
