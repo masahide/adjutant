@@ -1,4 +1,5 @@
 import type { ContextUsage } from "@mariozechner/pi-coding-agent";
+import { parseBooleanEnv, parseNonNegativeIntEnv } from "../runtime/env-parsers.js";
 
 export const DEFAULT_COMPACTION_ENABLED = true;
 export const DEFAULT_MEMORY_FLUSH_ENABLED = true;
@@ -69,33 +70,6 @@ export type MemoryFlushDecision =
       contextWindowTokens?: number | null;
     };
 
-function parseBoolean(value: string | undefined, fallback: boolean): boolean {
-  const normalized = value?.trim().toLowerCase();
-  if (!normalized) {
-    return fallback;
-  }
-  if (normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on") {
-    return true;
-  }
-  if (normalized === "0" || normalized === "false" || normalized === "no" || normalized === "off") {
-    return false;
-  }
-  return fallback;
-}
-
-function parseNonNegativeInt(value: string | undefined, fallback: number): number {
-  const raw = value?.trim();
-  if (!raw) {
-    return fallback;
-  }
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed)) {
-    return fallback;
-  }
-  const int = Math.floor(parsed);
-  return int >= 0 ? int : fallback;
-}
-
 function parseStoredCount(value: unknown): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return 0;
@@ -122,19 +96,19 @@ function ensureNoReplyHint(text: string): string {
 export function resolveCompactionRuntimeSettings(
   env: NodeJS.ProcessEnv = process.env
 ): CompactionRuntimeSettings {
-  const compactionEnabled = parseBoolean(
+  const compactionEnabled = parseBooleanEnv(
     env.ADJUTANT_COMPACTION_ENABLED,
     DEFAULT_COMPACTION_ENABLED
   );
-  const memoryFlushEnabled = parseBoolean(
+  const memoryFlushEnabled = parseBooleanEnv(
     env.ADJUTANT_MEMORY_FLUSH_ENABLED,
     DEFAULT_MEMORY_FLUSH_ENABLED
   );
-  const reserveTokensFloor = parseNonNegativeInt(
+  const reserveTokensFloor = parseNonNegativeIntEnv(
     env.ADJUTANT_COMPACTION_RESERVE_TOKENS_FLOOR,
     DEFAULT_COMPACTION_RESERVE_TOKENS_FLOOR
   );
-  const softThresholdTokens = parseNonNegativeInt(
+  const softThresholdTokens = parseNonNegativeIntEnv(
     env.ADJUTANT_MEMORY_FLUSH_SOFT_THRESHOLD_TOKENS,
     DEFAULT_MEMORY_FLUSH_SOFT_THRESHOLD_TOKENS
   );

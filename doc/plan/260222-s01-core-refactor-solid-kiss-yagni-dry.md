@@ -424,49 +424,49 @@ sequenceDiagram
 
 ### Phase 3 `slackIngressHandlers` 分割 + 設定集約（P0/P1）
 
-- [ ] Test request/ws/response 処理の契約固定テストを追加 Red
-- [ ] Impl `SlackIngressRequestParser` / `SlackWsNormalizer` / `SlackResponseCacheUpdater` を追加 Green
-- [ ] Refactor `SlackIngressHandlers` を facade 化（依存注入のみ）
-- [ ] Integration Slack adapter 系テストを更新
-- [ ] Docs 仕様と責務境界を更新
+- [x] Test request/ws/response 処理の契約固定テストを追加 Red
+- [x] Impl `SlackIngressRequestParser` / `SlackWsNormalizer` / `SlackResponseCacheUpdater` を追加 Green
+- [x] Refactor `SlackIngressHandlers` を facade 化（依存注入のみ）
+- [x] Integration Slack adapter 系テストを更新
+- [x] Docs 仕様と責務境界を更新
 
-- [ ] Test env parser 共通化の失敗テストを追加 Red
-- [ ] Impl `RuntimeConfigLoader`（bool/int/string parser統合） Green
-- [ ] Refactor `main.ts` / `index.ts` / classifier/heartbeat から `process.env` 直参照を削減
-- [ ] Contract 既存envキーと既定値互換を固定するテストを追加
-- [ ] Docs 環境変数表を更新
+- [x] Test env parser 共通化の失敗テストを追加 Red
+- [x] Impl `RuntimeConfigLoader`（bool/int/string parser統合） Green
+- [x] Refactor `main.ts` / `index.ts` / classifier/heartbeat から `process.env` 直参照を削減
+- [x] Contract 既存envキーと既定値互換を固定するテストを追加
+- [x] Docs 環境変数表を更新
 
 ### Phase 4 route判定契約強化 + 重複排除 + 統合検証（P1/P2）
 
-- [ ] Test route classifier の不正出力/timeout/fallbackテストを追加 Red
-- [ ] Impl 判定境界を `RouteClassifierDecision` 契約へ移行 Green
-- [ ] Refactor JSON文字列依存を局所化し、将来の専用ツール出力へ差し替え可能にする
-- [ ] Integration trigger-filter 連携テストを更新
-- [ ] Docs classifier契約の更新
+- [x] Test route classifier の不正出力/timeout/fallbackテストを追加 Red
+- [x] Impl 判定境界を `RouteClassifierDecision` 契約へ移行 Green
+- [x] Refactor JSON文字列依存を局所化し、将来の専用ツール出力へ差し替え可能にする
+- [x] Integration trigger-filter 連携テストを更新
+- [x] Docs classifier契約の更新
 
-- [ ] Refactor 重複ユーティリティ統合（`asRecord`, parser, path/timezone）
-- [ ] Refactor YAGNI対象の削除（未使用フィールド・不要分岐）
-- [ ] 全体テストの実行（`pnpm check`）
-- [ ] エッジケースの動作確認（abort, duplicate, malformed payload, timeout）
-- [ ] ログと例外の確認（本文非出力・監査情報のみ）
-- [ ] ドキュメント更新（仕様 契約 図）
+- [x] Refactor 重複ユーティリティ統合（`asRecord`, parser, path/timezone）
+- [x] Refactor YAGNI対象の削除（未使用フィールド・不要分岐）
+- [x] 全体テストの実行（`pnpm check`）
+- [x] エッジケースの動作確認（abort, duplicate, malformed payload, timeout）
+- [x] ログと例外の確認（本文非出力・監査情報のみ）
+- [x] ドキュメント更新（仕様 契約 図）
 
 ## 8. 完了の定義 Definition of Done
 
 ### 8.1 機能DoD Functional DoD
 
-- [ ] 受け入れ条件がすべて満たされていること
-- [ ] 既知の制約が明文化され、想定通りであること
-- [ ] 外部API契約（chat/heartbeat/SSE）が維持されていること
-- [ ] route判定のfallback契約が壊れていないこと
+- [x] 受け入れ条件がすべて満たされていること
+- [x] 既知の制約が明文化され、想定通りであること
+- [x] 外部API契約（chat/heartbeat/SSE）が維持されていること
+- [x] route判定のfallback契約が壊れていないこと
 
 ### 8.2 品質DoD Quality DoD
 
-- [ ] 全てのテストがパスしていること（`pnpm check`）
-- [ ] Linter Formatterのエラーがないこと
-- [ ] 不要なデバッグコードが削除されていること
-- [ ] 主要な変更点がドキュメントに反映されていること
-- [ ] 主要モジュールの責務分割がレビューで合意されていること
+- [x] 全てのテストがパスしていること（`pnpm check`）
+- [x] Linter Formatterのエラーがないこと
+- [x] 不要なデバッグコードが削除されていること
+- [x] 主要な変更点がドキュメントに反映されていること
+- [x] 主要モジュールの責務分割がレビューで合意されていること
 
 ## 9. 懸念事項と未確定事項 Concerns and Questions
 

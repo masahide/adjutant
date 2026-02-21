@@ -155,3 +155,15 @@ OpenClawの標準機能を最大限活用し、コンテキストウィンドウ
 - workspace 未作成時は `runAgent` 実行時に自動作成し、`AGENTS.md` / `SOUL.md` / `TOOLS.md` / `IDENTITY.md` / `USER.md` / `HEARTBEAT.md` を missing 補完する。
 - 非注入条件は `origin=pipeline` / `isHeartbeat=true` / `memoryScope=spoke` とする。
 - `/api/chat/messages` は `origin?: "user" | "pipeline" | "system"` を受け付け、未指定時は `user` として扱う。
+
+### 5.12. Core リファクタ反映（SOLID/KISS/DRY）契約（2026-02-21）
+
+- Slack ingress 処理は責務分割し、`SlackIngressHandlers` は facade とする。
+  - `SlackIngressRequestParser`: request payload と URL/body の解析
+  - `SlackWsNormalizer`: WebSocket payload 正規化と notification 抽出
+  - `SlackResponseCacheUpdater`: response/body からのキャッシュ更新と debug hook
+- runtime 設定は `RuntimeConfigLoader` で集約し、`src/index.ts` / `src/assistant/main.ts` / route classifier / heartbeat での `process.env` 直参照を排除する。
+- route LLM 応答の JSON 依存は `route-llm-output-parser` へ局所化する。
+  - 現行は `message.content` JSON を使用
+  - 将来の専用ツール出力は同 parser の差し替えで対応可能
+- 既存 env 契約（キー名と既定値）は維持し、`tests/runtime/runtime-config-loader.test.ts` で固定する。

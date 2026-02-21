@@ -1,5 +1,6 @@
 import { resolveDataDir, resolveEndpoint } from "./runtime/config.js";
 import { connectToSlackPage } from "./runtime/slackConnection.js";
+import { loadCollectorRuntimeConfig } from "./runtime/runtime-config-loader.js";
 import { JsonlWriter } from "./io/jsonlWriter.js";
 import { CdpEventFileLogger } from "./io/cdpEventFileLogger.js";
 import { RawFetchEventFileLogger } from "./io/rawFetchEventFileLogger.js";
@@ -21,8 +22,6 @@ const BASE_RETRY_DELAY_MS = 1000;
 const MAX_RETRY_DELAY_MS = 10000;
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
-const isEnabled = (value: string | undefined) =>
-  value === "1" || value?.toLowerCase() === "true" || value?.toLowerCase() === "yes";
 
 const waitForDisconnect = (client: SlackCdpClient) =>
   new Promise<void>((resolve, reject) => {
@@ -53,6 +52,7 @@ async function main() {
 
   const dataDir = resolveDataDir();
   console.log(`[Adjutant] dataDir -> ${dataDir}`);
+  const runtimeConfig = loadCollectorRuntimeConfig({ dataDir });
 
   const recoverTargets = await listJsonlFiles(dataDir);
   if (recoverTargets.length > 0) {
@@ -70,22 +70,17 @@ async function main() {
     }
   }
 
-  const timezone = process.env.ADJUTANT_TZ || "Asia/Tokyo";
+  const timezone = runtimeConfig.timezone;
   console.log(`[Adjutant] timezone -> ${timezone}`);
 
   const writer = new JsonlWriter({ dataDir });
   const now = () => new Date();
-  const debugUiEnabled = isEnabled(process.env.ADJUTANT_DEBUG_UI);
-  const debugUiPort = Number(process.env.ADJUTANT_DEBUG_UI_PORT || "8787");
+  const debugUiEnabled = runtimeConfig.debugUiEnabled;
+  const debugUiPort = runtimeConfig.debugUiPort;
   const debugUi = debugUiEnabled ? new DebugUiServer({ port: debugUiPort }) : null;
-  const cdpEventLogEnabled = isEnabled(process.env.ADJUTANT_CDP_EVENT_LOG);
-  const cdpEventLogPathEnv = process.env.ADJUTANT_CDP_EVENT_LOG_PATH?.trim();
-  const cdpEventLogPath = cdpEventLogPathEnv
-    ? path.resolve(cdpEventLogPathEnv)
-    : path.join(dataDir, "_debug", "cdp-events.jsonl");
-  const cdpEventLogMaxParamChars = Number(
-    process.env.ADJUTANT_CDP_EVENT_LOG_MAX_PARAM_CHARS || "0"
-  );
+  const cdpEventLogEnabled = runtimeConfig.cdpEventLogEnabled;
+  const cdpEventLogPath = runtimeConfig.cdpEventLogPath;
+  const cdpEventLogMaxParamChars = runtimeConfig.cdpEventLogMaxParamChars;
   const cdpEventLogger = cdpEventLogEnabled
     ? new CdpEventFileLogger({
         filePath: cdpEventLogPath,
@@ -94,14 +89,9 @@ async function main() {
           : 0,
       })
     : null;
-  const rawFetchLogEnabled = isEnabled(process.env.ADJUTANT_RAW_FETCH_LOG);
-  const rawFetchLogPathEnv = process.env.ADJUTANT_RAW_FETCH_LOG_PATH?.trim();
-  const rawFetchLogPath = rawFetchLogPathEnv
-    ? path.resolve(rawFetchLogPathEnv)
-    : path.join(dataDir, "_debug", "raw-fetch.jsonl");
-  const rawFetchLogMaxPayloadChars = Number(
-    process.env.ADJUTANT_RAW_FETCH_LOG_MAX_PAYLOAD_CHARS || "0"
-  );
+  const rawFetchLogEnabled = runtimeConfig.rawFetchLogEnabled;
+  const rawFetchLogPath = runtimeConfig.rawFetchLogPath;
+  const rawFetchLogMaxPayloadChars = runtimeConfig.rawFetchLogMaxPayloadChars;
   const rawFetchEventLogger = rawFetchLogEnabled
     ? new RawFetchEventFileLogger({
         filePath: rawFetchLogPath,

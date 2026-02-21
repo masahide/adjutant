@@ -72,6 +72,43 @@ describe("route-llm-classifier", () => {
     await assert.rejects(classifier(createInput("uid-2")), /route-llm-invalid-outcome/);
   });
 
+  it("```json フェンス付き応答でも判定を抽出できる", async () => {
+    const classifier = createOpenAiSecondaryClassifier({
+      model: "gpt-5-mini",
+      maxConcurrent: 1,
+      client: {
+        chat: {
+          completions: {
+            create: async () => ({
+              choices: [{ message: { content: '```json\n{"outcome":"run"}\n```' } }],
+            }),
+          },
+        },
+      },
+    });
+
+    const outcome = await classifier(createInput("uid-fence"));
+    assert.equal(outcome, "run");
+  });
+
+  it("空の応答は route-llm-empty-response で失敗する", async () => {
+    const classifier = createOpenAiSecondaryClassifier({
+      model: "gpt-5-mini",
+      maxConcurrent: 1,
+      client: {
+        chat: {
+          completions: {
+            create: async () => ({
+              choices: [{ message: { content: "" } }],
+            }),
+          },
+        },
+      },
+    });
+
+    await assert.rejects(classifier(createInput("uid-empty")), /route-llm-empty-response/);
+  });
+
   it("maxConcurrent=1 では判定が逐次実行される", async () => {
     let active = 0;
     let maxActive = 0;

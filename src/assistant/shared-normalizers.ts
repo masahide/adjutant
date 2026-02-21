@@ -1,4 +1,4 @@
-const DEFAULT_TIMEZONE = process.env.ADJUTANT_TZ || "Asia/Tokyo";
+const DEFAULT_TIMEZONE = "Asia/Tokyo";
 
 export function normalizeTimezone(value: string | undefined): string {
   if (typeof value !== "string") {

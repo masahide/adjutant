@@ -1,15 +1,12 @@
 import OpenAI from "openai";
 import type { NormalizedEvent } from "../core/events.js";
+import { parsePositiveIntEnv, parseStringEnv } from "../runtime/env-parsers.js";
+import { resolveRouteLlmRuntimeConfig as resolveRouteLlmRuntimeConfigFromLoader } from "../runtime/runtime-config-loader.js";
 import type { RouterOutcome } from "./route-decision.js";
-import {
-  normalizeRouteClassifierDecision,
-  type RouteClassifierDecision,
-} from "./route-classifier-decision.js";
+import { parseRouteDecisionFromOpenAiCompletion } from "./route-llm-output-parser.js";
 import type { SecondaryClassifier } from "./trigger-filter.js";
 
 const DEFAULT_ROUTE_LLM_MODEL = "gpt-5-mini";
-const DEFAULT_ROUTE_LLM_TIMEOUT_MS = 1_000;
-const DEFAULT_ROUTE_LLM_MAX_CONCURRENT = 1;
 const DEFAULT_EVENT_TEXT_MAX_CHARS = 1_200;
 
 type OpenAiChatCompletionClient = {
@@ -25,6 +22,9 @@ type OpenAiChatCompletionClient = {
         choices?: Array<{
           message?: {
             content?: string | null;
+            tool_calls?: Array<{
+              function?: { arguments?: string | null };
+            }>;
           };
         }>;
       }>;
@@ -67,33 +67,6 @@ const ROUTE_SYSTEM_PROMPT = [
   "Choose pending for FYI updates, low-priority chatter, and non-actionable notifications.",
   "Do not add markdown fences or extra keys.",
 ].join(" ");
-
-function parseBoolean(rawValue: string | undefined, fallback: boolean): boolean {
-  if (!rawValue) {
-    return fallback;
-  }
-  const normalized = rawValue.trim().toLowerCase();
-  if (normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on") {
-    return true;
-  }
-  if (normalized === "0" || normalized === "false" || normalized === "no" || normalized === "off") {
-    return false;
-  }
-  return fallback;
-}
-
-function parsePositiveInt(rawValue: string | undefined, fallback: number): number {
-  const value = Number(rawValue);
-  if (!Number.isFinite(value) || value <= 0) {
-    return fallback;
-  }
-  return Math.max(1, Math.floor(value));
-}
-
-function parseString(rawValue: string | undefined, fallback: string): string {
-  const value = rawValue?.trim();
-  return value && value.length > 0 ? value : fallback;
-}
 
 function truncateText(value: string, maxChars: number): string {
   if (value.length <= maxChars) {
@@ -143,29 +116,6 @@ function extractEventText(event: NormalizedEvent): string | null {
     }
   }
   return null;
-}
-
-function stripCodeFence(content: string): string {
-  const trimmed = content.trim();
-  if (!trimmed.startsWith("```")) {
-    return trimmed;
-  }
-  return trimmed
-    .replace(/^```(?:json)?/i, "")
-    .replace(/```$/i, "")
-    .trim();
-}
-
-function parseRouteDecision(rawContent: string): RouteClassifierDecision {
-  const normalizedContent = stripCodeFence(rawContent);
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(normalizedContent);
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
-    throw new Error(`route-llm-invalid-json: ${reason}`);
-  }
-  return normalizeRouteClassifierDecision(parsed);
 }
 
 function createConcurrencyLimiter(maxConcurrent: number) {
@@ -239,30 +189,16 @@ function buildRoutePrompt(
   ].join("\n");
 }
 
-export function resolveRouteLlmRuntimeConfig(
-  env: NodeJS.ProcessEnv = process.env
-): RouteLlmRuntimeConfig {
-  return {
-    enabled: parseBoolean(env.ADJUTANT_ROUTE_LLM_ENABLED, false),
-    provider: "openai",
-    model: parseString(env.ADJUTANT_ROUTE_LLM_MODEL, DEFAULT_ROUTE_LLM_MODEL),
-    routeLlmTimeoutMs: parsePositiveInt(
-      env.ADJUTANT_ROUTE_LLM_TIMEOUT_MS,
-      DEFAULT_ROUTE_LLM_TIMEOUT_MS
-    ),
-    maxConcurrentRouteLlm: parsePositiveInt(
-      env.ADJUTANT_ROUTE_LLM_MAX_CONCURRENT,
-      DEFAULT_ROUTE_LLM_MAX_CONCURRENT
-    ),
-  };
+export function resolveRouteLlmRuntimeConfig(env?: NodeJS.ProcessEnv): RouteLlmRuntimeConfig {
+  return resolveRouteLlmRuntimeConfigFromLoader(env);
 }
 
 export function createOpenAiSecondaryClassifier(
   options: OpenAiSecondaryClassifierOptions
 ): SecondaryClassifier {
-  const model = parseString(options.model, DEFAULT_ROUTE_LLM_MODEL);
-  const maxConcurrent = parsePositiveInt(String(options.maxConcurrent ?? "1"), 1);
-  const maxEventTextChars = parsePositiveInt(
+  const model = parseStringEnv(options.model, DEFAULT_ROUTE_LLM_MODEL);
+  const maxConcurrent = parsePositiveIntEnv(String(options.maxConcurrent ?? "1"), 1);
+  const maxEventTextChars = parsePositiveIntEnv(
     String(options.maxEventTextChars ?? DEFAULT_EVENT_TEXT_MAX_CHARS),
     DEFAULT_EVENT_TEXT_MAX_CHARS
   );
@@ -290,8 +226,7 @@ export function createOpenAiSecondaryClassifier(
             { role: "user", content: buildRoutePrompt(input, maxEventTextChars) },
           ],
         });
-        const content = completion.choices?.[0]?.message?.content ?? "";
-        const decision = parseRouteDecision(content);
+        const decision = parseRouteDecisionFromOpenAiCompletion(completion);
         options.onAudit?.({
           event: "route-llm-decision",
           uid: input.event.uid,

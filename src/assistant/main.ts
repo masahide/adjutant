@@ -18,42 +18,30 @@ import {
   type DualWriteRecord,
 } from "../proactive/dual-write-coordinator.js";
 import { createChannelPluginRegistry } from "../proactive/plugin-registry.js";
-import {
-  createOpenAiSecondaryClassifier,
-  resolveRouteLlmRuntimeConfig,
-} from "../proactive/route-llm-classifier.js";
+import { createOpenAiSecondaryClassifier } from "../proactive/route-llm-classifier.js";
 import { createSlackChannelPlugin } from "../proactive/slack-channel-plugin.js";
 import { createTriggerFilter, type SecondaryClassifier } from "../proactive/trigger-filter.js";
 import { listJsonlFiles, recoverJsonlFiles } from "../io/jsonl-recovery.js";
+import { loadAssistantGatewayRuntimeConfig } from "../runtime/runtime-config-loader.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import { appendFile, mkdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
-// Enable prompt cache by default (Anthropic 5min→1h, OpenAI 24h, Bedrock cache points)
-if (!process.env.PI_CACHE_RETENTION) {
-  process.env.PI_CACHE_RETENTION = "long";
-}
-
-const PORT = Number(process.env.ADJUTANT_API_PORT ?? "3100");
-const HOST = process.env.ADJUTANT_API_HOST ?? "127.0.0.1";
-const DATA_DIR = process.env.ADJUTANT_DATA_DIR ?? "data";
-const WORKSPACE_DIR = process.env.ADJUTANT_WORKSPACE_DIR ?? DATA_DIR;
-const TIMEZONE = process.env.ADJUTANT_TZ ?? "Asia/Tokyo";
-const MODEL = process.env.ADJUTANT_MODEL || undefined;
-const TIMELINE_PATH =
-  process.env.ADJUTANT_TIMELINE_PATH?.trim() || join(WORKSPACE_DIR, "memory", "timeline.jsonl");
-
-const DEFAULT_DUAL_WRITE_RETRY_INTERVAL_MS = 5000;
-const IDEMPOTENCY_STORE_PATH =
-  process.env.ADJUTANT_IDEMPOTENCY_STORE_PATH?.trim() ||
-  join(WORKSPACE_DIR, "memory", "idempotency.jsonl");
-const IDEMPOTENCY_MAX_ENTRIES = Number(process.env.ADJUTANT_IDEMPOTENCY_MAX_ENTRIES ?? "5000");
-const IDEMPOTENCY_STORE_FAILURE_MODE =
-  process.env.ADJUTANT_IDEMPOTENCY_STORE_FAILURE_MODE === "closed" ? "closed" : "open";
-const SSE_REPLAY_BUFFER_SIZE = Number(process.env.ADJUTANT_SSE_REPLAY_BUFFER_SIZE ?? "512");
-const SSE_REPLAY_MAX_AGE_MS = Number(process.env.ADJUTANT_SSE_REPLAY_MAX_AGE_MS ?? "300000");
-const SLACK_RETRY_BASE_MS = Number(process.env.ADJUTANT_SLACK_RETRY_BASE_MS ?? "1000");
-const SLACK_RETRY_MAX_MS = Number(process.env.ADJUTANT_SLACK_RETRY_MAX_MS ?? "10000");
+const runtimeConfig = loadAssistantGatewayRuntimeConfig();
+const PORT = runtimeConfig.app.assistant.port;
+const HOST = runtimeConfig.app.assistant.host;
+const DATA_DIR = runtimeConfig.app.assistant.dataDir;
+const WORKSPACE_DIR = runtimeConfig.app.assistant.workspaceDir;
+const TIMEZONE = runtimeConfig.app.assistant.timezone;
+const MODEL = runtimeConfig.app.assistant.model;
+const TIMELINE_PATH = runtimeConfig.app.assistant.timelinePath;
+const IDEMPOTENCY_STORE_PATH = runtimeConfig.app.idempotency.storePath;
+const IDEMPOTENCY_MAX_ENTRIES = runtimeConfig.app.idempotency.maxEntries;
+const IDEMPOTENCY_STORE_FAILURE_MODE = runtimeConfig.app.idempotency.failureMode;
+const SSE_REPLAY_BUFFER_SIZE = runtimeConfig.app.sse.replayBufferSize;
+const SSE_REPLAY_MAX_AGE_MS = runtimeConfig.app.sse.replayMaxAgeMs;
+const SLACK_RETRY_BASE_MS = runtimeConfig.app.slack.retryBaseMs;
+const SLACK_RETRY_MAX_MS = runtimeConfig.app.slack.retryMaxMs;
 
 function toReason(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -136,11 +124,17 @@ const dualWriteCoordinator = createDualWriteCoordinator({
   },
 });
 
-const routeLlmConfig = resolveRouteLlmRuntimeConfig();
+const routeLlmConfig = {
+  enabled: runtimeConfig.app.routeLlm.enabled,
+  provider: runtimeConfig.app.routeLlm.provider,
+  model: runtimeConfig.app.routeLlm.model,
+  routeLlmTimeoutMs: runtimeConfig.app.routeLlm.timeoutMs,
+  maxConcurrentRouteLlm: runtimeConfig.app.routeLlm.maxConcurrent,
+};
 let secondaryClassifier: SecondaryClassifier | undefined;
 
 if (routeLlmConfig.enabled) {
-  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  const apiKey = runtimeConfig.openAiApiKey;
   if (!apiKey) {
     console.warn(
       "[AssistantGateway][RouteLLM] disabled: OPENAI_API_KEY is required when ADJUTANT_ROUTE_LLM_ENABLED=1"
@@ -215,9 +209,10 @@ const heartbeatConfig: HeartbeatConfig = {
   workspaceDir: WORKSPACE_DIR,
   userTimezone: TIMEZONE,
   model: MODEL,
-  intervalMs: Number(process.env.ADJUTANT_HEARTBEAT_INTERVAL_MS ?? "1800000"),
-  heartbeatStaleMs: Number(process.env.ADJUTANT_HEARTBEAT_STALE_MS ?? "900000"),
+  intervalMs: runtimeConfig.app.heartbeat.intervalMs,
+  heartbeatStaleMs: runtimeConfig.app.heartbeat.staleMs,
   timelinePath: TIMELINE_PATH,
+  channelsConfigPath: runtimeConfig.channelsConfigPath,
   pendingSessionBackfillProvider: () => dualWriteCoordinator.listPendingSessionBackfillUids(),
 };
 
@@ -235,13 +230,7 @@ const api = createApiServer({
 
 let viteChild: ChildProcess | null = null;
 
-const dualWriteRetryIntervalMsRaw = Number(
-  process.env.ADJUTANT_DUAL_WRITE_RETRY_INTERVAL_MS ?? DEFAULT_DUAL_WRITE_RETRY_INTERVAL_MS
-);
-const dualWriteRetryIntervalMs =
-  Number.isFinite(dualWriteRetryIntervalMsRaw) && dualWriteRetryIntervalMsRaw > 0
-    ? Math.floor(dualWriteRetryIntervalMsRaw)
-    : 0;
+const dualWriteRetryIntervalMs = runtimeConfig.dualWriteRetryIntervalMs;
 
 const dualWriteRetryTimer =
   dualWriteRetryIntervalMs > 0
@@ -290,7 +279,7 @@ await channelManager.startChannels();
 console.log("[Assistant] Gateway channels started");
 
 // Start Vite dev server for UI
-const VITE_PORT = Number(process.env.ADJUTANT_VITE_PORT ?? "5173");
+const VITE_PORT = runtimeConfig.vitePort;
 const viteBin = resolve(process.cwd(), "node_modules/.bin/vite");
 viteChild = spawn(viteBin, ["--port", String(VITE_PORT)], {
   stdio: "inherit",

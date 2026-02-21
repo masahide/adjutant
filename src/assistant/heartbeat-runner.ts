@@ -176,7 +176,7 @@ function resolveWorkspaceDir(config: HeartbeatConfig): string {
 }
 
 function resolveTimelinePath(config: HeartbeatConfig): string | null {
-  const configured = config.timelinePath?.trim() || process.env.ADJUTANT_TIMELINE_PATH?.trim();
+  const configured = config.timelinePath?.trim();
   if (configured) {
     return resolvePath(configured);
   }
@@ -625,8 +625,7 @@ async function resolveVisibility(
     return fromConfig;
   }
 
-  const channelsConfigPath =
-    config.channelsConfigPath?.trim() || process.env.ADJUTANT_CHANNELS_CONFIG_PATH?.trim();
+  const channelsConfigPath = config.channelsConfigPath?.trim();
   if (!channelsConfigPath) {
     return { showOk: true, showAlerts: true, useIndicator: true };
   }
@@ -697,41 +696,6 @@ async function rememberHeartbeatAlert(params: {
   entry.lastHeartbeatText = params.normalizedAlert;
   entry.lastHeartbeatSentAt = params.now.toISOString();
   await params.runtime.saveSessionEntryStore(params.store, params.sessionEntriesPath);
-}
-
-async function runWithTimeout<T>(
-  runtime: HeartbeatRuntime,
-  timeoutMs: number,
-  task: () => Promise<T>
-): Promise<T> {
-  return await new Promise<T>((resolve, reject) => {
-    let settled = false;
-    const timer = runtime.setTimeout(() => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      reject(new Error(`heartbeat timeout after ${timeoutMs}ms`));
-    }, timeoutMs);
-
-    task()
-      .then((value) => {
-        if (settled) {
-          return;
-        }
-        settled = true;
-        runtime.clearTimeout(timer);
-        resolve(value);
-      })
-      .catch((error) => {
-        if (settled) {
-          return;
-        }
-        settled = true;
-        runtime.clearTimeout(timer);
-        reject(error);
-      });
-  });
 }
 
 export async function runOnce(
