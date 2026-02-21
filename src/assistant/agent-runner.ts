@@ -21,6 +21,7 @@ import {
   parseIsoMs,
   type SessionEntryStore,
 } from "./session-entry-store.js";
+import { createMemoryToolDefinitions } from "./memory-search/index.js";
 
 export type AgentRunOptions = {
   runId: string;
@@ -75,6 +76,7 @@ type AgentRunnerRuntime = {
     model?: string;
     isHeartbeat?: boolean;
     memoryWriteEnabled?: boolean;
+    memoryScope?: "main" | "spoke";
     workspaceDir: string;
   }) => Promise<{ session: SessionLike }>;
   readMemoryFiles: typeof readMemoryFiles;
@@ -261,6 +263,7 @@ const defaultRuntime: AgentRunnerRuntime = {
     model,
     isHeartbeat,
     memoryWriteEnabled,
+    memoryScope,
     workspaceDir,
   }) => {
     const authStorage = new AuthStorage();
@@ -274,7 +277,20 @@ const defaultRuntime: AgentRunnerRuntime = {
       settingsOverrides.defaultModel = resolvedModel.modelId;
     }
     const settingsManager = SettingsManager.inMemory(settingsOverrides);
-    const customTools = memoryWriteEnabled ? [createMemoryWriteToolDefinition()] : [];
+    const customTools: ToolDefinition[] = [];
+    if (memoryScope === "main") {
+      customTools.push(
+        ...createMemoryToolDefinitions({
+          workspaceDir,
+          onWarn: (message, meta) => {
+            console.warn("[AgentRunner][MemoryTools]", message, meta ?? {});
+          },
+        })
+      );
+    }
+    if (memoryWriteEnabled) {
+      customTools.push(createMemoryWriteToolDefinition());
+    }
 
     const created = await createAgentSession({
       cwd: workspaceDir,
@@ -588,6 +604,7 @@ async function createSessionWithRecovery(params: {
   model?: string;
   isHeartbeat?: boolean;
   memoryWriteEnabled: boolean;
+  memoryScope: "main" | "spoke";
 }): Promise<{
   created: { session: SessionLike };
   sessionStoreState: SessionStoreState;
@@ -606,6 +623,7 @@ async function createSessionWithRecovery(params: {
       model: params.model,
       isHeartbeat: params.isHeartbeat,
       memoryWriteEnabled: params.memoryWriteEnabled,
+      memoryScope: params.memoryScope,
       workspaceDir: params.workspaceDir,
     });
   };
@@ -811,6 +829,7 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
       model: opts.model,
       isHeartbeat: opts.isHeartbeat,
       memoryWriteEnabled,
+      memoryScope,
     });
     sessionStoreState = createdState.sessionStoreState;
     previousUpdatedAt = createdState.previousUpdatedAt;

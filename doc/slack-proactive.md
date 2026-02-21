@@ -108,3 +108,19 @@ OpenClawの標準機能を最大限活用し、コンテキストウィンドウ
 - route LLM の実行プロバイダは OpenAI とし、環境変数は `ADJUTANT_ROUTE_LLM_ENABLED` / `ADJUTANT_ROUTE_LLM_MODEL` / `ADJUTANT_ROUTE_LLM_TIMEOUT_MS` / `ADJUTANT_ROUTE_LLM_MAX_CONCURRENT` / `OPENAI_API_KEY` を使用する。
 - route LLM の出力契約は JSON（`{ outcome: "run" | "pending", confidence?: number, reason?: string }`）とし、契約外値・不正JSON・例外時はいずれも deterministic 判定へフォールバックする。
 - route LLM の判定監査ログは本文を含めず、`uid` / `eventKind` / `model` / `outcome` / `durationMs` / `fallback reason` を記録する。
+
+### 5.9. メモリ検索ツール（`memory_search` / `memory_get`）の実装確定
+
+- main セッションにのみ `memory_search` / `memory_get` を登録し、spoke セッションでは登録しない。
+- 検索対象は `<workspace>/MEMORY.md` と `<workspace>/memory/**/*.md` に限定する。
+- 検索は SQLite（FTS5 + sqlite-vec）によるハイブリッドとし、埋め込みは OpenAI API を利用する。
+- `sqlite-vec` ロード失敗時は fail-fast（`index_unavailable`）でメモリ検索機能を無効化する。
+- `memory_get` は workspace 外参照、symlink、`.md` 以外を拒否し、契約済みエラー形式を返す。
+- ツール返却契約は OpenClaw 準拠の `jsonResult` 形式（`content[].text` + `details`）とする。
+- 環境変数と既定値は以下を採用する:
+  - `ADJUTANT_MEMORY_SEARCH_ENABLED=true`
+  - `ADJUTANT_MEMORY_SEARCH_MODEL=text-embedding-3-small`
+  - `ADJUTANT_MEMORY_SEARCH_MAX_RESULTS=5`
+  - `ADJUTANT_MEMORY_SEARCH_MIN_SCORE=0`
+  - `ADJUTANT_MEMORY_SEARCH_VECTOR_ENABLED=true`
+  - `ADJUTANT_MEMORY_SEARCH_SQLITE_VEC_PATH=""`（空文字時は sqlite-vec 既定探索）

@@ -449,6 +449,7 @@ data/YYYY/MM/DD/slack/events.jsonl
 src/assistant/event-reader.ts          ← JSONL イベント読み込み
 src/assistant/system-event-queue.ts    ← 外部トリガ FIFO キュー
 src/assistant/memory-reader.ts         ← MEMORY.md / memory/YYYY-MM-DD.md 読み込み
+src/assistant/memory-search/*          ← memory_search / memory_get（SQLite FTS5 + vec0）
     ↓
 src/assistant/context-builder.ts       ← AI 向けプロンプト組み立て
     ↓
@@ -939,6 +940,10 @@ classDiagram
 - spoke セッション（channel/group/DM の個別セッション）: `MEMORY.md` / `memory/*.md` のロード禁止
 - `runAgent` 実行時に `memoryScope` を評価し、spoke では memory 解決処理を常に skip する
 - プライバシー保護のため、グループ/パブリックチャンネルのセッションで個人メモリを露出させない
+- `memory_search` / `memory_get` は main セッションの customTools としてのみ登録する
+- `memory_search` は `MEMORY.md` / `memory/**/*.md` を SQLite ハイブリッド検索（FTS5 + sqlite-vec）する
+- `memory_get` は path allowlist（`MEMORY.md`, `memory/*.md`）+ symlink 拒否 + `.md` 限定で安全に行単位取得する
+- `sqlite-vec` ロード失敗時は fail-fast（`index_unavailable`）で機能無効化する
 
 ---
 
@@ -1013,6 +1018,18 @@ classDiagram
 
 `ADJUTANT_DEBUG` の主な値: `slack`, `slack:verbose`, `slack:domprobe`, `slack:network`, `slack:fetch`, `slack:fetch:hook`, `slack:runtime`
 
+### 14.7 Memory Search 設定
+
+| 変数                                     | 既定値                     | 用途                                  |
+| ---------------------------------------- | -------------------------- | ------------------------------------- |
+| `ADJUTANT_MEMORY_SEARCH_ENABLED`         | `true`                     | memory_search / memory_get 有効化     |
+| `ADJUTANT_MEMORY_SEARCH_MODEL`           | `text-embedding-3-small`   | 埋め込みモデル                        |
+| `ADJUTANT_MEMORY_SEARCH_MAX_RESULTS`     | `5`                        | 検索件数上限                          |
+| `ADJUTANT_MEMORY_SEARCH_MIN_SCORE`       | `0`                        | 最低スコア                            |
+| `ADJUTANT_MEMORY_SEARCH_VECTOR_ENABLED`  | `true`                     | ベクター検索有効化（必須前提）        |
+| `ADJUTANT_MEMORY_SEARCH_SQLITE_VEC_PATH` | `""`                       | sqlite-vec 拡張パス（空時は既定探索） |
+| `ADJUTANT_MEMORY_SEARCH_DB_PATH`         | `memory/index/main.sqlite` | メモリ索引 DB パス                    |
+
 ---
 
 ## 15. ソースマップ
@@ -1053,6 +1070,7 @@ src/
 │   ├── event-reader.ts             #   JSONL イベント読み込み
 │   ├── memory-reader.ts            #   メモリ読み込み
 │   ├── memory-writer.ts            #   メモリ書き込み
+│   ├── memory-search/              #   memory_search / memory_get サブシステム
 │   ├── transcript-reader.ts        #   トランスクリプト読み込み
 │   ├── system-event-queue.ts       #   SystemEvent キュー
 │   ├── stream-event-bridge.ts      #   SSE イベントブリッジ
@@ -1109,7 +1127,7 @@ src/
 7. モデルカスケード（軽量モデル判定 + 上位モデル昇格）の本格実装
 8. Hook 拡張点（`before_agent_start` / `agent_end`）
 9. 実行中ランへの steer、action 承認 API、run 状態追跡 API
-10. セッションメモリ SQLite 索引の本実装
+10. session transcript を memory_search 索引へ統合
 11. 通知キューの永続化（DB/WAL）
 12. `message` / `sessions_send` ツールによるクロスセッション介入の本実装
 13. 日次 Markdown 要約バッチ

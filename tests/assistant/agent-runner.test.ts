@@ -819,4 +819,38 @@ describe("AgentRunner", () => {
     assert.equal(capturedPrompt.includes("## Memory\nLT"), true);
     assert.equal(capturedPrompt.includes("## Daily Memory\nDY"), true);
   });
+
+  it("createSession へ memoryScope(main/spoke) を渡す", async () => {
+    const scopes: Array<"main" | "spoke" | undefined> = [];
+
+    setAgentRunnerRuntimeForTest({
+      ...inMemorySessionStoreRuntime(),
+      nowMs: () => 1000,
+      acquireLock: async () => () => undefined,
+      openSessionManager: () => ({}),
+      createSession: async (params) => {
+        scopes.push(params.memoryScope);
+        return {
+          session: {
+            subscribe: () => () => undefined,
+            prompt: async () => undefined,
+            dispose: () => undefined,
+          },
+        };
+      },
+    });
+
+    await runAgent({
+      runId: "run-memory-scope-main",
+      prompt: "hello",
+      sessionKey: "main",
+    });
+    await runAgent({
+      runId: "run-memory-scope-spoke",
+      prompt: "hello",
+      sessionKey: "slack:channel:C100",
+    });
+
+    assert.deepEqual(scopes, ["main", "spoke"]);
+  });
 });
