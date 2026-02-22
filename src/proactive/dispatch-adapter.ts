@@ -293,5 +293,6 @@ export function toApiRequest(dispatch: ChatDispatchRequest): PostChatMessageRequ
     sessionKey: dispatch.sessionKey,
     idempotencyKey: dispatch.idempotencyKey,
     origin: "pipeline",
+    originSessionKey: dispatch.originSessionKey,
   };
 }

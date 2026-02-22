@@ -20,6 +20,7 @@ type EventBuffer = {
   queueKey: string;
   accountId: string;
   originSessionKey: string;
+  firstEnqueuedAtMs: number;
   channelKey?: string;
   senderId?: string;
   threadKey?: string;
@@ -31,6 +32,7 @@ type QueueDispatchInput = {
   queueKey: string;
   accountId: string;
   originSessionKey: string;
+  firstEnqueuedAtMs: number;
   channelKey?: string;
   senderId?: string;
   threadKey?: string;
@@ -40,6 +42,7 @@ type QueueDispatchInput = {
 type NotificationQueueServiceDeps = {
   config: NotificationQueueConfig;
   dispatch: (input: QueueDispatchInput) => Promise<void>;
+  nowMs?: () => number;
   onWarn?: (message: string, meta?: Record<string, unknown>) => void;
   enqueueSystemEvent?: (text: string, opts: { sessionKey: string; contextKey?: string }) => void;
 };
@@ -48,6 +51,7 @@ type QueueEnqueueInput = {
   queueKey: string;
   accountId: string;
   originSessionKey: string;
+  enqueuedAtMs?: number;
   channelKey?: string;
   senderId?: string;
   threadKey?: string;
@@ -65,12 +69,20 @@ export function resolveNotificationQueueConfig(
 
 export class NotificationQueueService {
   private readonly buffers = new Map<string, EventBuffer>();
+  private readonly nowMs: () => number;
 
-  constructor(private readonly deps: NotificationQueueServiceDeps) {}
+  constructor(private readonly deps: NotificationQueueServiceDeps) {
+    this.nowMs = deps.nowMs ?? (() => Date.now());
+  }
 
   async enqueue(input: QueueEnqueueInput): Promise<void> {
+    const enqueuedAtMs =
+      Number.isFinite(input.enqueuedAtMs) && (input.enqueuedAtMs as number) >= 0
+        ? (input.enqueuedAtMs as number)
+        : this.nowMs();
     const existing = this.buffers.get(input.queueKey);
     if (existing) {
+      existing.firstEnqueuedAtMs = Math.min(existing.firstEnqueuedAtMs, enqueuedAtMs);
       if (existing.events.length >= this.deps.config.cap) {
         if (this.deps.config.dropPolicy === "new") {
           this.deps.onWarn?.("pipeline-buffer-cap-reached", {
@@ -101,6 +113,7 @@ export class NotificationQueueService {
       queueKey: input.queueKey,
       accountId: input.accountId,
       originSessionKey: input.originSessionKey,
+      firstEnqueuedAtMs: enqueuedAtMs,
       channelKey: input.channelKey,
       senderId: input.senderId,
       threadKey: input.threadKey,
@@ -152,6 +165,7 @@ export class NotificationQueueService {
         queueKey: buffer.queueKey,
         accountId: buffer.accountId,
         originSessionKey: buffer.originSessionKey,
+        firstEnqueuedAtMs: buffer.firstEnqueuedAtMs,
         channelKey: buffer.channelKey,
         senderId: buffer.senderId,
         threadKey: buffer.threadKey,

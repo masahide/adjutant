@@ -176,6 +176,108 @@ describe("AgentRunner", () => {
     }
   });
 
+  it("正常完了時は onTerminalRecord に assistant_final を通知する", async () => {
+    const terminals: Array<{ actionType: string; runId: string; sessionKey: string }> = [];
+
+    setAgentRunnerRuntimeForTest({
+      ...inMemorySessionStoreRuntime(),
+      nowMs: () => 1000,
+      acquireLock: async () => () => undefined,
+      openSessionManager: () => ({}),
+      createSession: async () => ({
+        session: {
+          subscribe: () => () => undefined,
+          prompt: async () => undefined,
+          dispose: () => undefined,
+        },
+      }),
+    });
+
+    await runAgent({
+      runId: "run-terminal-final",
+      prompt: "hello",
+      sessionKey: "main",
+      onTerminalRecord: (input) => {
+        terminals.push({
+          actionType: input.actionType,
+          runId: input.runId,
+          sessionKey: input.sessionKey,
+        });
+      },
+    });
+
+    assert.deepEqual(terminals, [
+      {
+        actionType: "assistant_final",
+        runId: "run-terminal-final",
+        sessionKey: "main",
+      },
+    ]);
+  });
+
+  it("失敗時は onTerminalRecord に assistant_error を通知する", async () => {
+    const terminals: string[] = [];
+
+    setAgentRunnerRuntimeForTest({
+      ...inMemorySessionStoreRuntime(),
+      nowMs: () => 1000,
+      acquireLock: async () => () => undefined,
+      openSessionManager: () => ({}),
+      createSession: async () => ({
+        session: {
+          subscribe: () => () => undefined,
+          prompt: async () => {
+            throw new Error("boom");
+          },
+          dispose: () => undefined,
+        },
+      }),
+    });
+
+    await assert.rejects(
+      runAgent({
+        runId: "run-terminal-error",
+        prompt: "hello",
+        sessionKey: "main",
+        onTerminalRecord: (input) => {
+          terminals.push(input.actionType);
+        },
+      })
+    );
+
+    assert.deepEqual(terminals, ["assistant_error"]);
+  });
+
+  it("isAborted が true の場合は onTerminalRecord に assistant_aborted を通知する", async () => {
+    const terminals: string[] = [];
+
+    setAgentRunnerRuntimeForTest({
+      ...inMemorySessionStoreRuntime(),
+      nowMs: () => 1000,
+      acquireLock: async () => () => undefined,
+      openSessionManager: () => ({}),
+      createSession: async () => ({
+        session: {
+          subscribe: () => () => undefined,
+          prompt: async () => undefined,
+          dispose: () => undefined,
+        },
+      }),
+    });
+
+    await runAgent({
+      runId: "run-terminal-aborted",
+      prompt: "hello",
+      sessionKey: "main",
+      isAborted: () => true,
+      onTerminalRecord: (input) => {
+        terminals.push(input.actionType);
+      },
+    });
+
+    assert.deepEqual(terminals, ["assistant_aborted"]);
+  });
+
   it("tool_execution_end は AgentRunResult.toolCalls に集約される", async () => {
     let listener: ((event: unknown) => void) | undefined;
 

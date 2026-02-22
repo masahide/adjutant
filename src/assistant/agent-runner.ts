@@ -59,6 +59,15 @@ export type AgentRunOptions = {
   memoryWriteRequested?: boolean;
   onTextDelta?: (delta: string) => void;
   onToolCall?: (name: string, params: unknown) => void;
+  isAborted?: () => boolean;
+  onTerminalRecord?: (input: {
+    runId: string;
+    sessionKey: string;
+    actionType: "assistant_final" | "assistant_aborted" | "assistant_error";
+    ts: string;
+    durationMs: number;
+    reason?: string;
+  }) => void | Promise<void>;
 };
 
 export type AgentRunResult = {
@@ -386,6 +395,9 @@ async function runAgentInternal(opts: AgentRunOptions): Promise<AgentRunResult> 
   const runtime = getRuntime();
   const startedAtMs = runtime.nowMs();
   const context = resolveAgentRunContext(opts);
+  let terminalActionType: "assistant_final" | "assistant_aborted" | "assistant_error" =
+    "assistant_error";
+  let terminalReason: string | undefined;
 
   if (context.model && !runtime.isModelAvailable(context.model)) {
     throw new Error(`model unavailable: ${context.model}`);
@@ -526,6 +538,7 @@ async function runAgentInternal(opts: AgentRunOptions): Promise<AgentRunResult> 
       });
     }
 
+    terminalActionType = "assistant_final";
     return {
       runId: context.runId,
       text: output.trim(),
@@ -534,6 +547,9 @@ async function runAgentInternal(opts: AgentRunOptions): Promise<AgentRunResult> 
       durationMs,
       modelId: sessionMetadata?.modelId ?? context.model,
     };
+  } catch (error) {
+    terminalReason = error instanceof Error ? error.message : String(error);
+    throw error;
   } finally {
     try {
       unsubscribe?.();
@@ -547,6 +563,28 @@ async function runAgentInternal(opts: AgentRunOptions): Promise<AgentRunResult> 
     }
     if (releaseLock) {
       await releaseLock();
+    }
+    const effectiveActionType = opts.isAborted?.() ? "assistant_aborted" : terminalActionType;
+    const durationMs = Math.max(0, runtime.nowMs() - startedAtMs);
+    const ts = new Date(runtime.nowMs()).toISOString();
+    if (opts.onTerminalRecord) {
+      try {
+        await opts.onTerminalRecord({
+          runId: context.runId,
+          sessionKey: context.sessionKey,
+          actionType: effectiveActionType,
+          ts,
+          durationMs,
+          reason: terminalReason,
+        });
+      } catch (error) {
+        console.warn("[AgentRunner] terminal record callback failed", {
+          runId: context.runId,
+          sessionKey: context.sessionKey,
+          actionType: effectiveActionType,
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
   }
 }

@@ -190,4 +190,34 @@ describe("createAgentRunAdapter", () => {
     const args = mockRunAgent.mock.calls[0].arguments[0];
     assert.equal(args.sessionId, undefined);
   });
+
+  it("isAborted と onTerminalRecord を runAgent へ伝搬する", async () => {
+    const mockRunAgent = mock.fn<RunAgentFn>(async () => {
+      return { runId: "r1", text: "ok" };
+    });
+    const onTerminalRecord = () => undefined;
+    const isAborted = () => false;
+
+    const adapter = createAgentRunAdapter(
+      {
+        workspaceDir: "/tmp",
+        timezone: "UTC",
+        model: "openai/gpt-4o",
+        onTerminalRecord,
+      },
+      mockRunAgent
+    );
+    await adapter({
+      prompt: "hello",
+      sessionKey: "main",
+      runId: "r1",
+      origin: "user",
+      isAborted,
+      onDelta: () => {},
+    });
+
+    const args = mockRunAgent.mock.calls[0].arguments[0];
+    assert.equal(args.isAborted, isAborted);
+    assert.equal(args.onTerminalRecord, onTerminalRecord);
+  });
 });

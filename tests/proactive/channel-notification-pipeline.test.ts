@@ -32,6 +32,28 @@ function createPostInput(uid: string, text = "hello"): ChannelNotificationInput 
   };
 }
 
+function createDmPostInput(uid: string, text = "hello"): ChannelNotificationInput {
+  return {
+    accountId: "acc-1",
+    channelId: "slack",
+    event: {
+      schema: "adjutant.event.v1.1",
+      uid,
+      source: "slack",
+      kind: "post",
+      ts: "2026-02-17T00:00:00+09:00",
+      actor: "U111",
+      detail: {
+        slack: {
+          channel_id: "D123",
+          message_ts: "1740000000.000100",
+          text,
+        },
+      },
+    },
+  };
+}
+
 function createReactionInput(uid: string): ChannelNotificationInput {
   return {
     accountId: "acc-1",
@@ -329,5 +351,156 @@ describe("channel-notification-pipeline", () => {
 
     assert.equal(removed, 1);
     assert.equal(accepted, 0);
+  });
+
+  it("DM は micro-batch で束ね、secondary classifier を呼ばずに即時ルートする", async () => {
+    const accepted: Array<{ message: string; sessionKey: string }> = [];
+    let secondaryCalls = 0;
+    const pipeline = createChannelNotificationPipeline({
+      triggerFilter: createTriggerFilter({
+        primaryClassifier: () => "run",
+        secondaryClassifier: async () => {
+          secondaryCalls += 1;
+          return "run";
+        },
+      }),
+      attentionWindowConfig: {
+        dmIdleMs: 30,
+        dmMaxWaitMs: 100,
+        channelIdleMs: 1000,
+        channelMaxWaitMs: 5000,
+      },
+      queueConfig: { debounceMs: 1 },
+      acceptMessage: async (request) => {
+        accepted.push({ message: request.message, sessionKey: request.sessionKey });
+        return { runId: request.idempotencyKey, status: "started" };
+      },
+    });
+
+    await pipeline.enqueue(createDmPostInput("uid-dm-1", "first"));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await pipeline.enqueue(createDmPostInput("uid-dm-2", "second"));
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    assert.equal(accepted.length, 1);
+    assert.equal(accepted[0]?.message, "first\nsecond");
+    assert.equal(secondaryCalls, 0);
+  });
+
+  it("globalConcurrencyQueue があれば dispatch 前に acquire/release する", async () => {
+    let acquireCount = 0;
+    let releaseCount = 0;
+    const sources: string[] = [];
+    const pipeline = createChannelNotificationPipeline({
+      triggerFilter: createTriggerFilter({ primaryClassifier: () => "run" }),
+      attentionWindowConfig: {
+        channelIdleMs: 5,
+        channelMaxWaitMs: 50,
+        dmIdleMs: 5,
+        dmMaxWaitMs: 50,
+      },
+      queueConfig: { debounceMs: 1 },
+      globalConcurrencyQueue: {
+        acquire: async ({ source }) => {
+          acquireCount += 1;
+          sources.push(source);
+          return {
+            id: "lease-1",
+            source,
+            release: () => {
+              releaseCount += 1;
+            },
+          };
+        },
+        release: () => undefined,
+        getSnapshot: () => ({
+          running: 0,
+          dmRunning: 0,
+          waiting: 0,
+          totalSlots: 4,
+          maxConcurrent: 3,
+          maxRunningDM: 3,
+        }),
+      },
+      acceptMessage: async (request) => {
+        return { runId: request.idempotencyKey, status: "started" };
+      },
+    });
+
+    await pipeline.enqueue(createPostInput("uid-gq-channel", "hello"));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    assert.equal(acquireCount, 1);
+    assert.equal(releaseCount, 1);
+    assert.deepEqual(sources, ["channel"]);
+  });
+
+  it("batchClassifier が respond を返すと channel chunk を1回分類して dispatch する", async () => {
+    const accepted: string[] = [];
+    let classifyCalls = 0;
+    const pipeline = createChannelNotificationPipeline({
+      triggerFilter: createTriggerFilter({ primaryClassifier: () => "run" }),
+      attentionWindowConfig: {
+        channelIdleMs: 20,
+        channelMaxWaitMs: 100,
+        dmIdleMs: 20,
+        dmMaxWaitMs: 100,
+      },
+      batchClassifier: {
+        classify: async () => {
+          classifyCalls += 1;
+          return { action: "respond", confidence: 0.9, reason: "respond" };
+        },
+      },
+      queueConfig: { debounceMs: 1 },
+      acceptMessage: async (request) => {
+        accepted.push(request.message);
+        return { runId: request.idempotencyKey, status: "started" };
+      },
+    });
+
+    await pipeline.enqueue(createPostInput("uid-batch-1", "one"));
+    await pipeline.enqueue(createPostInput("uid-batch-2", "two"));
+    await pipeline.enqueue(createPostInput("uid-batch-3", "three"));
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    assert.equal(classifyCalls, 1);
+    assert.equal(accepted.length, 1);
+    assert.equal(accepted[0], "one\ntwo\nthree");
+  });
+
+  it("batchClassifier が note を返すと system event へ送って dispatch しない", async () => {
+    const accepted: string[] = [];
+    const systemEvents: string[] = [];
+    const pipeline = createChannelNotificationPipeline({
+      triggerFilter: createTriggerFilter({ primaryClassifier: () => "run" }),
+      attentionWindowConfig: {
+        channelIdleMs: 20,
+        channelMaxWaitMs: 100,
+        dmIdleMs: 20,
+        dmMaxWaitMs: 100,
+      },
+      batchClassifier: {
+        classify: async () => {
+          return { action: "note", confidence: 0.8, reason: "fyi" };
+        },
+      },
+      queueConfig: { debounceMs: 1 },
+      enqueueSystemEvent: (text) => {
+        systemEvents.push(text);
+      },
+      acceptMessage: async (request) => {
+        accepted.push(request.message);
+        return { runId: request.idempotencyKey, status: "started" };
+      },
+    });
+
+    await pipeline.enqueue(createPostInput("uid-batch-note-1", "one"));
+    await pipeline.enqueue(createPostInput("uid-batch-note-2", "two"));
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    assert.equal(accepted.length, 0);
+    assert.equal(systemEvents.length, 1);
+    assert.equal(systemEvents[0]?.includes("[Route note]"), true);
   });
 });

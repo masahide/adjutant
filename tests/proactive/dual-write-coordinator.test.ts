@@ -5,9 +5,10 @@ import {
   type DualWriteRecord,
 } from "../../src/proactive/dual-write-coordinator.js";
 
-function makeRecord(uid: string, recordType: string): DualWriteRecord {
+function makeRecord(uid: string, recordType: string, sessionKey = "main"): DualWriteRecord {
   return {
     uid,
+    sessionKey,
     recordType,
     ts: "2026-02-17T00:00:00.000Z",
   };
@@ -127,5 +128,31 @@ describe("dual-write-coordinator", () => {
     assert.equal(warnings.length, 1);
     assert.equal(warnings[0]?.message, "dual-write-backfill-stalled");
     assert.equal(warnings[0]?.meta?.uid, "uid-3");
+  });
+
+  it("sessionKey が欠落した record は reject する", async () => {
+    const coordinator = createDualWriteCoordinator({
+      appendTimelineRecord: async () => {},
+      appendSessionRecord: async () => {},
+    });
+
+    await assert.rejects(
+      coordinator.appendEvent({
+        uid: "uid-4",
+        timelineRecord: {
+          uid: "uid-4",
+          recordType: "event",
+          ts: "2026-02-17T00:00:00.000Z",
+          sessionKey: "main",
+        },
+        sessionRecord: {
+          uid: "uid-4",
+          recordType: "event",
+          ts: "2026-02-17T00:00:00.000Z",
+          sessionKey: " ",
+        },
+      }),
+      /sessionKey/
+    );
   });
 });

@@ -1,5 +1,6 @@
 export type DualWriteRecord = {
   uid: string;
+  sessionKey: string;
   [key: string]: unknown;
 };
 
@@ -57,6 +58,17 @@ function requireUid(uid: string): string {
     throw new Error("uid is required");
   }
   return normalized;
+}
+
+function requireRecordSessionKey(
+  record: DualWriteRecord,
+  field: "timelineRecord" | "sessionRecord"
+) {
+  const value = typeof record.sessionKey === "string" ? record.sessionKey.trim() : "";
+  if (!value) {
+    throw new Error(`${field}.sessionKey is required`);
+  }
+  return value;
 }
 
 function toReason(error: unknown): string {
@@ -128,6 +140,11 @@ export function createDualWriteCoordinator(deps: DualWriteCoordinatorDeps): Dual
     sessionRecord: DualWriteRecord;
   }): Promise<DualWriteAppendResult> => {
     const uid = requireUid(input.uid);
+    const timelineSessionKey = requireRecordSessionKey(input.timelineRecord, "timelineRecord");
+    const sessionSessionKey = requireRecordSessionKey(input.sessionRecord, "sessionRecord");
+    if (timelineSessionKey !== sessionSessionKey) {
+      throw new Error("timelineRecord.sessionKey must match sessionRecord.sessionKey");
+    }
     if (sessionCommittedUids.has(uid)) {
       return { status: "committed" };
     }

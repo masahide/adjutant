@@ -8,6 +8,7 @@ type AdapterConfig = {
   workspaceDir: string;
   timezone: string;
   model?: string;
+  onTerminalRecord?: AgentRunOptions["onTerminalRecord"];
 };
 
 function isCodexModel(model?: string): boolean {
@@ -16,13 +17,15 @@ function isCodexModel(model?: string): boolean {
 }
 
 export function createAgentRunAdapter(cfg: AdapterConfig, runAgentFn: AgentRunFnLike): AgentRunFn {
-  return async ({ prompt, sessionKey, runId, origin, onDelta }) => {
+  return async ({ prompt, sessionKey, runId, origin, isAborted, onDelta }) => {
     try {
       const result = await runAgentFn({
         runId,
         prompt,
         sessionKey,
         origin,
+        isAborted,
+        onTerminalRecord: cfg.onTerminalRecord,
         sessionId: isCodexModel(cfg.model) ? sessionKey : undefined,
         workspaceDir: cfg.workspaceDir,
         timezone: cfg.timezone,

@@ -1,5 +1,6 @@
 import type { PostChatMessageRequest, PostChatMessageResponse } from "../assistant/api-types.js";
 import type { NormalizedEvent } from "../core/events.js";
+import type { BatchClassifier } from "./batch-classifier.js";
 import {
   toApiRequest,
   toChatDispatchRequest,
@@ -13,14 +14,34 @@ import {
   resolveNotificationQueueConfig,
   type NotificationQueueConfig,
 } from "./notification-queue-service.js";
+import type { GlobalConcurrencyQueue, GlobalQueueSource } from "./global-concurrency-queue.js";
+import type { ProactiveMetrics } from "./metrics.js";
 import type { SelfMessageState } from "./route-decision.js";
 import { resolveQueueKey, resolveThreadSessionKeys } from "./session-route-resolver.js";
+import { createAttentionWindow, type AttentionWindow } from "./attention-window.js";
+import { createRuleTriage, type RuleTriage, type RuleTriageResult } from "./rule-triage.js";
 import { createTriggerFilter, type TriggerFilter } from "./trigger-filter.js";
+import { TIMELINE_RECORD_SCHEMA_V1_5 } from "./types.js";
 
 export type { NotificationQueueConfig };
+export type { RuleTriage };
+
+export type AttentionWindowConfig = {
+  channelIdleMs: number;
+  channelMaxWaitMs: number;
+  dmIdleMs: number;
+  dmMaxWaitMs: number;
+};
 
 export type ChannelNotificationPipelineDeps = {
   triggerFilter?: TriggerFilter;
+  ruleTriage?: RuleTriage;
+  batchClassifier?: BatchClassifier;
+  attentionWindow?: AttentionWindow<BufferedPipelineEvent>;
+  attentionWindowConfig?: Partial<AttentionWindowConfig>;
+  globalConcurrencyQueue?: GlobalConcurrencyQueue;
+  metrics?: ProactiveMetrics;
+  nowMs?: () => number;
   acceptMessage: (
     request: PostChatMessageRequest
   ) => PostChatMessageResponse | Promise<PostChatMessageResponse>;
@@ -33,6 +54,18 @@ export type ChannelNotificationPipelineDeps = {
   mainSessionKey?: string;
   queueConfig?: Partial<NotificationQueueConfig>;
   onWarn?: (message: string, meta?: Record<string, unknown>) => void;
+};
+
+type BufferedPipelineEvent = {
+  input: ChannelNotificationInput;
+  sessionKey: string;
+  queueKey: string;
+  channelKey: string;
+  senderId?: string;
+  threadKey?: string;
+  selfState: SelfMessageState;
+  triage: RuleTriageResult;
+  ingressAtMs: number;
 };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -143,12 +176,16 @@ function buildDualWriteRecords(params: { input: ChannelNotificationInput; sessio
   timelineRecord: DualWriteRecord;
   sessionRecord: DualWriteRecord;
 } {
+  const loggedAt = params.input.event.logged_at ?? new Date().toISOString();
   const base = {
+    schema: TIMELINE_RECORD_SCHEMA_V1_5,
     recordType: "event",
     uid: params.input.event.uid,
     role: "user",
     kind: params.input.event.kind,
+    actor: params.input.event.actor,
     ts: params.input.event.ts,
+    loggedAt,
     accountId: params.input.accountId,
     channelId: params.input.channelId,
     sessionKey: params.sessionKey,
@@ -158,6 +195,69 @@ function buildDualWriteRecords(params: { input: ChannelNotificationInput; sessio
     timelineRecord: { ...base, target: "timeline" },
     sessionRecord: { ...base, target: "session" },
   };
+}
+
+function parsePositiveInt(value: string | undefined, fallback: number): number {
+  if (!value) {
+    return fallback;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.max(1, Math.floor(parsed));
+}
+
+function resolveAttentionWindowConfig(
+  overrides: Partial<AttentionWindowConfig> | undefined,
+  queueConfig: NotificationQueueConfig
+): AttentionWindowConfig {
+  const fallbackIdle = Math.max(1, queueConfig.debounceMs);
+  const env = process.env;
+  return {
+    channelIdleMs: Math.max(
+      1,
+      Math.floor(
+        overrides?.channelIdleMs ?? parsePositiveInt(env.ADJUTANT_ROUTING_IDLE_MS, fallbackIdle)
+      )
+    ),
+    channelMaxWaitMs: Math.max(
+      1,
+      Math.floor(
+        overrides?.channelMaxWaitMs ??
+          parsePositiveInt(env.ADJUTANT_ROUTING_MAX_WAIT_MS, Math.max(30_000, fallbackIdle))
+      )
+    ),
+    dmIdleMs: Math.max(
+      1,
+      Math.floor(
+        overrides?.dmIdleMs ??
+          parsePositiveInt(env.ADJUTANT_ROUTING_DM_IDLE_MS, Math.min(200, fallbackIdle))
+      )
+    ),
+    dmMaxWaitMs: Math.max(
+      1,
+      Math.floor(
+        overrides?.dmMaxWaitMs ??
+          parsePositiveInt(env.ADJUTANT_ROUTING_DM_MAX_WAIT_MS, Math.max(1000, fallbackIdle))
+      )
+    ),
+  };
+}
+
+function resolveGlobalSourceFromEvents(events: NormalizedEvent[]): GlobalQueueSource {
+  const first = events[0];
+  if (!first) {
+    return "channel";
+  }
+  const channelId = extractChannelId(first);
+  if (channelId?.startsWith("D")) {
+    return "dm";
+  }
+  if (channelId?.startsWith("G")) {
+    return "group";
+  }
+  return "channel";
 }
 
 export type ChannelNotificationPipeline = {
@@ -170,14 +270,24 @@ export function createChannelNotificationPipeline(
   deps: ChannelNotificationPipelineDeps
 ): ChannelNotificationPipeline {
   const triggerFilter = deps.triggerFilter ?? createTriggerFilter();
+  const ruleTriage = deps.ruleTriage ?? createRuleTriage();
+  const batchClassifier = deps.batchClassifier;
   const dispatchAdapter = deps.dispatchAdapter ?? toChatDispatchRequest;
   const apiAdapter = deps.toApiRequest ?? toApiRequest;
   const queueConfig = resolveNotificationQueueConfig(deps.queueConfig);
+  const queueServiceConfig: NotificationQueueConfig = {
+    ...queueConfig,
+    debounceMs: 1,
+  };
+  const nowMs = deps.nowMs ?? (() => Date.now());
+  const windowConfig = resolveAttentionWindowConfig(deps.attentionWindowConfig, queueConfig);
   const queueService = new NotificationQueueService({
-    config: queueConfig,
+    config: queueServiceConfig,
+    nowMs,
     enqueueSystemEvent: deps.enqueueSystemEvent,
     onWarn: deps.onWarn,
     dispatch: async (buffer) => {
+      let releaseLease: (() => void) | undefined;
       const dispatch = dispatchAdapter({
         events: buffer.events,
         accountId: buffer.accountId,
@@ -188,9 +298,119 @@ export function createChannelNotificationPipeline(
         maxEventUidsPerDispatch: queueConfig.maxEventUidsPerDispatch,
       });
       const request = apiAdapter(dispatch);
-      await deps.acceptMessage(request);
+      if (deps.globalConcurrencyQueue) {
+        const lease = await deps.globalConcurrencyQueue.acquire({
+          source: resolveGlobalSourceFromEvents(buffer.events),
+        });
+        releaseLease = lease.release;
+      }
+      try {
+        await deps.acceptMessage(request);
+        deps.metrics?.recordEventToResponse({
+          durationMs: Math.max(0, nowMs() - buffer.firstEnqueuedAtMs),
+          queueKey: buffer.queueKey,
+          sessionKey: buffer.originSessionKey,
+        });
+      } finally {
+        releaseLease?.();
+      }
     },
   });
+
+  const processBufferedEvent = async (event: BufferedPipelineEvent): Promise<void> => {
+    const decision =
+      event.triage.route === "immediate" && event.input.event.kind === "post"
+        ? {
+            run: true,
+            pending: false,
+            drop: false,
+            system: false,
+            reason: "rule-immediate",
+          }
+        : await triggerFilter.decide({
+            event: event.input.event,
+            selfState: event.selfState,
+          });
+
+    if (decision.system && deps.enqueueSystemEvent) {
+      deps.enqueueSystemEvent(renderSystemEventText(event.input.event), {
+        sessionKey: event.sessionKey,
+        contextKey: buildSystemContextKey(event.input.event),
+      });
+    }
+    if (!decision.run) {
+      return;
+    }
+
+    await queueService.enqueue({
+      queueKey: event.queueKey,
+      accountId: event.input.accountId,
+      originSessionKey: event.sessionKey,
+      channelKey: event.channelKey,
+      senderId: event.senderId,
+      threadKey: event.threadKey,
+      event: event.input.event,
+      enqueuedAtMs: event.ingressAtMs,
+    });
+  };
+
+  const attentionWindow =
+    deps.attentionWindow ??
+    createAttentionWindow<BufferedPipelineEvent>({
+      onWarn: deps.onWarn,
+      onFlush: async ({ items }) => {
+        const immediateItems = items.filter((item) => item.triage.route === "immediate");
+        const accumulateItems = items.filter((item) => item.triage.route !== "immediate");
+
+        for (const item of immediateItems) {
+          await processBufferedEvent(item);
+        }
+
+        if (accumulateItems.length === 0) {
+          return;
+        }
+
+        if (!batchClassifier) {
+          for (const item of accumulateItems) {
+            await processBufferedEvent(item);
+          }
+          return;
+        }
+
+        const head = accumulateItems[0];
+        const classification = await batchClassifier.classify({
+          sessionKey: head?.sessionKey ?? "main",
+          events: accumulateItems.map((item) => item.input.event),
+        });
+
+        if (classification.action === "ignore") {
+          return;
+        }
+        if (classification.action === "note") {
+          deps.enqueueSystemEvent?.(
+            `[Route note] ${classification.reason} (confidence=${classification.confidence.toFixed(2)})`,
+            {
+              sessionKey: head?.sessionKey ?? "main",
+              contextKey: `${head?.queueKey ?? "unknown"}:batch-note`,
+            }
+          );
+          return;
+        }
+
+        for (const item of accumulateItems) {
+          await queueService.enqueue({
+            queueKey: item.queueKey,
+            accountId: item.input.accountId,
+            originSessionKey: item.sessionKey,
+            channelKey: item.channelKey,
+            senderId: item.senderId,
+            threadKey: item.threadKey,
+            event: item.input.event,
+            enqueuedAtMs: item.ingressAtMs,
+          });
+        }
+      },
+    });
 
   const enqueue = async (input: ChannelNotificationInput): Promise<void> => {
     const channelId = extractChannelId(input.event);
@@ -238,37 +458,37 @@ export function createChannelNotificationPipeline(
       }
     }
 
-    const decision = await triggerFilter.decide({
-      event: input.event,
-      selfState,
-    });
-
-    if (decision.system && deps.enqueueSystemEvent) {
-      deps.enqueueSystemEvent(renderSystemEventText(input.event), {
-        sessionKey: session.sessionKey,
-        contextKey: buildSystemContextKey(input.event),
-      });
-    }
-    if (!decision.run) {
+    const triage = ruleTriage.classify({ event: input.event, selfState });
+    if (triage.route === "drop") {
       return;
     }
 
-    await queueService.enqueue({
-      queueKey,
-      accountId: input.accountId,
-      originSessionKey: session.sessionKey,
-      channelKey,
-      senderId,
-      threadKey,
-      event: input.event,
+    const isDm = triage.isDm;
+    attentionWindow.push({
+      sessionKey: session.sessionKey,
+      idleMs: isDm ? windowConfig.dmIdleMs : windowConfig.channelIdleMs,
+      maxWaitMs: isDm ? windowConfig.dmMaxWaitMs : windowConfig.channelMaxWaitMs,
+      item: {
+        input,
+        sessionKey: session.sessionKey,
+        queueKey,
+        channelKey,
+        senderId,
+        threadKey,
+        selfState,
+        triage,
+        ingressAtMs: nowMs(),
+      },
     });
   };
 
   const flushSession = async (sessionKey: string): Promise<void> => {
+    await attentionWindow.flushSession(sessionKey);
     await queueService.flushSession(sessionKey);
   };
 
-  const clearSession = (sessionKey: string): number => queueService.clearSession(sessionKey);
+  const clearSession = (sessionKey: string): number =>
+    attentionWindow.clearSession(sessionKey) + queueService.clearSession(sessionKey);
 
   return {
     enqueue,

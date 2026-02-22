@@ -333,8 +333,8 @@ src/io/jsonlWriter.ts             ← data/YYYY/MM/DD/slack/events.jsonl へ追�
 
 - 全チャネル・全セッションのイベントを時系列で集約する 1 ファイル
 - DualWriteCoordinator が timeline と session JSONL へ同時書き込みする
-- Heartbeat 巡回判定（Slow Path）のデータソース
-- 書き込み順は timeline を先行し、失敗時は `pending-timeline` として run/pending 判定を停止する
+- PendingFlusher の差分走査（未処理救済）のデータソース
+- 書き込み順は timeline を先行し、失敗時は `pending-timeline` として新規イベント判定を停止する
 
 ### 5.4 セッション JSONL
 
@@ -344,7 +344,7 @@ src/io/jsonlWriter.ts             ← data/YYYY/MM/DD/slack/events.jsonl へ追�
 
 - `user_message` / `assistant_message` / `tool_call` / `tool_result` / `system_event` を追記保存
 - 各行は `sessionId`, `sessionKey`, `runId`, `type`, `ts` を必須とする
-- session 側書き込み失敗時は `pending-session-backfill` に退避し、run/pending は継続する
+- session 側書き込み失敗時は `pending-session-backfill` に退避し、イベント判定は継続する
 - retry は `uid` 単位で idempotent に再実行する
 
 ### 5.5 メモリファイル
@@ -393,8 +393,8 @@ stateDiagram-v2
   committed --> [*]
 ```
 
-- `pending-timeline`: run/pending 判定を停止する（判定ソースである timeline が欠損するため）
-- `pending-session-backfill`: run/pending 判定は継続するが、Heartbeat は該当 `uid` を見つけた場合に起動見送りする
+- `pending-timeline`: 新規イベント判定を停止する（判定ソースである timeline が欠損するため）
+- `pending-session-backfill`: イベント判定は継続し、session 側のみ再送回収する
 - `retryPending()` は `timeline` を先に回収し、その後 `session` を回収する順序を必須とする
 
 ### 5.10 起動時復旧手順（JSONL）
@@ -541,25 +541,26 @@ stateDiagram-v2
 ### 8.1 基本契約
 
 - 定期実行間隔の既定値は `30m`（`ADJUTANT_HEARTBEAT_INTERVAL_MS`）
-- Heartbeat プロンプト既定: `Read HEARTBEAT.md if it exists ... If nothing needs attention, reply HEARTBEAT_OK.`
+- Heartbeat 実行では `report_heartbeat_status` ツール呼び出しを必須とする（`status` / `notify` / `reason`）
 - 実行時の送信 Body 末尾に `Current time: <formattedTime> (<userTimezone>)` を 1 行注入する
 - 実行結果は `HeartbeatRunResult`（`ran` / `skipped` / `failed`）で記録する
+- 実行前に `GlobalConcurrencyQueue(source=\"heartbeat\")` を acquire し、完了時に release する
 - `GET /api/heartbeat/last` で直近状態を取得可能
 
-### 8.2 統合タイムライン逆走査判定
+### 8.2 Deep Heartbeat と PendingFlusher の責務分離
 
-1. `memory/timeline.jsonl` を末尾から逆走査する
-2. 最初の `role="assistant"` / `role="tool"` / `recordType="action"` を「最新の対応境界」とし、走査を打ち切る
-3. 対象区間（末尾〜対応境界）に `recordType="event" && role="user" && kind="post"` かつ `now - ts >= heartbeatStaleMs` を満たす行が 1 件以上あれば「未対応」と判定
-4. 該当 `uid` が `pending-session-backfill` に存在する場合は文脈欠落を避けるため起動見送り（次周期で再評価）
-5. `reaction/notification` のみで `post` が存在しない場合は既対応として静音終了
+1. 未処理救済（stale post の検出）は `PendingFlusher` が担当する
+2. `PendingFlusher` は `memory/watermarks.json` の `lastScannedOffset` / `lastGoodOffset` と `sessionKey` 別境界で差分走査する
+3. `assistant_final` のみを handled 境界として採用し、`assistant_aborted` / `assistant_error` では境界を進めない
+4. Heartbeat は統合タイムラインの逆走査を行わず、巡回・状態報告に専念する
 
 ### 8.3 通知抑制ルール
 
-- 返信が `HEARTBEAT_OK` のみ、または端に含まれる短文 ACK の場合は通知を抑制
-- `ackMaxChars`（既定 300）以下の残文は無通知扱い
+- `status=no_action_needed` または `status=task_completed` は `ok-empty` として扱い、通知しない
+- `status=needs_attention` かつ `notify=false` は `ok-empty` として扱い、通知しない
+- `status=needs_attention` かつ `notify=true` のみ通知対象（`sent`）とする
 - 24 時間以内に同一本文の Heartbeat 通知が再生成された場合は `duplicate` として送信を抑制
-- 抑制時も `HeartbeatRunResult.status: "ran"` を維持し、イベントログ側に `ok-token` / `ok-empty` / `duplicate` を記録
+- 抑制時も `HeartbeatRunResult.status: "ran"` を維持し、イベントログ側に `ok-empty` / `duplicate` を記録
 
 ### 8.4 スキップ条件
 
@@ -570,12 +571,12 @@ stateDiagram-v2
 
 ### 8.5 遅延対応アクション
 
-未対応と判定された場合:
+未処理救済が必要な場合は Heartbeat ではなく `PendingFlusher` が起動トリガーを発行する。
 
-1. `session.lock` を取得してメインエージェントを自律起動
-2. 直近の未対応メッセージ群（連続 `user` ロール）を読み込み再評価
-3. 要対応事案が見つかった場合は時間差を踏まえた文脈で対応
-4. assistant レコードを統合タイムラインへ追記（次回 heartbeat で自然にスキップ）
+1. `PendingFlusher` が stale open post を検出
+2. 他者返信抑制バイアスを評価（抑制時は次周期へ延期）
+3. `origin=\"pipeline\"` + `originSessionKey=<検出session>` でエージェント起動要求
+4. `assistant_final` 記録後に当該 session の handled 境界が更新される
 
 ---
 
@@ -626,14 +627,17 @@ NormalizedEvent（from SlackPlugin.emit()）
    ├→ memory/timeline.jsonl（統合タイムライン）
    └→ memory/sessions/<sessionKey>.jsonl（セッション JSONL）
     ↓
-5. TriggerFilter.decide() → RouteDecision 生成
-   ├→ PrimaryClassifier（デフォルト "run"）
-   └→ SecondaryClassifier（Route LLM、optional）
+5. RuleTriage.classify()（self/DM/mention/channel の一次分類）
     ↓
-6. RouteDecision に基づくルーティング
-   ├→ run:     debounce → notification-queue → DispatchAdapter → ChatHandler.acceptMessage()
-   ├→ pending: JSONL 上の履歴として保持（次回 run 時に一括回収）
-   ├→ system:  system-event-queue へ投入
+6. AttentionWindow（DM: micro-batch / channel: window-batch）
+    ↓
+7. BatchClassifier.classify()（channel chunk のみ）
+   └→ `report_route_decision`（respond/note/ignore）
+    ↓
+8. ルーティング
+   ├→ respond: notification-queue → DispatchAdapter → ChatHandler.acceptMessage()
+   ├→ note:    system-event-queue へ投入
+   ├→ ignore:  破棄
    └→ drop:    破棄（self-message 等）
 ```
 
@@ -676,11 +680,11 @@ type RouteDecision = {
 
 ### 9.5 軽量 LLM 一次判定（Route LLM）
 
-- `TriggerFilter` は `secondaryClassifier`（Route LLM）を受け取れる設計
-- Route LLM は OpenAI を採用し、`run/pending` を判定する
+- `BatchClassifier` が channel chunk 単位で Route LLM を呼び出す
+- Route LLM は OpenAI を採用し、`respond/note/ignore` を判定する
 - タイムアウト（既定 `1000ms`）時は一次判定へフォールバック
-- 出力契約: `{ outcome: "run" | "pending", confidence?: number, reason?: string }`
-- 契約外値・不正 JSON・例外時はすべて deterministic 判定へフォールバック
+- 出力契約: `report_route_decision({ action, confidence, reason })`
+- confidence が閾値未満、契約外値、不正 JSON、例外時は fail-closed で `note`
 - 監査ログは本文を含めず、`uid/eventKind/model/outcome/durationMs/fallback reason` を記録
 - `maxConcurrentRouteLlm` 既定値は `1`（逐次評価）
 
@@ -706,6 +710,7 @@ type NotificationQueueConfig = {
 type ChatDispatchRequest = {
   message: string;
   sessionKey: string;
+  originSessionKey: string;
   idempotencyKey: string;
   eventUids: string[];
   uidOverflowCount?: number;
@@ -721,7 +726,7 @@ type ChatDispatchRequest = {
 - `notification`: 軽量トリガー文（詳細は system event 側）
 - `idempotencyKey`: `sha256(sessionKey + "\n" + sorted(eventUids).join("\n"))`
 - `message` は `maxDispatchChars` を上限とし、超過時は切り詰め + `messageTruncated=true` を付与
-- Fast Path から API へ渡す `PostChatMessageRequest` には `origin: "pipeline"` を付与する
+- Fast Path から API へ渡す `PostChatMessageRequest` には `origin: "pipeline"` と `originSessionKey` を付与する
 
 ### 9.8 sessionKey マッピング規則（Slack）
 
@@ -750,16 +755,23 @@ accountId 解決順:
 - `appendEvent(uid, timelineRecord, sessionRecord)` で timeline と session に同時書き込み
 - 状態: `committed` / `pending-timeline` / `pending-session-backfill`
 - `retryPending()` で失敗レコードを再試行
-- `listPendingSessionBackfillUids()` を Heartbeat 判定で使用
+- `listPendingSessionBackfillUids()` は運用診断や回収状態確認に利用可能
 
 ### 9.11 ペンディングの一括回収
 
-ルーターが `run` を返した場合:
+`BatchClassifier` が `respond` を返した場合:
 
 1. `session.lock` を取得してメインエージェントを起動
 2. セッション JSONL の直近履歴をコンテキストとして読み込む
-3. `pending` として保留されていた直前の未対応メッセージ群も含めて処理
+3. 直前の保留イベント（system-event-queue 注入分）も含めて処理
 4. システムプロンプトに「未回答の質問や未完了タスクが残っている場合は今回ターンでまとめて回収すること」を明示
+
+### 9.12 オブザーバビリティ指標
+
+- `route_llm_calls_per_hour`: `BatchClassifier` での Route LLM 呼び出し回数（ローリング 1 時間）
+- `flusher_fire_count`: `PendingFlusher` が起動要求を発火した回数
+- `agent_invocations_by_source`: `GlobalConcurrencyQueue` で dispatch された source 別カウント
+- `event_to_response_p95_ms`: pipeline enqueue から dispatch 完了までの P95 レイテンシ（ローリング 1 時間）
 
 ---
 
@@ -795,15 +807,15 @@ accountId 解決順:
 
 ### 12.1 エンドポイント一覧
 
-| メソッド | パス                           | 入力                                                                                                            | 出力                                     |
-| -------- | ------------------------------ | --------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
-| `POST`   | `/api/chat/messages`           | Header: `Idempotency-Key`（任意） / Body: `{ message, sessionKey, idempotencyKey?, clientMessageId?, origin? }` | `{ runId, status }`                      |
-| `POST`   | `/api/chat/abort`              | Body: `{ sessionKey, runId? }`                                                                                  | `{ ok, aborted, runIds }`                |
-| `GET`    | `/api/chat/runs/:runId/stream` | Header: `Last-Event-ID`（任意, `<runId>:<seq>`）                                                                | SSE (`event: chat`, `id: <runId>:<seq>`) |
-| `GET`    | `/api/chat/history`            | Query: `sessionKey`                                                                                             | `{ sessionKey, sessionId, messages }`    |
-| `POST`   | `/api/heartbeat/run`           | Body: `{ reason? }`                                                                                             | `HeartbeatRunResult`                     |
-| `GET`    | `/api/events/stream`           | なし                                                                                                            | SSE (`event: heartbeat`)                 |
-| `GET`    | `/api/heartbeat/last`          | なし                                                                                                            | `HeartbeatEventPayload \| null`          |
+| メソッド | パス                           | 入力                                                                                                                               | 出力                                     |
+| -------- | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| `POST`   | `/api/chat/messages`           | Header: `Idempotency-Key`（任意） / Body: `{ message, sessionKey, idempotencyKey?, clientMessageId?, origin?, originSessionKey? }` | `{ runId, status }`                      |
+| `POST`   | `/api/chat/abort`              | Body: `{ sessionKey, runId? }`                                                                                                     | `{ ok, aborted, runIds }`                |
+| `GET`    | `/api/chat/runs/:runId/stream` | Header: `Last-Event-ID`（任意, `<runId>:<seq>`）                                                                                   | SSE (`event: chat`, `id: <runId>:<seq>`) |
+| `GET`    | `/api/chat/history`            | Query: `sessionKey`                                                                                                                | `{ sessionKey, sessionId, messages }`    |
+| `POST`   | `/api/heartbeat/run`           | Body: `{ reason? }`                                                                                                                | `HeartbeatRunResult`                     |
+| `GET`    | `/api/events/stream`           | なし                                                                                                                               | SSE (`event: heartbeat`)                 |
+| `GET`    | `/api/heartbeat/last`          | なし                                                                                                                               | `HeartbeatEventPayload \| null`          |
 
 ### 12.2 冪等キー解決規則
 
@@ -1118,12 +1130,18 @@ src/
 │   ├── slack-channel-plugin.ts     #   Slack CDP 接続プラグイン
 │   ├── channel-notification-pipeline.ts  #   イベント→チャット変換
 │   ├── trigger-filter.ts           #   イベント判定フィルター
+│   ├── rule-triage.ts              #   ルールベース即時判定
+│   ├── attention-window.ts         #   micro/window batch
+│   ├── batch-classifier.ts         #   チャンク単位 Route LLM 分類
+│   ├── global-concurrency-queue.ts #   グローバル並行制御
+│   ├── pending-flusher.ts          #   未処理救済（watermark 差分走査）
+│   ├── metrics.ts                  #   route/flusher/queue/p95 メトリクス
 │   ├── route-decision.ts           #   ルーティング判定表
 │   ├── route-llm-classifier.ts     #   Route LLM 分類器
 │   ├── session-route-resolver.ts   #   sessionKey 解決
 │   ├── dispatch-adapter.ts         #   イベント→メッセージ変換
 │   ├── dual-write-coordinator.ts   #   Timeline/Session 二重追記
-│   └── heartbeat-scanner.ts        #   Heartbeat 判定（タイムライン逆走査）
+│   └── heartbeat-scanner.ts        #   旧判定ロジック（互換モジュール）
 ├── debug/                          # デバッグ
 │   └── debugUi.ts                  #   SSE ベースのデバッグサーバー
 └── ui/                             # Web UI（React + Vite）

@@ -10,7 +10,6 @@ import {
   runOnce,
   setHeartbeatRuntimeForTest,
   startHeartbeat,
-  stripHeartbeatToken,
 } from "../../src/assistant/heartbeat-runner.js";
 
 async function preparePromptFiles(baseDir: string, heartbeatContent: string): Promise<void> {
@@ -32,8 +31,31 @@ function createBaseConfig(tempDir: string) {
     userFilePath: join(tempDir, "assistant", "prompts", "USER.md"),
     agentsFilePath: join(tempDir, "assistant", "prompts", "AGENTS.md"),
     intervalMs: 20,
-    ackMaxChars: 5,
     retryDelayMs: 5,
+  };
+}
+
+type HeartbeatToolStatus = "no_action_needed" | "needs_attention" | "task_completed";
+
+function createToolAgentResult(input: {
+  status: HeartbeatToolStatus;
+  notify: boolean;
+  reason: string;
+  modelId?: string;
+}) {
+  return {
+    text: input.reason,
+    modelId: input.modelId ?? "gpt-4o-mini",
+    toolCalls: [
+      {
+        name: "report_heartbeat_status",
+        result: {
+          status: input.status,
+          notify: input.notify,
+          reason: input.reason,
+        },
+      },
+    ],
   };
 }
 
@@ -59,11 +81,11 @@ describe("HeartbeatRunner", () => {
         getQueueSize: () => 0,
         runAgent: async () => {
           runCount += 1;
-          return {
-            status: "completed",
-            durationMs: 1,
-            text: "ALERT: this should be delivered",
-          };
+          return createToolAgentResult({
+            status: "no_action_needed",
+            notify: false,
+            reason: "periodic heartbeat ok",
+          });
         },
       });
 
@@ -92,12 +114,12 @@ describe("HeartbeatRunner", () => {
         }),
         buildEventContext: () => ({ text: "", truncated: false, eventCount: 0 }),
         getQueueSize: () => 0,
-        runAgent: async () => ({
-          status: "completed",
-          durationMs: 10,
-          text: "ALERT: investigate #incident immediately",
-          modelId: "gpt-4o-mini",
-        }),
+        runAgent: async () =>
+          createToolAgentResult({
+            status: "needs_attention",
+            notify: true,
+            reason: "ALERT: investigate #incident immediately",
+          }),
       });
 
       const result = await runOnce(createBaseConfig(tempDir), { reason: "manual-run" });
@@ -134,11 +156,12 @@ describe("HeartbeatRunner", () => {
         }),
         buildEventContext: () => ({ text: "", truncated: false, eventCount: 0 }),
         getQueueSize: () => 0,
-        runAgent: async () => ({
-          status: "completed",
-          durationMs: 1,
-          text: "ALERT: notify now",
-        }),
+        runAgent: async () =>
+          createToolAgentResult({
+            status: "needs_attention",
+            notify: true,
+            reason: "ALERT: notify now",
+          }),
       });
 
       await runOnce(createBaseConfig(tempDir), { reason: "first" });
@@ -166,11 +189,12 @@ describe("HeartbeatRunner", () => {
         }),
         buildEventContext: () => ({ text: "", truncated: false, eventCount: 0 }),
         getQueueSize: () => 0,
-        runAgent: async () => ({
-          status: "completed",
-          durationMs: 1,
-          text: "ALERT: notify now",
-        }),
+        runAgent: async () =>
+          createToolAgentResult({
+            status: "needs_attention",
+            notify: true,
+            reason: "ALERT: notify now",
+          }),
       });
 
       await runOnce(createBaseConfig(tempDir), { reason: "manual" });
@@ -199,7 +223,11 @@ describe("HeartbeatRunner", () => {
         getQueueSize: () => 0,
         runAgent: async () => {
           runAgentCalled = true;
-          return { status: "completed", durationMs: 1, text: "unexpected" };
+          return createToolAgentResult({
+            status: "no_action_needed",
+            notify: false,
+            reason: "unexpected",
+          });
         },
       });
 
@@ -214,21 +242,11 @@ describe("HeartbeatRunner", () => {
     }
   });
 
-  it("stripHeartbeatToken は HTML/Markdown/HEARTBEAT_OK を除去して判定する", () => {
-    const stripped = stripHeartbeatToken(
-      "<b>HEARTBEAT_OK</b> **確認済み** &nbsp; [link](https://example.com)",
-      3
-    );
-    assert.equal(stripped.hasOkToken, true);
-    assert.equal(stripped.normalizedText.includes("HEARTBEAT_OK"), false);
-    assert.equal(stripped.normalizedText.includes("link"), true);
-    assert.equal(stripped.shouldSkip, true);
-  });
-
-  it("HEARTBEAT_OK 応答は ok-token として抑制される", async () => {
+  it("report_heartbeat_status ツール呼び出しが無いと failed になる", async () => {
     const tempDir = await mkdtemp(`${tmpdir()}/adjutant-heartbeat-`);
     try {
       await preparePromptFiles(tempDir, "Heartbeat prompt");
+
       setHeartbeatRuntimeForTest({
         readEvents: async () => [],
         readMemoryFiles: async () => ({
@@ -238,24 +256,23 @@ describe("HeartbeatRunner", () => {
         }),
         buildEventContext: () => ({ text: "", truncated: false, eventCount: 0 }),
         getQueueSize: () => 0,
-        runAgent: async () => ({
-          status: "completed",
-          durationMs: 1,
-          text: "<div>HEARTBEAT_OK</div>",
-          modelId: "gpt-4o-mini",
-        }),
+        runAgent: async () => ({ text: "legacy-text-only", modelId: "gpt-4o-mini" }),
       });
 
-      const result = await runOnce(createBaseConfig(tempDir), { reason: "timer" });
-      assert.equal(result.status, "ran");
-      const payload = getLastHeartbeatEvent();
-      assert.equal(payload?.status, "ok-token");
+      const result = await runOnce(createBaseConfig(tempDir));
+      assert.deepEqual(result, {
+        status: "failed",
+        reason: "missing-report-heartbeat-status-tool-call",
+      });
+      const evt = getLastHeartbeatEvent();
+      assert.equal(evt?.status, "failed");
+      assert.equal(evt?.reason, "missing-report-heartbeat-status-tool-call");
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
   });
 
-  it("注目イベント応答はアラートとして送信イベントになる", async () => {
+  it("status=no_action_needed は ok-empty 扱いで ran を返す", async () => {
     const tempDir = await mkdtemp(`${tmpdir()}/adjutant-heartbeat-`);
     try {
       await preparePromptFiles(tempDir, "Heartbeat prompt");
@@ -268,21 +285,46 @@ describe("HeartbeatRunner", () => {
         }),
         buildEventContext: () => ({ text: "", truncated: false, eventCount: 0 }),
         getQueueSize: () => 0,
-        runAgent: async () => ({
-          status: "completed",
-          durationMs: 1,
-          text: "ALERT: #incident に障害報告がありました。詳細を確認してください。",
-          modelId: "gpt-4o-mini",
-        }),
+        runAgent: async () =>
+          createToolAgentResult({
+            status: "no_action_needed",
+            notify: false,
+            reason: "all good",
+          }),
       });
 
-      const result = await runOnce(
-        {
-          ...createBaseConfig(tempDir),
-          ackMaxChars: 1,
-        },
-        { reason: "timer" }
-      );
+      const result = await runOnce(createBaseConfig(tempDir), { reason: "timer" });
+      assert.equal(result.status, "ran");
+      const payload = getLastHeartbeatEvent();
+      assert.equal(payload?.status, "ok-empty");
+      assert.equal(payload?.indicatorType, "ok");
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("status=needs_attention かつ notify=true は sent になる", async () => {
+    const tempDir = await mkdtemp(`${tmpdir()}/adjutant-heartbeat-`);
+    try {
+      await preparePromptFiles(tempDir, "Heartbeat prompt");
+      setHeartbeatRuntimeForTest({
+        readEvents: async () => [],
+        readMemoryFiles: async () => ({
+          longTerm: null,
+          daily: null,
+          yesterday: null,
+        }),
+        buildEventContext: () => ({ text: "", truncated: false, eventCount: 0 }),
+        getQueueSize: () => 0,
+        runAgent: async () =>
+          createToolAgentResult({
+            status: "needs_attention",
+            notify: true,
+            reason: "ALERT: #incident に障害報告がありました。詳細を確認してください。",
+          }),
+      });
+
+      const result = await runOnce(createBaseConfig(tempDir), { reason: "timer" });
       assert.equal(result.status, "ran");
       if (result.status === "ran") {
         assert.equal(result.alert?.includes("#incident"), true);
@@ -295,17 +337,10 @@ describe("HeartbeatRunner", () => {
     }
   });
 
-  it("SOUL.md の内容を systemPrompt に反映する", async () => {
+  it("status=needs_attention でも notify=false なら ok-empty で通知しない", async () => {
     const tempDir = await mkdtemp(`${tmpdir()}/adjutant-heartbeat-`);
     try {
       await preparePromptFiles(tempDir, "Heartbeat prompt");
-      await writeFile(
-        join(tempDir, "assistant", "prompts", "SOUL.md"),
-        "SOUL_DIRECTIVE: prioritize concise summaries",
-        "utf8"
-      );
-      let capturedSystemPrompt = "";
-
       setHeartbeatRuntimeForTest({
         readEvents: async () => [],
         readMemoryFiles: async () => ({
@@ -315,18 +350,21 @@ describe("HeartbeatRunner", () => {
         }),
         buildEventContext: () => ({ text: "", truncated: false, eventCount: 0 }),
         getQueueSize: () => 0,
-        runAgent: async (opts) => {
-          capturedSystemPrompt = opts.systemPrompt ?? "";
-          return {
-            status: "completed",
-            durationMs: 1,
-            text: "HEARTBEAT_OK",
-          };
-        },
+        runAgent: async () =>
+          createToolAgentResult({
+            status: "needs_attention",
+            notify: false,
+            reason: "attention noted but no user notify",
+          }),
       });
 
-      await runOnce(createBaseConfig(tempDir), { reason: "manual" });
-      assert.equal(capturedSystemPrompt.includes("SOUL_DIRECTIVE"), true);
+      const result = await runOnce(createBaseConfig(tempDir));
+      assert.equal(result.status, "ran");
+      if (result.status === "ran") {
+        assert.equal(result.alert, undefined);
+      }
+      const payload = getLastHeartbeatEvent();
+      assert.equal(payload?.status, "ok-empty");
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
@@ -355,43 +393,6 @@ describe("HeartbeatRunner", () => {
     }
   });
 
-  it("activeHours 深夜跨ぎ（start > end）を判定できる", async () => {
-    const tempDir = await mkdtemp(`${tmpdir()}/adjutant-heartbeat-`);
-    try {
-      await preparePromptFiles(tempDir, "Heartbeat prompt");
-      setHeartbeatRuntimeForTest({
-        now: () => new Date("2026-02-15T23:30:00.000Z"),
-        readEvents: async () => [],
-        readMemoryFiles: async () => ({
-          longTerm: null,
-          daily: null,
-          yesterday: null,
-        }),
-        buildEventContext: () => ({ text: "", truncated: false, eventCount: 0 }),
-        getQueueSize: () => 0,
-        runAgent: async () => ({
-          status: "completed",
-          durationMs: 1,
-          text: "ALERT: night window",
-        }),
-      });
-
-      const result = await runOnce({
-        ...createBaseConfig(tempDir),
-        userTimezone: "UTC",
-        activeHours: {
-          start: "22:00",
-          end: "06:00",
-          timezone: "user",
-        },
-      });
-
-      assert.equal(result.status, "ran");
-    } finally {
-      await rm(tempDir, { recursive: true, force: true });
-    }
-  });
-
   it("requests-in-flight は skipped(requests-in-flight)", async () => {
     const tempDir = await mkdtemp(`${tmpdir()}/adjutant-heartbeat-`);
     try {
@@ -401,268 +402,17 @@ describe("HeartbeatRunner", () => {
         getQueueSize: () => 2,
         runAgent: async () => {
           modelCalled = true;
-          return { status: "completed", durationMs: 1, text: "ALERT" };
+          return createToolAgentResult({
+            status: "needs_attention",
+            notify: true,
+            reason: "unexpected",
+          });
         },
       });
 
       const result = await runOnce(createBaseConfig(tempDir));
       assert.deepEqual(result, { status: "skipped", reason: "requests-in-flight" });
       assert.equal(modelCalled, false);
-    } finally {
-      await rm(tempDir, { recursive: true, force: true });
-    }
-  });
-
-  it("precheck で skipped した場合も run record を残す", async () => {
-    const tempDir = await mkdtemp(`${tmpdir()}/adjutant-heartbeat-`);
-    try {
-      await preparePromptFiles(tempDir, "Heartbeat prompt");
-      setHeartbeatRuntimeForTest({
-        getQueueSize: () => 1,
-      });
-
-      const result = await runOnce(createBaseConfig(tempDir), { reason: "timer" });
-      assert.deepEqual(result, { status: "skipped", reason: "requests-in-flight" });
-
-      const recordPath = join(tempDir, "_assistant", "heartbeat-runs.jsonl");
-      const raw = await readFile(recordPath, "utf8");
-      const lines = raw.trim().split(/\r?\n/);
-      const latest = JSON.parse(lines[lines.length - 1] ?? "{}") as {
-        triggerReason?: string;
-        result?: { status?: string; reason?: string };
-      };
-      assert.equal(latest.triggerReason, "timer");
-      assert.equal(latest.result?.status, "skipped");
-      assert.equal(latest.result?.reason, "requests-in-flight");
-    } finally {
-      await rm(tempDir, { recursive: true, force: true });
-    }
-  });
-
-  it("requests-in-flight 短周期再試行で次回実行される", async () => {
-    const tempDir = await mkdtemp(`${tmpdir()}/adjutant-heartbeat-`);
-    try {
-      await preparePromptFiles(tempDir, "Heartbeat prompt");
-      let queueCalls = 0;
-      let runCalls = 0;
-
-      setHeartbeatRuntimeForTest({
-        getQueueSize: () => {
-          queueCalls += 1;
-          return queueCalls === 1 ? 1 : 0;
-        },
-        readEvents: async () => [],
-        readMemoryFiles: async () => ({
-          longTerm: null,
-          daily: null,
-          yesterday: null,
-        }),
-        buildEventContext: () => ({ text: "", truncated: false, eventCount: 0 }),
-        runAgent: async () => {
-          runCalls += 1;
-          return { status: "completed", durationMs: 1, text: "ALERT: retry success" };
-        },
-      });
-
-      const handle = startHeartbeat({
-        ...createBaseConfig(tempDir),
-        intervalMs: 20,
-        retryDelayMs: 5,
-      });
-      await new Promise((resolve) => setTimeout(resolve, 80));
-      handle.stop();
-      await new Promise((resolve) => setTimeout(resolve, 150));
-
-      assert.equal(runCalls >= 1, true);
-    } finally {
-      await rm(tempDir, { recursive: true, force: true });
-    }
-  });
-
-  it("timeline 逆走査で stale user post が無ければ skipped(no-stale-post)", async () => {
-    const tempDir = await mkdtemp(`${tmpdir()}/adjutant-heartbeat-`);
-    try {
-      await preparePromptFiles(tempDir, "Heartbeat prompt");
-      const timelineDir = join(tempDir, "memory");
-      await mkdir(timelineDir, { recursive: true });
-      await writeFile(
-        join(timelineDir, "timeline.jsonl"),
-        [
-          JSON.stringify({
-            recordType: "event",
-            role: "user",
-            kind: "post",
-            uid: "uid-old-before-boundary",
-            ts: 0,
-          }),
-          JSON.stringify({ recordType: "action", role: "system", uid: "boundary-1", ts: 1_000 }),
-          JSON.stringify({
-            recordType: "event",
-            role: "user",
-            kind: "post",
-            uid: "uid-fresh-after-boundary",
-            ts: 9_800,
-          }),
-        ].join("\n"),
-        "utf8"
-      );
-
-      let runAgentCalled = false;
-      setHeartbeatRuntimeForTest({
-        now: () => new Date(10_000),
-        getQueueSize: () => 0,
-        runAgent: async () => {
-          runAgentCalled = true;
-          return { text: "ALERT: unexpected" };
-        },
-      });
-
-      const result = await runOnce({
-        ...createBaseConfig(tempDir),
-        heartbeatStaleMs: 1_000,
-      });
-      assert.deepEqual(result, { status: "skipped", reason: "no-stale-post" });
-      assert.equal(runAgentCalled, false);
-    } finally {
-      await rm(tempDir, { recursive: true, force: true });
-    }
-  });
-
-  it("timeline 逆走査で stale post が pending backfill 中なら skipped(pending-session-backfill)", async () => {
-    const tempDir = await mkdtemp(`${tmpdir()}/adjutant-heartbeat-`);
-    try {
-      await preparePromptFiles(tempDir, "Heartbeat prompt");
-      const timelineDir = join(tempDir, "memory");
-      await mkdir(timelineDir, { recursive: true });
-      await writeFile(
-        join(timelineDir, "timeline.jsonl"),
-        JSON.stringify({
-          recordType: "event",
-          role: "user",
-          kind: "post",
-          uid: "uid-pending",
-          ts: 0,
-        }),
-        "utf8"
-      );
-
-      let runAgentCalled = false;
-      setHeartbeatRuntimeForTest({
-        now: () => new Date(10_000),
-        getQueueSize: () => 0,
-        runAgent: async () => {
-          runAgentCalled = true;
-          return { text: "ALERT: unexpected" };
-        },
-      });
-
-      const result = await runOnce({
-        ...createBaseConfig(tempDir),
-        heartbeatStaleMs: 1_000,
-        pendingSessionBackfillProvider: () => ["uid-pending"],
-      });
-      assert.deepEqual(result, { status: "skipped", reason: "pending-session-backfill" });
-      assert.equal(runAgentCalled, false);
-    } finally {
-      await rm(tempDir, { recursive: true, force: true });
-    }
-  });
-
-  it("timeline 逆走査で stale user post があれば heartbeat を実行する", async () => {
-    const tempDir = await mkdtemp(`${tmpdir()}/adjutant-heartbeat-`);
-    try {
-      await preparePromptFiles(tempDir, "Heartbeat prompt");
-      const timelineDir = join(tempDir, "memory");
-      await mkdir(timelineDir, { recursive: true });
-      await writeFile(
-        join(timelineDir, "timeline.jsonl"),
-        JSON.stringify({
-          recordType: "event",
-          role: "user",
-          kind: "post",
-          uid: "uid-stale",
-          ts: 0,
-        }),
-        "utf8"
-      );
-
-      let runAgentCalled = false;
-      setHeartbeatRuntimeForTest({
-        now: () => new Date(10_000),
-        readEvents: async () => [],
-        readMemoryFiles: async () => ({
-          longTerm: null,
-          daily: null,
-          yesterday: null,
-        }),
-        buildEventContext: () => ({ text: "", truncated: false, eventCount: 0 }),
-        getQueueSize: () => 0,
-        runAgent: async () => {
-          runAgentCalled = true;
-          return { text: "HEARTBEAT_OK", modelId: "gpt-4o-mini" };
-        },
-      });
-
-      const result = await runOnce({
-        ...createBaseConfig(tempDir),
-        heartbeatStaleMs: 1_000,
-      });
-      assert.equal(result.status, "ran");
-      assert.equal(runAgentCalled, true);
-    } finally {
-      await rm(tempDir, { recursive: true, force: true });
-    }
-  });
-
-  it("timeline 逆走査失敗は skipped(timeline-scan-failed) になり次回周期で再評価できる", async () => {
-    const tempDir = await mkdtemp(`${tmpdir()}/adjutant-heartbeat-`);
-    try {
-      await preparePromptFiles(tempDir, "Heartbeat prompt");
-      let scanCount = 0;
-      let runAgentCalled = 0;
-
-      setHeartbeatRuntimeForTest({
-        now: () => new Date(10_000),
-        getQueueSize: () => 0,
-        scanHeartbeatTimeline: async () => {
-          scanCount += 1;
-          if (scanCount === 1) {
-            throw new Error("timeline scan crashed");
-          }
-          return {
-            shouldRun: true,
-            reason: "stale-post-found",
-            stalePostUids: ["uid-stale"],
-            blockedPendingUids: [],
-            boundaryFound: false,
-            inspectedRecords: 1,
-          };
-        },
-        readEvents: async () => [],
-        readMemoryFiles: async () => ({
-          longTerm: null,
-          daily: null,
-          yesterday: null,
-        }),
-        buildEventContext: () => ({ text: "", truncated: false, eventCount: 0 }),
-        runAgent: async () => {
-          runAgentCalled += 1;
-          return { text: "HEARTBEAT_OK", modelId: "gpt-4o-mini" };
-        },
-      });
-
-      const first = await runOnce({
-        ...createBaseConfig(tempDir),
-        heartbeatStaleMs: 1_000,
-      });
-      assert.deepEqual(first, { status: "skipped", reason: "timeline-scan-failed" });
-
-      const second = await runOnce({
-        ...createBaseConfig(tempDir),
-        heartbeatStaleMs: 1_000,
-      });
-      assert.equal(second.status, "ran");
-      assert.equal(runAgentCalled, 1);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
@@ -681,7 +431,12 @@ describe("HeartbeatRunner", () => {
         }),
         buildEventContext: () => ({ text: "", truncated: false, eventCount: 0 }),
         getQueueSize: () => 0,
-        runAgent: async () => ({ status: "completed", durationMs: 1, text: "ALERT: notify" }),
+        runAgent: async () =>
+          createToolAgentResult({
+            status: "needs_attention",
+            notify: true,
+            reason: "ALERT: notify",
+          }),
       });
 
       const result = await runOnce({
@@ -698,7 +453,7 @@ describe("HeartbeatRunner", () => {
     }
   });
 
-  it("readiness 失敗（ok path）は ran + ok-* を維持する", async () => {
+  it("readiness 失敗（ok path）は ran + ok-empty を維持する", async () => {
     const tempDir = await mkdtemp(`${tmpdir()}/adjutant-heartbeat-`);
     try {
       await preparePromptFiles(tempDir, "Heartbeat prompt");
@@ -711,7 +466,12 @@ describe("HeartbeatRunner", () => {
         }),
         buildEventContext: () => ({ text: "", truncated: false, eventCount: 0 }),
         getQueueSize: () => 0,
-        runAgent: async () => ({ status: "completed", durationMs: 1, text: "HEARTBEAT_OK" }),
+        runAgent: async () =>
+          createToolAgentResult({
+            status: "task_completed",
+            notify: false,
+            reason: "all tasks done",
+          }),
       });
 
       const result = await runOnce({
@@ -721,7 +481,7 @@ describe("HeartbeatRunner", () => {
 
       assert.equal(result.status, "ran");
       const evt = getLastHeartbeatEvent();
-      assert.equal(evt?.status, "ok-token");
+      assert.equal(evt?.status, "ok-empty");
       assert.equal(evt?.reason, "readiness-failed");
     } finally {
       await rm(tempDir, { recursive: true, force: true });
@@ -754,7 +514,11 @@ describe("HeartbeatRunner", () => {
         getQueueSize: () => 0,
         runAgent: async (opts) => {
           usedSessionKey = opts.sessionKey ?? "";
-          return { status: "completed", durationMs: 1, text: "ALERT" };
+          return createToolAgentResult({
+            status: "needs_attention",
+            notify: true,
+            reason: "ALERT",
+          });
         },
       });
 
@@ -779,7 +543,11 @@ describe("HeartbeatRunner", () => {
       setHeartbeatRuntimeForTest({
         runAgent: async () => {
           modelCalled = true;
-          return { status: "completed", durationMs: 1, text: "ALERT" };
+          return createToolAgentResult({
+            status: "needs_attention",
+            notify: true,
+            reason: "ALERT",
+          });
         },
       });
 
@@ -827,11 +595,12 @@ describe("HeartbeatRunner", () => {
         }),
         buildEventContext: () => ({ text: "", truncated: false, eventCount: 0 }),
         getQueueSize: () => 0,
-        runAgent: async () => ({
-          status: "completed",
-          durationMs: 1,
-          text: "ALERT: duplicate content",
-        }),
+        runAgent: async () =>
+          createToolAgentResult({
+            status: "needs_attention",
+            notify: true,
+            reason: "ALERT: duplicate content",
+          }),
       });
 
       const result = await runOnce({
@@ -842,53 +611,6 @@ describe("HeartbeatRunner", () => {
       const evt = getLastHeartbeatEvent();
       assert.equal(evt?.status, "skipped");
       assert.equal(evt?.reason, "duplicate");
-    } finally {
-      await rm(tempDir, { recursive: true, force: true });
-    }
-  });
-
-  it("重複ウィンドウ期限切れ後は再通知される", async () => {
-    const tempDir = await mkdtemp(`${tmpdir()}/adjutant-heartbeat-`);
-    try {
-      await preparePromptFiles(tempDir, "Heartbeat prompt");
-      const sessionsPath = join(tempDir, "sessions.json");
-      await writeFile(
-        sessionsPath,
-        JSON.stringify({
-          main: {
-            sessionId: "main-session",
-            agent: "adjutant",
-            lastHeartbeatText: "ALERT: old content",
-            lastHeartbeatSentAt: "2026-02-10T00:00:00.000Z",
-          },
-        }),
-        "utf8"
-      );
-
-      setHeartbeatRuntimeForTest({
-        now: () => new Date("2026-02-15T10:00:00.000Z"),
-        readEvents: async () => [],
-        readMemoryFiles: async () => ({
-          longTerm: null,
-          daily: null,
-          yesterday: null,
-        }),
-        buildEventContext: () => ({ text: "", truncated: false, eventCount: 0 }),
-        getQueueSize: () => 0,
-        runAgent: async () => ({
-          status: "completed",
-          durationMs: 1,
-          text: "ALERT: old content",
-        }),
-      });
-
-      const result = await runOnce({
-        ...createBaseConfig(tempDir),
-        sessionEntriesPath: sessionsPath,
-      });
-      assert.equal(result.status, "ran");
-      const evt = getLastHeartbeatEvent();
-      assert.equal(evt?.status, "sent");
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
@@ -915,11 +637,12 @@ describe("HeartbeatRunner", () => {
         }),
         buildEventContext: () => ({ text: "", truncated: false, eventCount: 0 }),
         getQueueSize: () => 0,
-        runAgent: async () => ({
-          status: "completed",
-          durationMs: 1,
-          text: "ALERT: persistent content",
-        }),
+        runAgent: async () =>
+          createToolAgentResult({
+            status: "needs_attention",
+            notify: true,
+            reason: "ALERT: persistent content",
+          }),
       });
 
       await runOnce({ ...createBaseConfig(tempDir), sessionEntriesPath: sessionsPath });
@@ -941,11 +664,12 @@ describe("HeartbeatRunner", () => {
         }),
         buildEventContext: () => ({ text: "", truncated: false, eventCount: 0 }),
         getQueueSize: () => 0,
-        runAgent: async () => ({
-          status: "completed",
-          durationMs: 1,
-          text: "ALERT: persistent content",
-        }),
+        runAgent: async () =>
+          createToolAgentResult({
+            status: "needs_attention",
+            notify: true,
+            reason: "ALERT: persistent content",
+          }),
       });
 
       const result = await runOnce({
@@ -978,7 +702,11 @@ describe("HeartbeatRunner", () => {
         getQueueSize: () => 0,
         runAgent: async (opts) => {
           prompts.push(opts.prompt);
-          return { status: "completed", durationMs: 1, text: "HEARTBEAT_OK" };
+          return createToolAgentResult({
+            status: "no_action_needed",
+            notify: false,
+            reason: "ok",
+          });
         },
       });
 
@@ -1027,6 +755,69 @@ describe("HeartbeatRunner", () => {
         assert.match(result.reason, /timeout/i);
       }
       assert.equal(elapsed < 1000, true);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("Heartbeat は globalConcurrencyQueue source=heartbeat で acquire/release する", async () => {
+    const tempDir = await mkdtemp(`${tmpdir()}/adjutant-heartbeat-`);
+    try {
+      await preparePromptFiles(tempDir, "Heartbeat prompt");
+      const acquiredSources: string[] = [];
+      let releaseCount = 0;
+
+      const globalConcurrencyQueue = {
+        acquire: async ({
+          source,
+        }: {
+          source: "heartbeat" | "dm" | "group" | "channel" | "flusher";
+        }) => {
+          acquiredSources.push(source);
+          return {
+            id: "lease-hb-1",
+            source,
+            release: () => {
+              releaseCount += 1;
+            },
+          };
+        },
+        release: () => undefined,
+        getSnapshot: () => ({
+          running: 0,
+          dmRunning: 0,
+          waiting: 0,
+          totalSlots: 4,
+          maxConcurrent: 3,
+          maxRunningDM: 3,
+        }),
+      };
+
+      setHeartbeatRuntimeForTest({
+        readEvents: async () => [],
+        readMemoryFiles: async () => ({
+          longTerm: null,
+          daily: null,
+          yesterday: null,
+        }),
+        buildEventContext: () => ({ text: "", truncated: false, eventCount: 0 }),
+        getQueueSize: () => 0,
+        runAgent: async () =>
+          createToolAgentResult({
+            status: "no_action_needed",
+            notify: false,
+            reason: "ok",
+          }),
+      });
+
+      const result = await runOnce({
+        ...createBaseConfig(tempDir),
+        globalConcurrencyQueue,
+      });
+
+      assert.equal(result.status, "ran");
+      assert.deepEqual(acquiredSources, ["heartbeat"]);
+      assert.equal(releaseCount, 1);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }

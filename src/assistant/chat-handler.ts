@@ -14,12 +14,17 @@ import {
   enqueueCommandInLane,
   enqueueCommand,
 } from "./index.js";
+import type {
+  GlobalConcurrencyQueue,
+  GlobalQueueSource,
+} from "../proactive/global-concurrency-queue.js";
 
 export type AgentRunFn = (opts: {
   prompt: string;
   sessionKey: string;
   runId: string;
   origin: "user" | "pipeline" | "system";
+  isAborted?: () => boolean;
   onDelta: (event: StreamEvent) => void;
 }) => Promise<{ status: "completed" | "failed"; reason?: string }>;
 
@@ -32,6 +37,7 @@ export type ChatHandlerConfig = {
   idempotencyStorePath?: string;
   idempotencyMaxEntries?: number;
   idempotencyStoreFailureMode?: "open" | "closed";
+  globalConcurrencyQueue?: GlobalConcurrencyQueue;
 };
 
 const DEFAULT_CONFIG: Partial<ChatHandlerConfig> = {
@@ -113,7 +119,15 @@ export function acceptMessage(req: PostChatMessageRequest): PostChatMessageRespo
 
   const { runId, storeKey } = dedup;
 
-  startRun(runId, storeKey, req.sessionKey, req.message, normalizeOrigin(req.origin));
+  startRun(
+    runId,
+    storeKey,
+    req.sessionKey,
+    req.message,
+    normalizeOrigin(req.origin),
+    req.originSessionKey,
+    req.pipelineSource
+  );
 
   return { runId, status: "started" };
 }
@@ -124,6 +138,8 @@ function buildRequestFingerprint(req: PostChatMessageRequest): string {
     .update(
       JSON.stringify({
         sessionKey: req.sessionKey.trim(),
+        originSessionKey: req.originSessionKey?.trim() || "",
+        pipelineSource: req.pipelineSource ?? "",
         message: req.message.trim(),
         origin,
       })
@@ -136,7 +152,9 @@ function startRun(
   storeKey: string,
   sessionKey: string,
   message: string,
-  origin: "user" | "pipeline" | "system"
+  origin: "user" | "pipeline" | "system",
+  originSessionKey?: string,
+  pipelineSource?: "dm" | "group" | "channel" | "flusher"
 ): void {
   const cfg = getConfig();
   let aborted = false;
@@ -155,8 +173,19 @@ function startRun(
   const lane = resolveSessionLane(sessionKey);
   enqueueCommandInLane(lane, () =>
     enqueueCommand(async () => {
+      let releaseGlobalLease: (() => void) | undefined;
       try {
         logRunStatus(runId, sessionKey, "running");
+        const globalQueueSource = resolveGlobalQueueSource(
+          sessionKey,
+          origin,
+          originSessionKey,
+          pipelineSource
+        );
+        if (cfg.globalConcurrencyQueue) {
+          const lease = await cfg.globalConcurrencyQueue.acquire({ source: globalQueueSource });
+          releaseGlobalLease = lease.release;
+        }
 
         if (aborted) {
           finalizeRun(
@@ -177,6 +206,7 @@ function startRun(
           sessionKey,
           runId,
           origin,
+          isAborted: () => aborted,
           onDelta: (event) => {
             if (!aborted) {
               StreamEventBridge.emit({ ...event, seq: ++seqRef.value });
@@ -218,10 +248,47 @@ function startRun(
           err instanceof Error ? err.message : "Unknown error"
         );
       } finally {
+        releaseGlobalLease?.();
         activeRuns.delete(runId);
       }
     })
   );
+}
+
+function resolveGlobalQueueSource(
+  sessionKey: string,
+  origin: "user" | "pipeline" | "system",
+  originSessionKey?: string,
+  pipelineSource?: "dm" | "group" | "channel" | "flusher"
+): GlobalQueueSource {
+  if (origin === "system") {
+    return "heartbeat";
+  }
+  if (origin !== "pipeline") {
+    return "channel";
+  }
+  if (pipelineSource === "flusher") {
+    return "flusher";
+  }
+  if (pipelineSource === "dm" || pipelineSource === "group" || pipelineSource === "channel") {
+    return pipelineSource;
+  }
+  const normalized = (originSessionKey ?? sessionKey).trim();
+  if (
+    normalized.includes(":dm:") ||
+    normalized.startsWith("slack:dm:") ||
+    normalized.startsWith("slack:D")
+  ) {
+    return "dm";
+  }
+  if (
+    normalized.includes(":group:") ||
+    normalized.startsWith("slack:group:") ||
+    normalized.startsWith("slack:G")
+  ) {
+    return "group";
+  }
+  return "channel";
 }
 
 function normalizeOrigin(value: unknown): "user" | "pipeline" | "system" {

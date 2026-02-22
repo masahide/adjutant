@@ -93,7 +93,7 @@
 5. Given totalSlots=4（maxConcurrent=3 + burstSlot=1）が全て使用中かつ DM が 3 枠使用中
    When さらに DM メッセージが到着する
    Then maxRunningDM=3 により DM の追加起動はブロックされ、非 DM 用 1 枠が保証される
-5b. Given maxConcurrent=3 が全て使用中（DM は 2 枠使用中）
+   5b. Given maxConcurrent=3 が全て使用中（DM は 2 枠使用中）
    When DM メッセージが到着する
    Then DM burst slot により即時エージェント起動され、4 並行が許可される（dmRunning=3 ≤ maxRunningDM=3）
 6. Given Pending Flusher が未対応 post を検出したスレッドに他者の返信がある
@@ -161,8 +161,8 @@ type TimelineRecordV1_5 = {
   recordType: "event" | "action";
   role: "user" | "assistant" | "tool";
   sessionKey: string;
-  ts: string;       // ISO8601 — イベント発生時刻（Slack の ts 等）
-  loggedAt: string;  // ISO8601 — timeline への記録時刻（JsonlWriter が補完）
+  ts: string; // ISO8601 — イベント発生時刻（Slack の ts 等）
+  loggedAt: string; // ISO8601 — timeline への記録時刻（JsonlWriter が補完）
 
   // event 用
   kind?: string;
@@ -193,19 +193,22 @@ type WatermarksV1 = {
   scan: {
     timelinePath: "memory/timeline.jsonl";
     lastScannedOffset: number; // 追い読み開始位置 (byte offset)
-    lastGoodOffset: number;   // JSON parse 成功した安全な offset
+    lastGoodOffset: number; // JSON parse 成功した安全な offset
   };
 
-  sessions: Record<string, {
-    handled: {
-      lastHandledOffset?: number; // assistant_final の行頭 byte offset。未定義=未対応
-      lastHandledTs?: string;     // デバッグ/監視専用。ロジックの条件分岐には使用しない
-    };
-    open: {
-      oldestOpenPostTs?: string; // 最古の未対応 post の loggedAt 時刻（stale 判定用）
-      openPostCount?: number;    // 未対応 post カウンタ
-    };
-  }>;
+  sessions: Record<
+    string,
+    {
+      handled: {
+        lastHandledOffset?: number; // assistant_final の行頭 byte offset。未定義=未対応
+        lastHandledTs?: string; // デバッグ/監視専用。ロジックの条件分岐には使用しない
+      };
+      open: {
+        oldestOpenPostTs?: string; // 最古の未対応 post の loggedAt 時刻（stale 判定用）
+        openPostCount?: number; // 未対応 post カウンタ
+      };
+    }
+  >;
 };
 ```
 
@@ -214,15 +217,18 @@ type WatermarksV1 = {
 **`oldestOpenPostTs` は `loggedAt` を使用**: イベント時刻（`ts`）ではなく記録時刻（`loggedAt`）を使う。起動直後に過去ログが流入した場合、`ts` が古くて即 stale 判定される誤発火を防ぐ。
 
 **境界更新ルール**:
+
 - `lastHandledOffset` を前進させるのは `actionType="assistant_final"` のみ。終端状態（`final`/`aborted`/`error`）のうち `final` のみが対応完了を意味する
 - `assistant_aborted` / `assistant_error` / `tool` / `tool_result` では絶対に前進させない
 - 1 run につき終端レコード（`assistant_final` / `assistant_aborted` / `assistant_error`）は 1 回のみ書き込む
 
 **`lastGoodOffset` 更新規約**:
+
 - Flusher tick 終了時は **`lastScannedOffset = lastGoodOffset`** を原則とする。末尾が不完全で JSON parse に失敗した行を超えた offset を永続化しない
 - 末尾行が不完全で parse に失敗した場合は **「その行には触れず、次周期で再試行」** する（末尾不完全行は書き込み途中の可能性があるため）
 
 **永続化**:
+
 - 更新は `.tmp` + `fs.rename` によるアトミック書き込み。**同一ファイルシステム内**で行う前提（別 FS 間の `rename` は原子性が保証されない）
 - timeline.jsonl が truncate 復旧で縮小した場合、`lastScannedOffset > fileSize` なら `scan` の offset を `0` にリセットし、`sessions` の全エントリも削除して全走査から再構築する（scan だけのリセットでは sessions の offset が不整合を起こす）
 
@@ -233,13 +239,16 @@ type WatermarksV1 = {
 ```ts
 type PolicyRoutingV1 = {
   schema: "adjutant.policy.routing.v1";
-  channels?: Record<string, {
-    priority?: "high" | "normal" | "low";
-    quietHoursStart?: string; // "HH:mm" (timezone は ADJUTANT_TZ)
-    quietHoursEnd?: string;
-    notifyBudgetPerHour?: number; // soft limit
-    cooldownMs?: number;
-  }>;
+  channels?: Record<
+    string,
+    {
+      priority?: "high" | "normal" | "low";
+      quietHoursStart?: string; // "HH:mm" (timezone は ADJUTANT_TZ)
+      quietHoursEnd?: string;
+      notifyBudgetPerHour?: number; // soft limit
+      cooldownMs?: number;
+    }
+  >;
   defaults?: {
     notifyBudgetPerHour?: number;
     cooldownMs?: number;
@@ -348,16 +357,18 @@ Watermarks.json の例:
 classDiagram
   class ChannelNotificationPipeline {
     +enqueue(input: ChannelNotificationInput): void
+    -processBufferedEvent(event): Promise~void~
   }
 
   class RuleTriage {
-    +classify(event, channelTypeCache): TriageResult
+    +classify(event, selfState): RuleTriageResult
   }
 
   class AttentionWindow {
     -buffers: Map~sessionKey, ChunkBuffer~
     +push(sessionKey, event, config): void
-    +onFlush: (sessionKey, chunk) => void
+    +flushSession(sessionKey): Promise~void~
+    +clearSession(sessionKey): number
     -scheduleFlush(sessionKey): void
   }
 
@@ -381,8 +392,9 @@ classDiagram
     -maxRunningDM: number
     -totalSlots: number
     -queue: PriorityQueue~QueueEntry~
-    +enqueue(request): Promise~void~
-    +onSlotFree(): void
+    +acquire(source): Promise~GlobalConcurrencyLease~
+    +release(lease): void
+    +getSnapshot(): QueueSnapshot
     -tryDispatch(): void
     -applyAging(): void
   }
@@ -401,6 +413,7 @@ classDiagram
     +advanceScanOffset(offset): void
     +advanceHandled(sessionKey, offset): void
     +updateOpenPosts(sessionKey, ts, count): void
+    +applyTerminalRecord(sessionKey, actionType, offset): void
   }
 
   class DeepHeartbeat {
@@ -408,13 +421,20 @@ classDiagram
     -executeWithToolCall(): ToolCallResult
   }
 
+  class AgentRunner {
+    +runAgent(opts): Promise~AgentRunResult~
+    +onTerminalRecord(actionType, runId, sessionKey): void
+  }
+
   ChannelNotificationPipeline --> RuleTriage
   ChannelNotificationPipeline --> AttentionWindow
+  ChannelNotificationPipeline --> GlobalConcurrencyQueue
   AttentionWindow --> BatchClassifier
   BatchClassifier --> GlobalConcurrencyQueue
   PendingFlusher --> WatermarkStore
   PendingFlusher --> GlobalConcurrencyQueue
   DeepHeartbeat --> GlobalConcurrencyQueue
+  AgentRunner --> WatermarkStore
   AttentionWindow *-- ChunkBuffer
 ```
 
@@ -473,6 +493,13 @@ NormalizedEvent (from SlackPlugin.emit())
 │   aging: waitMs≥120s → PRIORITY_MAX(>DM基礎) │
 │   → AgentRunner.runAgent()                   │
 └─────────────────────────────────────────────┘
+             │
+             ▼
+┌────────────────────────────────────────────┐
+│ AgentRunner terminal record                │
+│   assistant_final / aborted / error を記録 │
+│   watermark は final のみ前進              │
+└────────────────────────────────────────────┘
              │
              ▼
 ┌──────────────────────────────────┐
@@ -552,135 +579,131 @@ stateDiagram-v2
 
 ### Phase 1: 設計と準備
 
-- [ ] 要件と仕様の確定（§2.4 受け入れ条件の最終確認）
-- [ ] インターフェース契約の確定（§4 のスキーマと例の確定）
+- [x] 要件と仕様の確定（§2.4 受け入れ条件の最終確認）
+- [x] インターフェース契約の確定（§4 のスキーマと例の確定）
       対象: `src/proactive/types.ts`（新設）に `TimelineRecordV1_5`, `WatermarksV1`, `PolicyRoutingV1`, `RouteDecision` 等の型定義を作成
-- [ ] Mermaid 図の作成・更新（§5.2 クラス図、§5.3 フロー図・状態遷移図）
-- [ ] テスト基盤の確認（`node:test` + `assert/strict`、tmpdir I/O テスト用ユーティリティの有無）
+- [x] Mermaid 図の作成・更新（§5.2 クラス図、§5.3 フロー図・状態遷移図）
+- [x] テスト基盤の確認（`node:test` + `assert/strict`、tmpdir I/O テスト用ユーティリティの有無）
 
 ### Phase 2: データモデル基盤
 
-- [ ] Test `TimelineRecordV1_5` の型定義と validate 関数の失敗テスト Red
+- [x] Test `TimelineRecordV1_5` の型定義と validate 関数の失敗テスト Red
       対象: `tests/proactive/timeline-record.test.ts`（新設）
-- [ ] Impl `TimelineRecordV1_5` 型定義と validate 実装 Green
+- [x] Impl `TimelineRecordV1_5` 型定義と validate 実装 Green
       対象: `src/proactive/timeline-record.ts`（新設）
-- [ ] Test `WatermarkStore` の load/save/atomic-write/truncate-recovery/session-pruning の失敗テスト Red
+- [x] Test `WatermarkStore` の load/save/atomic-write/truncate-recovery/session-pruning の失敗テスト Red
       対象: `tests/proactive/watermark-store.test.ts`（新設）
-- [ ] Impl `WatermarkStore` 実装 Green
+- [x] Impl `WatermarkStore` 実装 Green
       対象: `src/proactive/watermark-store.ts`（新設）
-- [ ] Test `PolicyRoutingV1` の load/defaults の失敗テスト Red
+- [x] Test `PolicyRoutingV1` の load/defaults の失敗テスト Red
       対象: `tests/proactive/policy-routing.test.ts`（新設）
-- [ ] Impl `PolicyRoutingV1` loader 実装 Green
+- [x] Impl `PolicyRoutingV1` loader 実装 Green
       対象: `src/proactive/policy-routing.ts`（新設）
-- [ ] Refactor `DualWriteCoordinator` が `sessionKey` を必須で timeline に書き込むように改修
+- [x] Refactor `DualWriteCoordinator` が `sessionKey` を必須で timeline に書き込むように改修
       対象: `src/proactive/dual-write-coordinator.ts`
-- [ ] Impl エージェント終端レコード（`assistant_final` / `assistant_aborted` / `assistant_error`）の timeline 書き込み
+- [x] Impl エージェント終端レコード（`assistant_final` / `assistant_aborted` / `assistant_error`）の timeline 書き込み
       対象: `src/assistant/agent-runner.ts`（finally ブロック追加）
-- [ ] Integration 終端レコード書き込み後に watermark が正しく進行/不進行するか確認
+- [x] Integration 終端レコード書き込み後に watermark が正しく進行/不進行するか確認
       対象: `tests/proactive/watermark-store.test.ts`
-- [ ] Docs §4.2 データモデルとスキーマの型定義との整合確認
+- [x] Docs §4.2 データモデルとスキーマの型定義との整合確認
 
 ### Phase 3: 層 0 + 層 1（ルール判定 + アテンションウィンドウ）
 
-- [ ] Test `RuleTriage` の self/DM/mention/channel 分類テスト Red
+- [x] Test `RuleTriage` の self/DM/mention/channel 分類テスト Red
       対象: `tests/proactive/rule-triage.test.ts`（新設）
-- [ ] Impl `RuleTriage` 実装 Green
+- [x] Impl `RuleTriage` 実装 Green
       対象: `src/proactive/rule-triage.ts`（新設）
-- [ ] Test `AttentionWindow` の idle/maxWait/flush テスト Red
+- [x] Test `AttentionWindow` の idle/maxWait/flush テスト Red
       対象: `tests/proactive/attention-window.test.ts`（新設）
-- [ ] Impl `AttentionWindow` 実装 Green
+- [x] Impl `AttentionWindow` 実装 Green
       対象: `src/proactive/attention-window.ts`（新設）
-- [ ] Refactor `ChannelNotificationPipeline` が `RuleTriage` + `AttentionWindow` を使うよう改修
+- [x] Refactor `ChannelNotificationPipeline` が `RuleTriage` + `AttentionWindow` を使うよう改修
       対象: `src/proactive/channel-notification-pipeline.ts`
-- [ ] Integration DM イベント → micro-batch → 即時ルートの E2E 確認
+- [x] Integration DM イベント → micro-batch → 即時ルートの E2E 確認
       対象: `tests/proactive/channel-notification-pipeline.test.ts`
-- [ ] Docs 層 0/1 の設定値と挙動を §4.1 と照合
+- [x] Docs 層 0/1 の設定値と挙動を §4.1 と照合
 
 ### Phase 4: 層 3（グローバル並行制御キュー）
 
-- [ ] Test `GlobalConcurrencyQueue` の totalSlots/maxRunningDM/work-conserving/aging-step/priority テスト Red
+- [x] Test `GlobalConcurrencyQueue` の totalSlots/maxRunningDM/work-conserving/aging-step/priority テスト Red
       対象: `tests/proactive/global-concurrency-queue.test.ts`（新設）
-- [ ] Impl `GlobalConcurrencyQueue` 実装 Green
+- [x] Impl `GlobalConcurrencyQueue` 実装 Green
       対象: `src/proactive/global-concurrency-queue.ts`（新設）
-- [ ] Refactor エージェント起動パスを `GlobalConcurrencyQueue` 経由に統一
+- [x] Refactor エージェント起動パスを `GlobalConcurrencyQueue` 経由に統一
       対象: `src/proactive/channel-notification-pipeline.ts`, `src/assistant/chat-handler.ts`
-- [ ] Integration 全スロット使用中 → DM burst slot → 非 DM 枠保証の E2E 確認
+- [x] Integration 全スロット使用中 → DM burst slot → 非 DM 枠保証の E2E 確認
       対象: `tests/proactive/global-concurrency-queue.test.ts`
-- [ ] Docs §4.3 エラーと例外の aging/work-conserving 記述と実装の照合
+- [x] Docs §4.3 エラーと例外の aging/work-conserving 記述と実装の照合
 
 ### Phase 5: 層 2（バッチ分類）
 
-- [ ] Test `BatchClassifier` のツール呼び出し parse / confidence 閾値 / タイムアウト テスト Red
+- [x] Test `BatchClassifier` のツール呼び出し parse / confidence 閾値 / タイムアウト テスト Red
       対象: `tests/proactive/batch-classifier.test.ts`（新設）
-- [ ] Impl `BatchClassifier` 実装（Route LLM + ツール強制呼び出し）Green
+- [x] Impl `BatchClassifier` 実装（Route LLM + ツール強制呼び出し）Green
       対象: `src/proactive/batch-classifier.ts`（新設）
-- [ ] Impl Route LLM 用ツール定義（`report_route_decision`）
+- [x] Impl Route LLM 用ツール定義（`report_route_decision`）
       対象: `src/proactive/routing-tools.ts`（新設）
-- [ ] Refactor `AttentionWindow.onFlush` → `BatchClassifier` → `GlobalConcurrencyQueue` の接続
+- [x] Refactor `AttentionWindow.onFlush` → `BatchClassifier` → `GlobalConcurrencyQueue` の接続
       対象: `src/proactive/channel-notification-pipeline.ts`
-- [ ] Integration チャンネル投稿 → window-batch → Route LLM → enqueue の E2E 確認
+- [x] Integration チャンネル投稿 → window-batch → Route LLM → enqueue の E2E 確認
       対象: `tests/proactive/channel-notification-pipeline.test.ts`
-- [ ] Docs Route LLM プロンプト例（§4.4）と実装の照合
+- [x] Docs Route LLM プロンプト例（§4.4）と実装の照合
 
 ### Phase 6: 層 4（Pending Flusher）
 
-- [ ] Test `PendingFlusher` の差分走査 / sessionKey 別境界 / 他者返信抑制 / 旧レコード無視 テスト Red
+- [x] Test `PendingFlusher` の差分走査 / sessionKey 別境界 / 他者返信抑制 / 旧レコード無視 テスト Red
       対象: `tests/proactive/pending-flusher.test.ts`（新設）
-- [ ] Impl `PendingFlusher` 実装 Green
+- [x] Impl `PendingFlusher` 実装 Green
       対象: `src/proactive/pending-flusher.ts`（新設）
-- [ ] Refactor `heartbeat-scanner.ts` の未処理走査ロジックを `PendingFlusher` に移管
+- [x] Refactor `heartbeat-scanner.ts` の未処理走査ロジックを `PendingFlusher` に移管
       対象: `src/proactive/heartbeat-scanner.ts`（走査部分を削除/委譲）
-- [ ] Integration Flusher + Watermark: timeline 書き込み → tick → 未対応検出 → エージェント起動
+- [x] Integration Flusher + Watermark: timeline 書き込み → tick → 未対応検出 → エージェント起動
       対象: `tests/proactive/pending-flusher.test.ts`
-- [ ] Docs §2.4 AC4（sessionKey 別境界）の動作確認と照合
+- [x] Docs §2.4 AC4（sessionKey 別境界）の動作確認と照合
 
 ### Phase 7: 層 5（Deep Heartbeat 改修）
 
-- [ ] Test `DeepHeartbeat` の `report_heartbeat_status` ツール強制テスト Red
+- [x] Test `DeepHeartbeat` の `report_heartbeat_status` ツール強制テスト Red
       対象: `tests/assistant/heartbeat-runner.test.ts`
-- [ ] Impl `report_heartbeat_status` ツール定義と Heartbeat 改修 Green
+- [x] Impl `report_heartbeat_status` ツール定義と Heartbeat 改修 Green
       対象: `src/assistant/heartbeat-runner.ts`, `src/proactive/routing-tools.ts`
-- [ ] Refactor Heartbeat から未処理救済ロジックを完全に除去
+- [x] Refactor Heartbeat から未処理救済ロジックを完全に除去
       対象: `src/assistant/heartbeat-runner.ts`
-- [ ] Integration Heartbeat 実行 → ツール呼び出し → GlobalConcurrencyQueue 連携確認
+- [x] Integration Heartbeat 実行 → ツール呼び出し → GlobalConcurrencyQueue 連携確認
       対象: `tests/assistant/heartbeat-runner.test.ts`
-- [ ] Docs §2.4 AC7（HEARTBEAT_OK 文字列マッチ非使用）の確認
+- [x] Docs §2.4 AC7（HEARTBEAT_OK 文字列マッチ非使用）の確認
 
 ### Phase 8: オブザーバビリティ
 
-- [ ] Test メトリクス記録の失敗テスト Red（各メトリクスのカウント/タイムスタンプ記録）
+- [x] Test メトリクス記録の失敗テスト Red（各メトリクスのカウント/タイムスタンプ記録）
       対象: `tests/proactive/metrics.test.ts`（新設）
-- [ ] Impl 4 メトリクスのログ出力追加 Green
-      - `route_llm_calls_per_hour`: `BatchClassifier` に計測追加
-      - `flusher_fire_count`: `PendingFlusher` に計測追加
-      - `agent_invocations_by_source`: `GlobalConcurrencyQueue` に source 別集計追加
-      - `event_to_response_p95_ms`: パイプライン入口と出口にタイムスタンプ追加
+- [x] Impl 4 メトリクスのログ出力追加 Green - `route_llm_calls_per_hour`: `BatchClassifier` に計測追加 - `flusher_fire_count`: `PendingFlusher` に計測追加 - `agent_invocations_by_source`: `GlobalConcurrencyQueue` に source 別集計追加 - `event_to_response_p95_ms`: パイプライン入口と出口にタイムスタンプ追加
       対象: 各モジュール + `src/proactive/metrics.ts`（新設）
-- [ ] Refactor メトリクス収集の共通インターフェース整理
+- [x] Refactor メトリクス収集の共通インターフェース整理
       対象: `src/proactive/metrics.ts`
 
 ### Phase 9: 統合と検証
 
-- [ ] 全体テスト実行（`pnpm run check`）
-- [ ] E2E シナリオ検証（DM 即時 / チャンネルバッチ / Flusher 救済 / Heartbeat 分離）
-- [ ] エッジケースの動作確認（旧レコード混在 / truncate 復旧 / SIGKILL 後の再起動）
-- [ ] ログと例外の確認（想定外入力 / タイムアウト / リトライ）
-- [ ] ドキュメント更新（`doc/spec-unified.md` の差分更新）
+- [x] 全体テスト実行（`pnpm run check`）
+- [x] E2E シナリオ検証（DM 即時 / チャンネルバッチ / Flusher 救済 / Heartbeat 分離）
+- [x] エッジケースの動作確認（旧レコード混在 / truncate 復旧 / SIGKILL 後の再起動）
+- [x] ログと例外の確認（想定外入力 / タイムアウト / リトライ）
+- [x] ドキュメント更新（`doc/spec-unified.md` の差分更新）
 
 ## 8. 完了の定義 Definition of Done
 
 ### 8.1 機能 DoD Functional DoD
 
-- [ ] 受け入れ条件（§2.4）が全て満たされていること
-- [ ] 既知の制約（§2.5）が明文化され、想定通りであること
-- [ ] 代表例（§4.4）に対して期待通りの結果が得られること
+- [x] 受け入れ条件（§2.4）が全て満たされていること
+- [x] 既知の制約（§2.5）が明文化され、想定通りであること
+- [x] 代表例（§4.4）に対して期待通りの結果が得られること
 
 ### 8.2 品質 DoD Quality DoD
 
-- [ ] 全てのテストがパスしていること（`pnpm run test`）
-- [ ] Linter / Formatter のエラーがないこと（`pnpm run lint`, `pnpm run format`）
-- [ ] 不要なデバッグコードが削除されていること
-- [ ] 主要な変更点が `doc/spec-unified.md` に反映されていること
+- [x] 全てのテストがパスしていること（`pnpm run test`）
+- [x] Linter / Formatter のエラーがないこと（`pnpm run lint`, `pnpm run format`）
+- [x] 不要なデバッグコードが削除されていること
+- [x] 主要な変更点が `doc/spec-unified.md` に反映されていること
 
 ## 9. 懸念事項と未確定事項 Concerns and Questions
 

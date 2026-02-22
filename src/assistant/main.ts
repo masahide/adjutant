@@ -2,6 +2,7 @@ import { createApiServer } from "./api-server.js";
 import * as ChatHandler from "./chat-handler.js";
 import * as StreamEventBridge from "./stream-event-bridge.js";
 import { createAgentRunAdapter } from "./main.adapter.js";
+import type { NormalizedEvent } from "../core/events.js";
 import {
   enqueueSystemEvent,
   runAgent,
@@ -12,6 +13,7 @@ import {
   type HeartbeatConfig,
 } from "./index.js";
 import { createChannelManager } from "../proactive/channel-manager.js";
+import { createBatchClassifier } from "../proactive/batch-classifier.js";
 import { createChannelNotificationPipeline } from "../proactive/channel-notification-pipeline.js";
 import {
   createDualWriteCoordinator,
@@ -21,6 +23,12 @@ import { createChannelPluginRegistry } from "../proactive/plugin-registry.js";
 import { createOpenAiSecondaryClassifier } from "../proactive/route-llm-classifier.js";
 import { createSlackChannelPlugin } from "../proactive/slack-channel-plugin.js";
 import { createTriggerFilter, type SecondaryClassifier } from "../proactive/trigger-filter.js";
+import { TIMELINE_RECORD_SCHEMA_V1_5 } from "../proactive/types.js";
+import { createGlobalConcurrencyQueue } from "../proactive/global-concurrency-queue.js";
+import { createPendingFlusher } from "../proactive/pending-flusher.js";
+import { createWatermarkStore } from "../proactive/watermark-store.js";
+import { routeEventKindFromEvent } from "../proactive/route-decision.js";
+import { createProactiveMetrics } from "../proactive/metrics.js";
 import { listJsonlFiles, recoverJsonlFiles } from "../io/jsonl-recovery.js";
 import { loadAssistantGatewayRuntimeConfig } from "../runtime/runtime-config-loader.js";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -43,9 +51,76 @@ const SSE_REPLAY_MAX_AGE_MS = runtimeConfig.app.sse.replayMaxAgeMs;
 const SLACK_RETRY_BASE_MS = runtimeConfig.app.slack.retryBaseMs;
 const SLACK_RETRY_MAX_MS = runtimeConfig.app.slack.retryMaxMs;
 const SLACK_DEFAULT_ACCOUNT_ID = runtimeConfig.app.slack.defaultAccountId;
+const FLUSHER_INTERVAL_MS = parsePositiveInt(process.env.ADJUTANT_FLUSHER_INTERVAL_MS, 300_000);
+const FLUSHER_STALE_MS = parsePositiveInt(process.env.ADJUTANT_FLUSHER_STALE_MS, 900_000);
 
 function toReason(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function parsePositiveInt(value: string | undefined, fallback: number): number {
+  if (!value) {
+    return fallback;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.max(1, Math.floor(parsed));
+}
+
+function parseNonNegativeInt(value: string | undefined, fallback: number): number {
+  if (!value) {
+    return fallback;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.max(0, Math.floor(parsed));
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function buildChunkEvent(events: NormalizedEvent[], prompt: string): NormalizedEvent | null {
+  const latest = events[events.length - 1];
+  if (!latest) {
+    return null;
+  }
+  const first = events[0] ?? latest;
+  if (latest.source !== "slack") {
+    return {
+      ...latest,
+      uid: `chunk:${first.uid}:${latest.uid}:${events.length}`,
+      kind: "post",
+    };
+  }
+  const detail = asRecord(latest.detail);
+  const slack = asRecord(detail?.slack);
+  const channelId =
+    typeof slack?.channel_id === "string" && slack.channel_id.trim().length > 0
+      ? slack.channel_id
+      : "chunk";
+  const messageTs = typeof slack?.message_ts === "string" ? slack.message_ts : undefined;
+  const threadTs = typeof slack?.thread_ts === "string" ? slack.thread_ts : undefined;
+  return {
+    ...latest,
+    uid: `chunk:${first.uid}:${latest.uid}:${events.length}`,
+    kind: "post",
+    detail: {
+      slack: {
+        channel_id: channelId,
+        message_ts: messageTs,
+        thread_ts: threadTs,
+        text: prompt,
+      },
+    },
+  };
 }
 
 async function appendJsonl(path: string, record: DualWriteRecord): Promise<void> {
@@ -58,11 +133,6 @@ function resolveSessionRecordPath(workspaceDir: string, sessionKey: string): str
   const fileName = normalized || "unknown";
   return join(workspaceDir, "memory", "sessions", `${fileName}.jsonl`);
 }
-
-const agentRunFn = createAgentRunAdapter(
-  { workspaceDir: WORKSPACE_DIR, timezone: TIMEZONE, model: MODEL },
-  runAgent
-);
 
 const jsonlRecoveryTargets = new Set<string>([TIMELINE_PATH, IDEMPOTENCY_STORE_PATH]);
 for (const filePath of await listJsonlFiles(join(WORKSPACE_DIR, "memory", "sessions"))) {
@@ -93,19 +163,6 @@ StreamEventBridge.configureReplay({
     : 300_000,
 });
 
-ChatHandler.configure({
-  runAgent: agentRunFn,
-  dataDir: DATA_DIR,
-  workspaceDir: WORKSPACE_DIR,
-  timezone: TIMEZONE,
-  idempotencyTtlSec: 300,
-  idempotencyStorePath: IDEMPOTENCY_STORE_PATH,
-  idempotencyMaxEntries: Number.isFinite(IDEMPOTENCY_MAX_ENTRIES)
-    ? Math.max(100, Math.floor(IDEMPOTENCY_MAX_ENTRIES))
-    : 5000,
-  idempotencyStoreFailureMode: IDEMPOTENCY_STORE_FAILURE_MODE,
-});
-
 const dualWriteCoordinator = createDualWriteCoordinator({
   appendTimelineRecord: async (record) => {
     await appendJsonl(TIMELINE_PATH, record);
@@ -123,6 +180,71 @@ const dualWriteCoordinator = createDualWriteCoordinator({
   onWarn: (message, meta) => {
     console.warn("[AssistantGateway][DualWrite]", message, meta ?? {});
   },
+});
+
+const proactiveMetrics = createProactiveMetrics({
+  onRecord: (record) => {
+    console.info("[AssistantGateway][Metrics]", record);
+  },
+});
+const globalConcurrencyQueue = createGlobalConcurrencyQueue({
+  maxConcurrent: parsePositiveInt(process.env.ADJUTANT_GLOBAL_MAX_CONCURRENT, 3),
+  dmBurstSlot: parseNonNegativeInt(process.env.ADJUTANT_GLOBAL_DM_BURST_SLOT, 1),
+  maxRunningDM: parsePositiveInt(process.env.ADJUTANT_GLOBAL_MAX_RUNNING_DM, 3),
+  starvationMs: parsePositiveInt(process.env.ADJUTANT_GLOBAL_STARVATION_MS, 120_000),
+  metrics: proactiveMetrics,
+});
+
+const agentRunFn = createAgentRunAdapter(
+  {
+    workspaceDir: WORKSPACE_DIR,
+    timezone: TIMEZONE,
+    model: MODEL,
+    onTerminalRecord: async (terminal) => {
+      const uid = `${terminal.runId}:${terminal.actionType}`;
+      const baseRecord: DualWriteRecord = {
+        schema: TIMELINE_RECORD_SCHEMA_V1_5,
+        uid,
+        sessionKey: terminal.sessionKey,
+        recordType: "action",
+        role: "assistant",
+        actionType: terminal.actionType,
+        runId: terminal.runId,
+        ts: terminal.ts,
+        loggedAt: terminal.ts,
+        reason: terminal.reason,
+        durationMs: terminal.durationMs,
+      };
+      const result = await dualWriteCoordinator.appendAssistant({
+        uid,
+        timelineRecord: { ...baseRecord, target: "timeline" },
+        sessionRecord: { ...baseRecord, target: "session" },
+      });
+      if (result.status !== "committed") {
+        console.warn("[AssistantGateway][DualWrite] terminal record queued", {
+          runId: terminal.runId,
+          sessionKey: terminal.sessionKey,
+          actionType: terminal.actionType,
+          status: result.status,
+        });
+      }
+    },
+  },
+  runAgent
+);
+
+ChatHandler.configure({
+  runAgent: agentRunFn,
+  globalConcurrencyQueue,
+  dataDir: DATA_DIR,
+  workspaceDir: WORKSPACE_DIR,
+  timezone: TIMEZONE,
+  idempotencyTtlSec: 300,
+  idempotencyStorePath: IDEMPOTENCY_STORE_PATH,
+  idempotencyMaxEntries: Number.isFinite(IDEMPOTENCY_MAX_ENTRIES)
+    ? Math.max(100, Math.floor(IDEMPOTENCY_MAX_ENTRIES))
+    : 5000,
+  idempotencyStoreFailureMode: IDEMPOTENCY_STORE_FAILURE_MODE,
 });
 
 const routeLlmConfig = {
@@ -168,8 +290,48 @@ const triggerFilter = createTriggerFilter({
   },
 });
 
+const batchClassifier = createBatchClassifier({
+  timeoutMs: routeLlmConfig.routeLlmTimeoutMs,
+  metrics: proactiveMetrics,
+  classifyChunk: async ({ events, prompt }) => {
+    const chunkEvent = buildChunkEvent(events, prompt);
+    if (!chunkEvent || !secondaryClassifier) {
+      return {
+        action: "respond",
+        confidence: 0.75,
+        reason: "secondary-classifier-unavailable",
+      };
+    }
+
+    const outcome = await secondaryClassifier({
+      event: chunkEvent,
+      selfState: "non-self",
+      eventKind: routeEventKindFromEvent(chunkEvent),
+      primaryOutcome: "run",
+    });
+    if (outcome === "pending") {
+      return {
+        action: "note",
+        confidence: 0.8,
+        reason: "secondary-pending",
+      };
+    }
+    return {
+      action: "respond",
+      confidence: 0.8,
+      reason: "secondary-run",
+    };
+  },
+  onWarn: (message, meta) => {
+    console.warn("[AssistantGateway][BatchClassifier]", message, meta ?? {});
+  },
+});
+
 const pipeline = createChannelNotificationPipeline({
   triggerFilter,
+  batchClassifier,
+  globalConcurrencyQueue,
+  metrics: proactiveMetrics,
   acceptMessage: (request) => ChatHandler.acceptMessage(request),
   enqueueSystemEvent: (text, opts) => enqueueSystemEvent(text, opts),
   dualWriteCoordinator,
@@ -212,14 +374,47 @@ const heartbeatConfig: HeartbeatConfig = {
   workspaceDir: WORKSPACE_DIR,
   userTimezone: TIMEZONE,
   model: MODEL,
+  globalConcurrencyQueue,
   intervalMs: runtimeConfig.app.heartbeat.intervalMs,
-  heartbeatStaleMs: runtimeConfig.app.heartbeat.staleMs,
-  timelinePath: TIMELINE_PATH,
   channelsConfigPath: runtimeConfig.channelsConfigPath,
-  pendingSessionBackfillProvider: () => dualWriteCoordinator.listPendingSessionBackfillUids(),
 };
 
 const heartbeatHandle = startHeartbeat(heartbeatConfig);
+const watermarkStore = createWatermarkStore({
+  path: join(WORKSPACE_DIR, "memory", "watermarks.json"),
+  timelinePath: TIMELINE_PATH,
+  onWarn: (message, meta) => {
+    console.warn("[AssistantGateway][WatermarkStore]", message, meta ?? {});
+  },
+});
+const pendingFlusher = createPendingFlusher({
+  timelinePath: TIMELINE_PATH,
+  watermarkStore,
+  staleMs: FLUSHER_STALE_MS,
+  metrics: proactiveMetrics,
+  enqueueSession: async ({ sessionKey, reason, openPostCount }) => {
+    const idempotencyKey = `flusher:${sessionKey}:${Math.floor(Date.now() / FLUSHER_INTERVAL_MS)}`;
+    ChatHandler.acceptMessage({
+      message: `[PendingFlusher] ${reason} openPostCount=${openPostCount}`,
+      sessionKey,
+      idempotencyKey,
+      origin: "pipeline",
+      originSessionKey: sessionKey,
+      pipelineSource: "flusher",
+    });
+  },
+  onWarn: (message, meta) => {
+    console.warn("[AssistantGateway][PendingFlusher]", message, meta ?? {});
+  },
+});
+const pendingFlusherTimer =
+  FLUSHER_INTERVAL_MS > 0
+    ? setInterval(() => {
+        void pendingFlusher.tick().catch((error) => {
+          console.warn("[AssistantGateway][PendingFlusher] tick failed", toReason(error));
+        });
+      }, FLUSHER_INTERVAL_MS)
+    : null;
 
 const api = createApiServer({
   port: PORT,
@@ -261,6 +456,9 @@ async function shutdown(signal: string) {
   shuttingDown = true;
   console.log(`\n[Assistant] Shutting down... (${signal})`);
   heartbeatHandle.stop();
+  if (pendingFlusherTimer) {
+    clearInterval(pendingFlusherTimer);
+  }
   if (dualWriteRetryTimer) {
     clearInterval(dualWriteRetryTimer);
   }

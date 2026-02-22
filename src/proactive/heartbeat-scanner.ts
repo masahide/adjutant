@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { parseTimelineLines } from "./pending-flusher.js";
 
 export type HeartbeatTimelineRecord = {
   recordType?: unknown;
@@ -147,31 +148,16 @@ export function evaluateHeartbeatScan(input: HeartbeatScanInput): HeartbeatScanR
   };
 }
 
-function parseTimelineLine(line: string): HeartbeatTimelineRecord | null {
-  try {
-    const parsed = JSON.parse(line);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return null;
-    }
-    return parsed as HeartbeatTimelineRecord;
-  } catch {
-    return null;
-  }
-}
-
 export function parseTimelineJsonl(raw: string): HeartbeatTimelineRecord[] {
-  const parsed: HeartbeatTimelineRecord[] = [];
-  for (const line of raw.split(/\r?\n/)) {
-    if (!line.trim()) {
-      continue;
-    }
-    const record = parseTimelineLine(line);
-    if (!record) {
-      continue;
-    }
-    parsed.push(record);
-  }
-  return parsed;
+  return parseTimelineLines(raw)
+    .map((line) => {
+      const record = line.record;
+      if (!record || typeof record !== "object" || Array.isArray(record)) {
+        return null;
+      }
+      return record as HeartbeatTimelineRecord;
+    })
+    .filter((record): record is HeartbeatTimelineRecord => Boolean(record));
 }
 
 export async function readTimelineJsonl(

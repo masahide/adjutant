@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
-import { scanHeartbeatTimeline } from "../proactive/heartbeat-scanner.js";
+import { validateReportHeartbeatStatusInput } from "../proactive/routing-tools.js";
+import type { GlobalConcurrencyQueue } from "../proactive/global-concurrency-queue.js";
 import { buildEventContext } from "./context-builder.js";
 import { HeartbeatExecution } from "./heartbeat-execution.js";
 import { HeartbeatOrchestrator } from "./heartbeat-orchestrator.js";
@@ -34,8 +35,8 @@ export type HeartbeatConfig = {
   workspaceDir?: string;
   userTimezone?: string;
   retryDelayMs?: number;
-  ackMaxChars?: number;
   model?: string;
+  globalConcurrencyQueue?: GlobalConcurrencyQueue;
   activeHours?: {
     start: string;
     end: string;
@@ -49,14 +50,11 @@ export type HeartbeatConfig = {
   };
   channelsConfigPath?: string;
   readinessCheck?: (kind: "ok" | "alert") => boolean;
-  timelinePath?: string;
-  heartbeatStaleMs?: number;
-  pendingSessionBackfillProvider?: () => Iterable<string>;
 };
 
 type ActiveHoursConfig = NonNullable<HeartbeatConfig["activeHours"]>;
 type UnknownRecord = Record<string, unknown>;
-type HeartbeatAgentResult = Pick<AgentRunResult, "text" | "modelId">;
+type HeartbeatAgentResult = Pick<AgentRunResult, "text" | "modelId" | "toolCalls">;
 
 type HeartbeatRuntime = {
   now: () => Date;
@@ -65,8 +63,6 @@ type HeartbeatRuntime = {
   readMemoryFiles: typeof readMemoryFiles;
   buildEventContext: typeof buildEventContext;
   getQueueSize: typeof getQueueSize;
-  scanHeartbeatTimeline: typeof scanHeartbeatTimeline;
-  listPendingSessionBackfillUids: () => Iterable<string>;
   runAgent: (opts: AgentRunOptions) => Promise<HeartbeatAgentResult>;
   appendRunRecord: (dataDir: string, record: HeartbeatRunRecord) => Promise<void>;
   loadSessionEntryStore: (
@@ -88,9 +84,14 @@ type HeartbeatVisibility = {
 const DEFAULT_INTERVAL_MS = 30 * 60 * 1000;
 const DEFAULT_TIMEOUT_MS = 30 * 1000;
 const DEFAULT_RETRY_DELAY_MS = 1000;
-const DEFAULT_ACK_MAX_CHARS = 300;
-const DEFAULT_HEARTBEAT_STALE_MS = 15 * 60 * 1000;
-const DEFAULT_HEARTBEAT_PROMPT = "# HEARTBEAT\n\nHEARTBEAT_OK の場合はそれだけを返してください。";
+const DEFAULT_HEARTBEAT_PROMPT = [
+  "# HEARTBEAT",
+  "",
+  "You must call `report_heartbeat_status` exactly once.",
+  "status は no_action_needed / needs_attention / task_completed のいずれか。",
+  "notify はユーザー通知が必要なら true。",
+  "reason には簡潔な根拠を書く。",
+].join("\n");
 const HEARTBEAT_RUN_RECORD_RELATIVE_PATH = join("_assistant", "heartbeat-runs.jsonl");
 const HEARTBEAT_DUPLICATE_WINDOW_MS = 24 * 60 * 60 * 1000;
 const SESSION_KEY_PATTERN = /^[A-Za-z0-9:_-]+$/;
@@ -132,8 +133,6 @@ const defaultRuntime: HeartbeatRuntime = {
   readMemoryFiles,
   buildEventContext,
   getQueueSize,
-  scanHeartbeatTimeline,
-  listPendingSessionBackfillUids: () => [],
   runAgent,
   appendRunRecord: appendRunRecordDefault,
   loadSessionEntryStore: readSessionEntryStore,
@@ -172,14 +171,6 @@ function resolveTimezone(config: HeartbeatConfig): string {
 function resolveWorkspaceDir(config: HeartbeatConfig): string {
   const configured = config.workspaceDir?.trim();
   return configured || process.cwd();
-}
-
-function resolveTimelinePath(config: HeartbeatConfig): string | null {
-  const configured = config.timelinePath?.trim();
-  if (configured) {
-    return resolvePath(configured);
-  }
-  return join(resolveWorkspaceDir(config), "memory", "timeline.jsonl");
 }
 
 function resolvePath(filePath: string): string {
@@ -239,20 +230,6 @@ function resolveTimeoutMs(config: HeartbeatConfig): number {
   return Math.max(1, Math.floor(config.timeoutMs as number));
 }
 
-function resolveAckMaxChars(config: HeartbeatConfig): number {
-  if (!Number.isFinite(config.ackMaxChars)) {
-    return DEFAULT_ACK_MAX_CHARS;
-  }
-  return Math.max(0, Math.floor(config.ackMaxChars as number));
-}
-
-function resolveHeartbeatStaleMs(config: HeartbeatConfig): number {
-  if (!Number.isFinite(config.heartbeatStaleMs)) {
-    return DEFAULT_HEARTBEAT_STALE_MS;
-  }
-  return Math.max(1, Math.floor(config.heartbeatStaleMs as number));
-}
-
 function isErrno(error: unknown, code: string): boolean {
   const record = asRecord(error);
   return record?.code === code;
@@ -273,32 +250,8 @@ function normalizeText(value: string): string {
   return value.replace(/\r\n/g, "\n").trim();
 }
 
-function stripMarkdownDecorators(text: string): string {
-  const noLinks = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1");
-  const noInlineCode = noLinks.replace(/`+/g, " ");
-  const noEmphasis = noInlineCode.replace(/[*_~]/g, " ");
-  const noBlockquote = noEmphasis.replace(/^[>\-#\s]+/gm, "");
-  return noBlockquote;
-}
-
 function collapseWhitespace(text: string): string {
   return text.replace(/\s+/g, " ").trim();
-}
-
-export function stripHeartbeatToken(
-  value: string,
-  ackMaxChars: number
-): { normalizedText: string; hasOkToken: boolean; shouldSkip: boolean } {
-  const hasOkToken = /\bHEARTBEAT_OK\b/i.test(value);
-  const withoutHtml = value.replace(/<[^>]*>/g, " ").replace(/&nbsp;/gi, " ");
-  const withoutToken = withoutHtml.replace(/\bHEARTBEAT_OK\b/gi, " ");
-  const normalizedText = collapseWhitespace(stripMarkdownDecorators(withoutToken));
-  const shouldSkip = hasOkToken || normalizedText.length <= Math.max(0, ackMaxChars);
-  return {
-    normalizedText,
-    hasOkToken,
-    shouldSkip,
-  };
 }
 
 function isEffectivelyEmptyHeartbeatPrompt(text: string): boolean {
@@ -516,72 +469,24 @@ async function resolvePrecheckSkip(params: {
   return null;
 }
 
-async function resolveTimelineScanSkip(params: {
-  runtime: HeartbeatRuntime;
-  config: HeartbeatConfig;
-  runAt: Date;
-  sessionKey: string;
-  triggerReason?: string;
-}): Promise<HeartbeatRunResult | null> {
-  const timelinePath = resolveTimelinePath(params.config);
-  if (!timelinePath) {
+function resolveHeartbeatToolStatus(
+  toolCalls: AgentRunResult["toolCalls"]
+): ReturnType<typeof validateReportHeartbeatStatusInput> | null {
+  if (!Array.isArray(toolCalls)) {
     return null;
   }
-
-  try {
-    const pendingSessionBackfillUids =
-      params.config.pendingSessionBackfillProvider?.() ??
-      params.runtime.listPendingSessionBackfillUids();
-    const scanResult = await params.runtime.scanHeartbeatTimeline({
-      timelinePath,
-      nowMs: params.runAt.getTime(),
-      heartbeatStaleMs: resolveHeartbeatStaleMs(params.config),
-      pendingSessionBackfillUids,
-    });
-
-    if (scanResult.shouldRun) {
+  for (let index = toolCalls.length - 1; index >= 0; index -= 1) {
+    const call = toolCalls[index];
+    if (!call || call.name !== "report_heartbeat_status") {
+      continue;
+    }
+    try {
+      return validateReportHeartbeatStatusInput(call.result);
+    } catch {
       return null;
     }
-
-    const result: HeartbeatRunResult = {
-      status: "skipped",
-      reason: scanResult.reason,
-    };
-    return await finalizeRun({
-      runtime: params.runtime,
-      dataDir: params.config.dataDir,
-      runAt: params.runAt,
-      sessionKey: params.sessionKey,
-      triggerReason: params.triggerReason,
-      result,
-      event: {
-        ts: params.runAt.getTime(),
-        status: "skipped",
-        reason: result.reason,
-        indicatorType: "ok",
-      },
-    });
-  } catch (error) {
-    if (isErrno(error, "ENOENT")) {
-      return null;
-    }
-    console.warn("[HeartbeatRunner] timeline scan failed:", error);
-    const result: HeartbeatRunResult = { status: "skipped", reason: "timeline-scan-failed" };
-    return await finalizeRun({
-      runtime: params.runtime,
-      dataDir: params.config.dataDir,
-      runAt: params.runAt,
-      sessionKey: params.sessionKey,
-      triggerReason: params.triggerReason,
-      result,
-      event: {
-        ts: params.runAt.getTime(),
-        status: "skipped",
-        reason: result.reason,
-        indicatorType: "ok",
-      },
-    });
   }
+  return null;
 }
 
 function toBoolean(value: unknown, fallback: boolean): boolean {
@@ -705,7 +610,6 @@ export async function runOnce(
   const runAt = runtime.now();
   const startedAtMs = runAt.getTime();
   const timezone = resolveTimezone(config);
-  const ackMaxChars = resolveAckMaxChars(config);
   const timeoutMs = resolveTimeoutMs(config);
 
   const { store: sessionStore } = await runtime.loadSessionEntryStore(config.sessionEntriesPath);
@@ -715,14 +619,6 @@ export async function runOnce(
   const precheck = new HeartbeatPrecheck([
     async () =>
       await resolvePrecheckSkip({
-        runtime,
-        config,
-        runAt,
-        sessionKey,
-        triggerReason: opts?.reason,
-      }),
-    async () =>
-      await resolveTimelineScanSkip({
         runtime,
         config,
         runAt,
@@ -794,83 +690,170 @@ export async function runOnce(
     );
 
     const execution = new HeartbeatExecution(runtime);
-    const agentResult = await execution.runWithTimeout(timeoutMs, async () => {
-      return await runtime.runAgent({
-        runId: `hb-${runAt.getTime()}`,
-        prompt: body,
-        systemPrompt,
-        sessionKey,
-        origin: "system",
-        isHeartbeat: true,
-        model: config.model,
-        workspaceDir,
-        timezone,
-        sessionEntriesPath: config.sessionEntriesPath,
+    let releaseGlobalLease: (() => void) | undefined;
+    try {
+      if (config.globalConcurrencyQueue) {
+        const lease = await config.globalConcurrencyQueue.acquire({ source: "heartbeat" });
+        releaseGlobalLease = lease.release;
+      }
+      const agentResult = await execution.runWithTimeout(timeoutMs, async () => {
+        return await runtime.runAgent({
+          runId: `hb-${runAt.getTime()}`,
+          prompt: body,
+          systemPrompt,
+          sessionKey,
+          origin: "system",
+          isHeartbeat: true,
+          model: config.model,
+          workspaceDir,
+          timezone,
+          sessionEntriesPath: config.sessionEntriesPath,
+        });
       });
-    });
+      const durationMs = Math.max(0, runtime.now().getTime() - startedAtMs);
+      const toolStatus = resolveHeartbeatToolStatus(agentResult.toolCalls);
+      if (!toolStatus) {
+        const result: HeartbeatRunResult = {
+          status: "failed",
+          reason: "missing-report-heartbeat-status-tool-call",
+        };
+        return await finalizeRun({
+          runtime,
+          dataDir: config.dataDir,
+          runAt,
+          sessionKey,
+          triggerReason: opts?.reason,
+          result,
+          event: {
+            status: "failed",
+            reason: result.reason,
+            indicatorType: "error",
+          },
+        });
+      }
 
-    const durationMs = Math.max(0, runtime.now().getTime() - startedAtMs);
-    const stripped = stripHeartbeatToken(agentResult.text, ackMaxChars);
-    if (stripped.shouldSkip) {
-      const eventStatus: HeartbeatEventPayload["status"] = stripped.hasOkToken
-        ? "ok-token"
-        : "ok-empty";
-      const result: HeartbeatRunResult = {
-        status: "ran",
-        durationMs,
-        contentHash: computeContentHash(agentResult.text),
-        modelId: agentResult.modelId ?? config.model,
-      };
+      if (toolStatus.status === "no_action_needed" || toolStatus.status === "task_completed") {
+        const result: HeartbeatRunResult = {
+          status: "ran",
+          durationMs: durationMs,
+          contentHash: computeContentHash(toolStatus.reason),
+          modelId: agentResult.modelId ?? config.model,
+        };
 
-      const readinessOk = isReadinessOk(config, "ok");
-      return await finalizeRun({
-        runtime,
-        dataDir: config.dataDir,
-        runAt,
-        sessionKey,
-        triggerReason: opts?.reason,
-        result,
-        event: {
-          status: eventStatus,
+        const readinessOk = isReadinessOk(config, "ok");
+        return await finalizeRun({
+          runtime,
+          dataDir: config.dataDir,
+          runAt,
+          sessionKey,
+          triggerReason: opts?.reason,
+          result,
+          event: {
+            status: "ok-empty",
+            durationMs,
+            reason: readinessOk ? undefined : "readiness-failed",
+            indicatorType: "ok",
+            preview: toolStatus.reason.slice(0, 240),
+          },
+          record: {
+            modelId: result.modelId,
+            preview: toolStatus.reason.slice(0, 240),
+          },
+        });
+      }
+
+      if (!toolStatus.notify) {
+        const result: HeartbeatRunResult = {
+          status: "ran",
           durationMs,
-          reason: readinessOk ? undefined : "readiness-failed",
-          indicatorType: "ok",
-          preview: stripped.normalizedText.slice(0, 240),
-        },
-        record: {
-          modelId: result.modelId,
-          preview: stripped.normalizedText.slice(0, 240),
-        },
-      });
-    }
+          contentHash: computeContentHash(toolStatus.reason),
+          modelId: agentResult.modelId ?? config.model,
+        };
+        return await finalizeRun({
+          runtime,
+          dataDir: config.dataDir,
+          runAt,
+          sessionKey,
+          triggerReason: opts?.reason,
+          result,
+          event: {
+            status: "ok-empty",
+            durationMs,
+            indicatorType: "ok",
+            preview: toolStatus.reason.slice(0, 240),
+          },
+          record: {
+            modelId: result.modelId,
+            preview: toolStatus.reason.slice(0, 240),
+          },
+        });
+      }
 
-    const alertText = stripped.normalizedText || agentResult.text.trim();
-    const readinessOk = isReadinessOk(config, "alert");
-    if (!readinessOk) {
-      const result: HeartbeatRunResult = { status: "skipped", reason: "readiness-failed" };
-      return await finalizeRun({
-        runtime,
-        dataDir: config.dataDir,
-        runAt,
-        sessionKey,
-        triggerReason: opts?.reason,
-        result,
-        event: {
-          status: "skipped",
-          reason: result.reason,
-          indicatorType: "error",
-        },
-      });
-    }
+      const alertText = toolStatus.reason.trim();
+      const readinessOk = isReadinessOk(config, "alert");
+      if (!readinessOk) {
+        const result: HeartbeatRunResult = { status: "skipped", reason: "readiness-failed" };
+        return await finalizeRun({
+          runtime,
+          dataDir: config.dataDir,
+          runAt,
+          sessionKey,
+          triggerReason: opts?.reason,
+          result,
+          event: {
+            status: "skipped",
+            reason: result.reason,
+            indicatorType: "error",
+          },
+        });
+      }
 
-    const sessionEntry = getSessionEntry(sessionStore, sessionKey) ?? {};
-    if (isDuplicateAlert(sessionEntry, alertText, runAt.getTime())) {
+      const sessionEntry = getSessionEntry(sessionStore, sessionKey) ?? {};
+      if (isDuplicateAlert(sessionEntry, alertText, runAt.getTime())) {
+        const result: HeartbeatRunResult = {
+          status: "ran",
+          durationMs,
+          contentHash: computeContentHash(alertText),
+          modelId: agentResult.modelId ?? config.model,
+        };
+        return await finalizeRun({
+          runtime,
+          dataDir: config.dataDir,
+          runAt,
+          sessionKey,
+          triggerReason: opts?.reason,
+          result,
+          event: {
+            status: "skipped",
+            reason: "duplicate",
+            durationMs,
+            preview: alertText.slice(0, 240),
+            indicatorType: "ok",
+          },
+          record: {
+            modelId: result.modelId,
+            preview: alertText.slice(0, 240),
+          },
+        });
+      }
+
       const result: HeartbeatRunResult = {
         status: "ran",
         durationMs,
+        alert: alertText,
         contentHash: computeContentHash(alertText),
         modelId: agentResult.modelId ?? config.model,
       };
+
+      await rememberHeartbeatAlert({
+        runtime,
+        store: sessionStore,
+        sessionKey,
+        normalizedAlert: alertText,
+        now: runAt,
+        sessionEntriesPath: config.sessionEntriesPath,
+      });
+
       return await finalizeRun({
         runtime,
         dataDir: config.dataDir,
@@ -879,54 +862,19 @@ export async function runOnce(
         triggerReason: opts?.reason,
         result,
         event: {
-          status: "skipped",
-          reason: "duplicate",
+          status: "sent",
           durationMs,
-          preview: alertText.slice(0, 240),
-          indicatorType: "ok",
+          preview: toolStatus.reason.slice(0, 240),
+          indicatorType: "alert",
         },
         record: {
           modelId: result.modelId,
           preview: alertText.slice(0, 240),
         },
       });
+    } finally {
+      releaseGlobalLease?.();
     }
-
-    const result: HeartbeatRunResult = {
-      status: "ran",
-      durationMs,
-      alert: alertText,
-      contentHash: computeContentHash(alertText),
-      modelId: agentResult.modelId ?? config.model,
-    };
-
-    await rememberHeartbeatAlert({
-      runtime,
-      store: sessionStore,
-      sessionKey,
-      normalizedAlert: alertText,
-      now: runAt,
-      sessionEntriesPath: config.sessionEntriesPath,
-    });
-
-    return await finalizeRun({
-      runtime,
-      dataDir: config.dataDir,
-      runAt,
-      sessionKey,
-      triggerReason: opts?.reason,
-      result,
-      event: {
-        status: "sent",
-        durationMs,
-        preview: alertText.slice(0, 240),
-        indicatorType: "alert",
-      },
-      record: {
-        modelId: result.modelId,
-        preview: alertText.slice(0, 240),
-      },
-    });
   } catch (error) {
     const reason = toReason(error);
     const result: HeartbeatRunResult = { status: "failed", reason };

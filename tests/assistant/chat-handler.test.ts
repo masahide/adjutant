@@ -9,6 +9,7 @@ import {
   initializeChatHandlerForTest,
   resetChatHandlerTestState,
 } from "./chat-handler-test-helpers.js";
+import type { GlobalQueueSource } from "../../src/proactive/global-concurrency-queue.js";
 
 function makeStubAgent(
   opts: {
@@ -352,5 +353,97 @@ describe("ChatHandler", () => {
     const result = ChatHandler.abort({ sessionKey: "main" });
     assert.equal(result.ok, true);
     assert.equal(result.aborted, 2);
+  });
+
+  it("globalConcurrencyQueue が設定されている場合は実行時に acquire/release する", async () => {
+    resetChatHandlerTestState();
+    const acquiredSources: GlobalQueueSource[] = [];
+    let releaseCount = 0;
+
+    ChatHandler.configure({
+      runAgent: makeStubAgent(),
+      dataDir: "/tmp/test-data",
+      workspaceDir: "/tmp/test-workspace",
+      timezone: "Asia/Tokyo",
+      idempotencyTtlSec: 300,
+      globalConcurrencyQueue: {
+        acquire: async ({ source }) => {
+          acquiredSources.push(source);
+          return {
+            id: "lease-1",
+            source,
+            release: () => {
+              releaseCount += 1;
+            },
+          };
+        },
+        release: () => undefined,
+        getSnapshot: () => ({
+          running: 0,
+          dmRunning: 0,
+          waiting: 0,
+          totalSlots: 4,
+          maxConcurrent: 3,
+          maxRunningDM: 3,
+        }),
+      },
+    });
+
+    ChatHandler.acceptMessage({
+      message: "hello",
+      sessionKey: "slack:dm:D123",
+      idempotencyKey: "global-queue-001",
+      origin: "pipeline",
+    });
+
+    const terminal = await waitForTerminal("global-queue-001");
+    assert.equal(terminal.state, "final");
+    assert.deepEqual(acquiredSources, ["dm"]);
+    assert.equal(releaseCount, 1);
+  });
+
+  it("PendingFlusher 起点は pipelineSource=flusher で source=flusher になる", async () => {
+    resetChatHandlerTestState();
+    const acquiredSources: GlobalQueueSource[] = [];
+
+    ChatHandler.configure({
+      runAgent: makeStubAgent(),
+      dataDir: "/tmp/test-data",
+      workspaceDir: "/tmp/test-workspace",
+      timezone: "Asia/Tokyo",
+      idempotencyTtlSec: 300,
+      globalConcurrencyQueue: {
+        acquire: async ({ source }) => {
+          acquiredSources.push(source);
+          return {
+            id: "lease-flusher-1",
+            source,
+            release: () => undefined,
+          };
+        },
+        release: () => undefined,
+        getSnapshot: () => ({
+          running: 0,
+          dmRunning: 0,
+          waiting: 0,
+          totalSlots: 4,
+          maxConcurrent: 3,
+          maxRunningDM: 3,
+        }),
+      },
+    });
+
+    ChatHandler.acceptMessage({
+      message: "[PendingFlusher] stale-open-post openPostCount=1",
+      sessionKey: "slack:channel:C123",
+      idempotencyKey: "global-queue-flusher-001",
+      origin: "pipeline",
+      originSessionKey: "slack:channel:C123",
+      pipelineSource: "flusher",
+    });
+
+    const terminal = await waitForTerminal("global-queue-flusher-001");
+    assert.equal(terminal.state, "final");
+    assert.deepEqual(acquiredSources, ["flusher"]);
   });
 });

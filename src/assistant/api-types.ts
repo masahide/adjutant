@@ -3,6 +3,8 @@ export type PostChatMessageRequest = {
   sessionKey: string;
   idempotencyKey: string;
   origin?: "user" | "pipeline" | "system";
+  originSessionKey?: string;
+  pipelineSource?: "dm" | "group" | "channel" | "flusher";
   clientMessageId?: string;
 };
 

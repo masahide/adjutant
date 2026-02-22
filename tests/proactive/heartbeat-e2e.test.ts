@@ -67,7 +67,7 @@ describe("heartbeat-e2e", () => {
     resetHeartbeatRunnerForTest();
   });
 
-  it("stale post が統合タイムラインに残ると heartbeat 自律 tick で run する", async () => {
+  it("統合パイプラインでイベント蓄積後、heartbeat 自律 tick で run して sent になる", async () => {
     const tempDir = await mkdtemp(`${tmpdir()}/adjutant-heartbeat-e2e-`);
     try {
       await preparePromptFiles(tempDir);
@@ -94,7 +94,7 @@ describe("heartbeat-e2e", () => {
 
       await pipeline.enqueue(
         createPostInput({
-          uid: "uid-stale-post",
+          uid: "uid-heartbeat-e2e-post",
           ts: "2026-02-17T00:00:00.000Z",
         })
       );
@@ -116,9 +116,18 @@ describe("heartbeat-e2e", () => {
         runAgent: async () => {
           runAgentCount += 1;
           return {
-            status: "completed",
-            durationMs: 1,
             text: "ALERT: follow-up required",
+            modelId: "gpt-4o-mini",
+            toolCalls: [
+              {
+                name: "report_heartbeat_status",
+                result: {
+                  status: "needs_attention",
+                  notify: true,
+                  reason: "ALERT: follow-up required",
+                },
+              },
+            ],
           };
         },
       });
@@ -131,13 +140,10 @@ describe("heartbeat-e2e", () => {
         soulFilePath: join(tempDir, "assistant", "prompts", "SOUL.md"),
         userFilePath: join(tempDir, "assistant", "prompts", "USER.md"),
         agentsFilePath: join(tempDir, "assistant", "prompts", "AGENTS.md"),
-        timelinePath,
-        heartbeatStaleMs: 60 * 1000,
-        ackMaxChars: 0,
         intervalMs: 10,
       });
 
-      await waitUntil(() => runAgentCount === 1);
+      await waitUntil(() => runAgentCount >= 1);
       handle.stop();
       await new Promise((resolve) => setTimeout(resolve, 30));
       unsubscribe();
@@ -148,57 +154,18 @@ describe("heartbeat-e2e", () => {
     }
   });
 
-  it("最新対応境界がある場合は heartbeat 自律 tick でも skipped(no-stale-post)", async () => {
+  it("requests-in-flight で最初は skipped、次 tick で run される", async () => {
     const tempDir = await mkdtemp(`${tmpdir()}/adjutant-heartbeat-e2e-`);
     try {
       await preparePromptFiles(tempDir);
 
-      const timelinePath = join(tempDir, "memory", "timeline.jsonl");
-      const sessionPath = join(tempDir, "memory", "session-main.jsonl");
-      await mkdir(dirname(timelinePath), { recursive: true });
-
-      const dualWrite = createDualWriteCoordinator({
-        appendTimelineRecord: async (record) => {
-          await appendFile(timelinePath, `${JSON.stringify(record)}\n`, "utf8");
-        },
-        appendSessionRecord: async (record) => {
-          await appendFile(sessionPath, `${JSON.stringify(record)}\n`, "utf8");
-        },
-      });
-
-      const pipeline = createChannelNotificationPipeline({
-        triggerFilter: createTriggerFilter({ primaryClassifier: () => "run" }),
-        dualWriteCoordinator: dualWrite,
-        queueConfig: { debounceMs: 1 },
-        acceptMessage: async (request) => ({ runId: request.idempotencyKey, status: "started" }),
-      });
-
-      await pipeline.enqueue(
-        createPostInput({
-          uid: "uid-post-before-assistant",
-          ts: "2026-02-17T00:00:00.000Z",
-        })
-      );
-      await dualWrite.appendAssistant({
-        uid: "uid-assistant-action",
-        timelineRecord: {
-          uid: "uid-assistant-action",
-          recordType: "action",
-          role: "assistant",
-          ts: "2026-02-17T00:15:00.000Z",
-        },
-        sessionRecord: {
-          uid: "uid-assistant-action",
-          recordType: "action",
-          role: "assistant",
-          ts: "2026-02-17T00:15:00.000Z",
-        },
-      });
-      await new Promise((resolve) => setTimeout(resolve, 20));
-
+      let queueCalls = 0;
       let runAgentCount = 0;
       setHeartbeatRuntimeForTest({
-        now: () => new Date("2026-02-17T00:20:00.000Z"),
+        getQueueSize: () => {
+          queueCalls += 1;
+          return queueCalls === 1 ? 1 : 0;
+        },
         readEvents: async () => [],
         readMemoryFiles: async () => ({
           longTerm: null,
@@ -206,13 +173,21 @@ describe("heartbeat-e2e", () => {
           yesterday: null,
         }),
         buildEventContext: () => ({ text: "", truncated: false, eventCount: 0 }),
-        getQueueSize: () => 0,
         runAgent: async () => {
           runAgentCount += 1;
           return {
-            status: "completed",
-            durationMs: 1,
-            text: "ALERT: unexpected",
+            text: "ok",
+            modelId: "gpt-4o-mini",
+            toolCalls: [
+              {
+                name: "report_heartbeat_status",
+                result: {
+                  status: "no_action_needed",
+                  notify: false,
+                  reason: "ok",
+                },
+              },
+            ],
           };
         },
       });
@@ -225,20 +200,17 @@ describe("heartbeat-e2e", () => {
         soulFilePath: join(tempDir, "assistant", "prompts", "SOUL.md"),
         userFilePath: join(tempDir, "assistant", "prompts", "USER.md"),
         agentsFilePath: join(tempDir, "assistant", "prompts", "AGENTS.md"),
-        timelinePath,
-        heartbeatStaleMs: 60 * 1000,
-        ackMaxChars: 0,
-        intervalMs: 10,
+        intervalMs: 20,
+        retryDelayMs: 5,
       });
 
-      await waitUntil(() => getLastHeartbeatEvent()?.reason === "no-stale-post");
+      await waitUntil(() => runAgentCount >= 1, { timeoutMs: 2000 });
       handle.stop();
       await new Promise((resolve) => setTimeout(resolve, 30));
 
-      assert.equal(runAgentCount, 0);
       const lastEvent = getLastHeartbeatEvent();
-      assert.equal(lastEvent?.status, "skipped");
-      assert.equal(lastEvent?.reason, "no-stale-post");
+      assert.notEqual(lastEvent, null);
+      assert.equal(lastEvent?.status === "ok-empty" || lastEvent?.status === "sent", true);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }

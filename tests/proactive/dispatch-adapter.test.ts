@@ -109,6 +109,7 @@ describe("dispatch-adapter", () => {
       sessionKey: "slack:channel:C100",
       idempotencyKey: dispatch.idempotencyKey,
       origin: "pipeline",
+      originSessionKey: "slack:channel:C100",
     });
   });
 
