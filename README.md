@@ -13,7 +13,7 @@ Slack Desktop の Chrome DevTools Protocol (CDP) からイベントを収集し�
 - AI アシスタント: HTTP API + SSE ストリーミング + Web UI (`src/assistant/`, `src/ui/`)
 - Slack通知の一次判定（`TriggerFilter.secondaryClassifier`）に OpenAI 軽量モデルを接続可能
 
-GitHub / ローカル Git 収集や日次要約は未実装で、仕様メモは `doc/spec.md` にあります。
+GitHub / ローカル Git 収集は未実装で、仕様メモは `doc/spec.md` にあります。日次 Markdown 要約は `ADJUTANT_MARKDOWN_SUMMARY_BATCH_ENABLED=1` で有効化できます。
 
 ## ディレクトリ構成
 
@@ -52,33 +52,40 @@ pnpm check               # format -> typecheck -> test
 
 ## 実行時設定
 
-| 変数                                       | 既定値                              | 用途                                                                    |
-| ------------------------------------------ | ----------------------------------- | ----------------------------------------------------------------------- |
-| `CDP_HOST`                                 | `127.0.0.1`                         | CDP 接続先ホスト                                                        |
-| `CDP_PORT`                                 | `9222`                              | CDP 接続先ポート                                                        |
-| `CDP_ENDPOINT_FILE`                        | `.adjutant/cdp-endpoint.json`       | 接続先上書き JSON (`host`, `port`)                                      |
-| `DATA_DIR`                                 | `./data`                            | JSONL 保存ルート                                                        |
-| `ADJUTANT_TZ`                              | `Asia/Tokyo`                        | 正規化イベントのタイムゾーン                                            |
-| `ADJUTANT_DEBUG`                           | -                                   | Slack アダプタ詳細ログ (`slack:verbose` など)                           |
-| `ADJUTANT_DISABLE_DOM_CAPTURE`             | `0`                                 | リアクション時 DOM キャプチャ無効化                                     |
-| `ADJUTANT_DEBUG_UI`                        | `0`                                 | Debug UI (`http://127.0.0.1:8787`) を有効化                             |
-| `ADJUTANT_DEBUG_UI_PORT`                   | `8787`                              | Debug UI ポート                                                         |
-| `ADJUTANT_CDP_EVENT_LOG`                   | `0`                                 | CDP 生イベントを JSONL へ保存                                           |
-| `ADJUTANT_CDP_EVENT_LOG_PATH`              | `<dataDir>/_debug/cdp-events.jsonl` | CDP 生イベントの出力先                                                  |
-| `ADJUTANT_CDP_EVENT_LOG_MAX_PARAM_CHARS`   | `0`                                 | params を文字列化して上限超過時に切り詰め (`0` は無制限)                |
-| `ADJUTANT_RAW_FETCH_LOG`                   | `0`                                 | `raw_fetch` デバッグイベントを JSONL へ保存（内部 fetch hook も有効化） |
-| `ADJUTANT_RAW_FETCH_LOG_PATH`              | `<dataDir>/_debug/raw-fetch.jsonl`  | `raw_fetch` イベントの出力先                                            |
-| `ADJUTANT_RAW_FETCH_LOG_MAX_PAYLOAD_CHARS` | `0`                                 | payload を文字列化して上限超過時に切り詰め (`0` は無制限)               |
-| `ADJUTANT_API_PORT`                        | `3100`                              | AI アシスタント API サーバーのポート                                    |
-| `ADJUTANT_API_HOST`                        | `127.0.0.1`                         | AI アシスタント API サーバーのバインドアドレス                          |
-| `ADJUTANT_VITE_PORT`                       | `5173`                              | AI アシスタント Web UI（Vite）のポート                                  |
-| `ADJUTANT_WORKSPACE_DIR`                   | `ADJUTANT_DATA_DIR` と同値          | アシスタントのワークスペースディレクトリ                                |
-| `ADJUTANT_SESSION_ENTRIES_PATH`            | `./data/_assistant/sessions.json`   | アシスタントのセッションメタ情報（`sessionId`, `sessionFile`）保存先    |
-| `ADJUTANT_ROUTE_LLM_ENABLED`               | `0`                                 | Slack通知の一次判定に OpenAI route LLM を使うかどうか                   |
-| `ADJUTANT_ROUTE_LLM_MODEL`                 | `gpt-5-mini`                        | route LLM に使用する OpenAI モデル名                                    |
-| `ADJUTANT_ROUTE_LLM_TIMEOUT_MS`            | `1000`                              | route LLM 判定のタイムアウト（ミリ秒）                                  |
-| `ADJUTANT_ROUTE_LLM_MAX_CONCURRENT`        | `1`                                 | route LLM 判定の同時実行上限（1で逐次）                                 |
-| `OPENAI_API_KEY`                           | -                                   | route LLM 有効時に利用する OpenAI API キー                              |
+| 変数                                           | 既定値                                      | 用途                                                                    |
+| ---------------------------------------------- | ------------------------------------------- | ----------------------------------------------------------------------- |
+| `CDP_HOST`                                     | `127.0.0.1`                                 | CDP 接続先ホスト                                                        |
+| `CDP_PORT`                                     | `9222`                                      | CDP 接続先ポート                                                        |
+| `CDP_ENDPOINT_FILE`                            | `.adjutant/cdp-endpoint.json`               | 接続先上書き JSON (`host`, `port`)                                      |
+| `DATA_DIR`                                     | `./data`                                    | JSONL 保存ルート                                                        |
+| `ADJUTANT_TZ`                                  | `Asia/Tokyo`                                | 正規化イベントのタイムゾーン                                            |
+| `ADJUTANT_DEBUG`                               | -                                           | Slack アダプタ詳細ログ (`slack:verbose` など)                           |
+| `ADJUTANT_DISABLE_DOM_CAPTURE`                 | `0`                                         | リアクション時 DOM キャプチャ無効化                                     |
+| `ADJUTANT_DEBUG_UI`                            | `0`                                         | Debug UI (`http://127.0.0.1:8787`) を有効化                             |
+| `ADJUTANT_DEBUG_UI_PORT`                       | `8787`                                      | Debug UI ポート                                                         |
+| `ADJUTANT_CDP_EVENT_LOG`                       | `0`                                         | CDP 生イベントを JSONL へ保存                                           |
+| `ADJUTANT_CDP_EVENT_LOG_PATH`                  | `<dataDir>/_debug/cdp-events.jsonl`         | CDP 生イベントの出力先                                                  |
+| `ADJUTANT_CDP_EVENT_LOG_MAX_PARAM_CHARS`       | `0`                                         | params を文字列化して上限超過時に切り詰め (`0` は無制限)                |
+| `ADJUTANT_RAW_FETCH_LOG`                       | `0`                                         | `raw_fetch` デバッグイベントを JSONL へ保存（内部 fetch hook も有効化） |
+| `ADJUTANT_RAW_FETCH_LOG_PATH`                  | `<dataDir>/_debug/raw-fetch.jsonl`          | `raw_fetch` イベントの出力先                                            |
+| `ADJUTANT_RAW_FETCH_LOG_MAX_PAYLOAD_CHARS`     | `0`                                         | payload を文字列化して上限超過時に切り詰め (`0` は無制限)               |
+| `ADJUTANT_API_PORT`                            | `3100`                                      | AI アシスタント API サーバーのポート                                    |
+| `ADJUTANT_API_HOST`                            | `127.0.0.1`                                 | AI アシスタント API サーバーのバインドアドレス                          |
+| `ADJUTANT_VITE_PORT`                           | `5173`                                      | AI アシスタント Web UI（Vite）のポート                                  |
+| `ADJUTANT_WORKSPACE_DIR`                       | `ADJUTANT_DATA_DIR` と同値                  | アシスタントのワークスペースディレクトリ                                |
+| `ADJUTANT_STATE_DIR`                           | `<dataDir>/_assistant`                      | アシスタント state ルート（session transcript / watermark など）        |
+| `ADJUTANT_SESSION_AGENT_ID`                    | `main`                                      | session 保存先を切る agent ID                                           |
+| `ADJUTANT_SESSION_TRANSCRIPTS_DIR`             | `<stateDir>/agents/<agentId>/sessions`      | session JSONL 保存先 override                                           |
+| `ADJUTANT_SESSION_ENTRIES_PATH`                | `<stateDir>/agents/<agentId>/sessions.json` | セッションメタ情報（`sessionId`, `sessionFile`）保存先                  |
+| `ADJUTANT_MARKDOWN_SUMMARY_BATCH_ENABLED`      | `0`                                         | 日次 Markdown 要約バッチを有効化                                        |
+| `ADJUTANT_MARKDOWN_SUMMARY_BATCH_INTERVAL_MS`  | `3600000`                                   | 要約バッチ実行間隔（ミリ秒）                                            |
+| `ADJUTANT_MARKDOWN_SUMMARY_BATCH_MESSAGES`     | `15`                                        | 1セッションから採用する末尾メッセージ数                                 |
+| `ADJUTANT_MARKDOWN_SUMMARY_BATCH_MAX_SESSIONS` | `200`                                       | 1 tick あたり最大処理セッション数                                       |
+| `ADJUTANT_ROUTE_LLM_ENABLED`                   | `0`                                         | Slack通知の一次判定に OpenAI route LLM を使うかどうか                   |
+| `ADJUTANT_ROUTE_LLM_MODEL`                     | `gpt-5-mini`                                | route LLM に使用する OpenAI モデル名                                    |
+| `ADJUTANT_ROUTE_LLM_TIMEOUT_MS`                | `1000`                                      | route LLM 判定のタイムアウト（ミリ秒）                                  |
+| `ADJUTANT_ROUTE_LLM_MAX_CONCURRENT`            | `1`                                         | route LLM 判定の同時実行上限（1で逐次）                                 |
+| `OPENAI_API_KEY`                               | -                                           | route LLM 有効時に利用する OpenAI API キー                              |
 
 ## AI セッションコンテキスト方針
 

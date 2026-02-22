@@ -6,6 +6,12 @@ import {
   parsePositiveIntEnv,
   parseStringEnv,
 } from "./env-parsers.js";
+import {
+  resolveAdjutantStateDir,
+  resolveSessionAgentId,
+  resolveSessionEntriesPath,
+  resolveSessionTranscriptsDir,
+} from "../assistant/session-paths.js";
 
 const DEFAULT_ROUTE_LLM_MODEL = "gpt-5-mini";
 const DEFAULT_ROUTE_LLM_TIMEOUT_MS = 1_000;
@@ -107,6 +113,16 @@ export function loadAssistantGatewayRuntimeConfig(
 ): AssistantGatewayRuntimeConfig {
   const dataDir = parseStringEnv(env.ADJUTANT_DATA_DIR, "data");
   const workspaceDir = parseStringEnv(env.ADJUTANT_WORKSPACE_DIR, dataDir);
+  const stateDir = resolveAdjutantStateDir({ env, dataDir });
+  const sessionAgentId = resolveSessionAgentId({ env });
+  const sessionTranscriptsDir = resolveSessionTranscriptsDir({
+    env,
+    stateDir,
+    agentId: sessionAgentId,
+  });
+  const sessionEntriesPath =
+    env.ADJUTANT_SESSION_ENTRIES_PATH?.trim() ||
+    resolveSessionEntriesPath({ stateDir, agentId: sessionAgentId });
   const timezone = parseStringEnv(env.ADJUTANT_TZ, "Asia/Tokyo");
   const vitePort = parsePositiveIntEnv(env.ADJUTANT_VITE_PORT, 5173);
   const timelinePath =
@@ -128,6 +144,18 @@ export function loadAssistantGatewayRuntimeConfig(
         timezone,
         model: env.ADJUTANT_MODEL?.trim() || undefined,
         timelinePath,
+      },
+      sessionStorage: {
+        stateDir,
+        agentId: sessionAgentId,
+        transcriptsDir: sessionTranscriptsDir,
+        sessionEntriesPath,
+      },
+      markdownSummaryBatch: {
+        enabled: parseBooleanEnv(env.ADJUTANT_MARKDOWN_SUMMARY_BATCH_ENABLED, false),
+        intervalMs: parsePositiveIntEnv(env.ADJUTANT_MARKDOWN_SUMMARY_BATCH_INTERVAL_MS, 3_600_000),
+        messages: parsePositiveIntEnv(env.ADJUTANT_MARKDOWN_SUMMARY_BATCH_MESSAGES, 15),
+        maxSessions: parsePositiveIntEnv(env.ADJUTANT_MARKDOWN_SUMMARY_BATCH_MAX_SESSIONS, 200),
       },
       idempotency: {
         storePath: idempotencyStorePath,

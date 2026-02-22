@@ -2,6 +2,12 @@ import { createApiServer } from "./api-server.js";
 import * as ChatHandler from "./chat-handler.js";
 import * as StreamEventBridge from "./stream-event-bridge.js";
 import { createAgentRunAdapter } from "./main.adapter.js";
+import { createMarkdownSummaryBatchService } from "./markdown-summary-batch.js";
+import {
+  resolveLegacyWorkspaceSessionsDir,
+  resolveSessionRecordPath,
+  resolveSummaryBatchWatermarkPath,
+} from "./session-paths.js";
 import { handleTerminalRecord } from "./terminal-record-handler.js";
 import type { NormalizedEvent } from "../core/events.js";
 import {
@@ -43,6 +49,11 @@ const WORKSPACE_DIR = runtimeConfig.app.assistant.workspaceDir;
 const TIMEZONE = runtimeConfig.app.assistant.timezone;
 const MODEL = runtimeConfig.app.assistant.model;
 const TIMELINE_PATH = runtimeConfig.app.assistant.timelinePath;
+const SESSION_STATE_DIR = runtimeConfig.app.sessionStorage.stateDir;
+const SESSION_AGENT_ID = runtimeConfig.app.sessionStorage.agentId;
+const SESSION_TRANSCRIPTS_DIR = runtimeConfig.app.sessionStorage.transcriptsDir;
+const SESSION_ENTRIES_PATH = runtimeConfig.app.sessionStorage.sessionEntriesPath;
+const MARKDOWN_SUMMARY_BATCH = runtimeConfig.app.markdownSummaryBatch;
 const IDEMPOTENCY_STORE_PATH = runtimeConfig.app.idempotency.storePath;
 const IDEMPOTENCY_MAX_ENTRIES = runtimeConfig.app.idempotency.maxEntries;
 const IDEMPOTENCY_STORE_FAILURE_MODE = runtimeConfig.app.idempotency.failureMode;
@@ -163,14 +174,11 @@ async function appendJsonl(path: string, record: DualWriteRecord): Promise<{ off
   });
 }
 
-function resolveSessionRecordPath(workspaceDir: string, sessionKey: string): string {
-  const normalized = sessionKey.trim().replace(/[^A-Za-z0-9._-]+/g, "_");
-  const fileName = normalized || "unknown";
-  return join(workspaceDir, "memory", "sessions", `${fileName}.jsonl`);
-}
-
 const jsonlRecoveryTargets = new Set<string>([TIMELINE_PATH, IDEMPOTENCY_STORE_PATH]);
-for (const filePath of await listJsonlFiles(join(WORKSPACE_DIR, "memory", "sessions"))) {
+for (const filePath of await listJsonlFiles(SESSION_TRANSCRIPTS_DIR)) {
+  jsonlRecoveryTargets.add(filePath);
+}
+for (const filePath of await listJsonlFiles(resolveLegacyWorkspaceSessionsDir(WORKSPACE_DIR))) {
   jsonlRecoveryTargets.add(filePath);
 }
 for (const filePath of await listJsonlFiles(DATA_DIR)) {
@@ -210,7 +218,15 @@ const dualWriteCoordinator = createDualWriteCoordinator({
     if (!sessionKey) {
       throw new Error("dual write requires record.sessionKey");
     }
-    await appendJsonl(resolveSessionRecordPath(WORKSPACE_DIR, sessionKey), record);
+    await appendJsonl(
+      resolveSessionRecordPath({
+        stateDir: SESSION_STATE_DIR,
+        sessionKey,
+        agentId: SESSION_AGENT_ID,
+        sessionTranscriptsDir: SESSION_TRANSCRIPTS_DIR,
+      }),
+      record
+    );
   },
   onWarn: (message, meta) => {
     console.warn("[AssistantGateway][DualWrite]", message, meta ?? {});
@@ -242,6 +258,7 @@ const agentRunFn = createAgentRunAdapter(
     workspaceDir: WORKSPACE_DIR,
     timezone: TIMEZONE,
     model: MODEL,
+    sessionEntriesPath: SESSION_ENTRIES_PATH,
     onTerminalRecord: async (terminal) => {
       await handleTerminalRecord(
         {
@@ -449,6 +466,30 @@ const pendingFlusherTimer =
       }, FLUSHER_INTERVAL_MS)
     : null;
 
+const markdownSummaryBatchService = createMarkdownSummaryBatchService({
+  workspaceDir: WORKSPACE_DIR,
+  timezone: TIMEZONE,
+  sessionTranscriptsDir: SESSION_TRANSCRIPTS_DIR,
+  legacySessionTranscriptsDir: resolveLegacyWorkspaceSessionsDir(WORKSPACE_DIR),
+  watermarkPath: resolveSummaryBatchWatermarkPath({
+    stateDir: SESSION_STATE_DIR,
+    agentId: SESSION_AGENT_ID,
+  }),
+  messages: MARKDOWN_SUMMARY_BATCH.messages,
+  maxSessions: MARKDOWN_SUMMARY_BATCH.maxSessions,
+  onWarn: (message, meta) => {
+    console.warn("[AssistantGateway][MarkdownSummaryBatch]", message, meta ?? {});
+  },
+});
+const markdownSummaryBatchTimer =
+  MARKDOWN_SUMMARY_BATCH.enabled && MARKDOWN_SUMMARY_BATCH.intervalMs > 0
+    ? setInterval(() => {
+        void markdownSummaryBatchService.runOnce().catch((error) => {
+          console.warn("[AssistantGateway][MarkdownSummaryBatch] run failed", toReason(error));
+        });
+      }, MARKDOWN_SUMMARY_BATCH.intervalMs)
+    : null;
+
 const api = createApiServer({
   port: PORT,
   host: HOST,
@@ -494,6 +535,9 @@ async function shutdown(signal: string) {
   }
   if (dualWriteRetryTimer) {
     clearInterval(dualWriteRetryTimer);
+  }
+  if (markdownSummaryBatchTimer) {
+    clearInterval(markdownSummaryBatchTimer);
   }
   const stopTargets = pluginRegistry.list().map((plugin) => channelManager.stopChannel(plugin.id));
   await Promise.allSettled([api.stop(), ...stopTargets]);

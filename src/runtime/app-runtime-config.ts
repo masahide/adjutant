@@ -8,6 +8,13 @@ export type AssistantRuntimeConfig = {
   timelinePath: string;
 };
 
+export type SessionStorageRuntimeConfig = {
+  stateDir: string;
+  agentId: string;
+  transcriptsDir: string;
+  sessionEntriesPath: string;
+};
+
 export type IdempotencyRuntimeConfig = {
   storePath: string;
   maxEntries: number;
@@ -39,8 +46,17 @@ export type SlackRuntimeConfig = {
   domCaptureDisabled: boolean;
 };
 
+export type MarkdownSummaryBatchRuntimeConfig = {
+  enabled: boolean;
+  intervalMs: number;
+  messages: number;
+  maxSessions: number;
+};
+
 export type AppRuntimeConfig = {
   assistant: AssistantRuntimeConfig;
+  sessionStorage: SessionStorageRuntimeConfig;
+  markdownSummaryBatch: MarkdownSummaryBatchRuntimeConfig;
   idempotency: IdempotencyRuntimeConfig;
   sse: SseRuntimeConfig;
   routeLlm: RouteLlmRuntimeAppConfig;

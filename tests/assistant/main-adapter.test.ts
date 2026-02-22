@@ -220,4 +220,29 @@ describe("createAgentRunAdapter", () => {
     assert.equal(args.isAborted, isAborted);
     assert.equal(args.onTerminalRecord, onTerminalRecord);
   });
+
+  it("sessionEntriesPath を runAgent へ伝搬する", async () => {
+    const mockRunAgent = mock.fn<RunAgentFn>(async () => {
+      return { runId: "r1", text: "ok" };
+    });
+
+    const adapter = createAgentRunAdapter(
+      {
+        workspaceDir: "/tmp",
+        timezone: "UTC",
+        sessionEntriesPath: "/tmp/state/agents/main/sessions.json",
+      },
+      mockRunAgent
+    );
+    await adapter({
+      prompt: "hello",
+      sessionKey: "main",
+      runId: "r1",
+      origin: "user",
+      onDelta: () => {},
+    });
+
+    const args = mockRunAgent.mock.calls[0].arguments[0];
+    assert.equal(args.sessionEntriesPath, "/tmp/state/agents/main/sessions.json");
+  });
 });

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { resolve } from "node:path";
 import {
   ensurePiCacheRetention,
   loadAssistantGatewayRuntimeConfig,
@@ -51,12 +52,27 @@ describe("runtime-config-loader", () => {
     } as NodeJS.ProcessEnv;
 
     const config = loadAssistantGatewayRuntimeConfig(env);
+    const expectedStateDir = resolve("data-x", "_assistant");
     assert.equal(config.app.assistant.port, 3200);
     assert.equal(config.app.assistant.host, "0.0.0.0");
     assert.equal(config.app.assistant.dataDir, "data-x");
     assert.equal(config.app.assistant.workspaceDir, "workspace-x");
     assert.equal(config.app.assistant.timezone, "UTC");
     assert.equal(config.app.assistant.model, "gpt-5-mini");
+    assert.equal(config.app.sessionStorage.stateDir, expectedStateDir);
+    assert.equal(config.app.sessionStorage.agentId, "main");
+    assert.equal(
+      config.app.sessionStorage.transcriptsDir,
+      resolve(expectedStateDir, "agents", "main", "sessions")
+    );
+    assert.equal(
+      config.app.sessionStorage.sessionEntriesPath,
+      resolve(expectedStateDir, "agents", "main", "sessions.json")
+    );
+    assert.equal(config.app.markdownSummaryBatch.enabled, false);
+    assert.equal(config.app.markdownSummaryBatch.intervalMs, 3_600_000);
+    assert.equal(config.app.markdownSummaryBatch.messages, 15);
+    assert.equal(config.app.markdownSummaryBatch.maxSessions, 200);
     assert.equal(config.app.routeLlm.enabled, true);
     assert.equal(config.app.routeLlm.model, "gpt-4.1-mini");
     assert.equal(config.app.routeLlm.timeoutMs, 1500);
@@ -79,6 +95,29 @@ describe("runtime-config-loader", () => {
     assert.equal(config.corsOrigin, "https://adjutant.example.com");
     assert.equal(config.app.slack.defaultAccountId, "acc-123");
     assert.equal(config.app.slack.domCaptureDisabled, true);
+  });
+
+  it("assistant 設定は state/session/summary-batch の env override を反映する", () => {
+    const config = loadAssistantGatewayRuntimeConfig({
+      ADJUTANT_DATA_DIR: "/tmp/adjutant-data",
+      ADJUTANT_STATE_DIR: "/tmp/adjutant-state",
+      ADJUTANT_SESSION_AGENT_ID: "ops",
+      ADJUTANT_SESSION_TRANSCRIPTS_DIR: "/tmp/custom/sessions",
+      ADJUTANT_SESSION_ENTRIES_PATH: "/tmp/custom/sessions.json",
+      ADJUTANT_MARKDOWN_SUMMARY_BATCH_ENABLED: "1",
+      ADJUTANT_MARKDOWN_SUMMARY_BATCH_INTERVAL_MS: "60000",
+      ADJUTANT_MARKDOWN_SUMMARY_BATCH_MESSAGES: "20",
+      ADJUTANT_MARKDOWN_SUMMARY_BATCH_MAX_SESSIONS: "300",
+    } as NodeJS.ProcessEnv);
+
+    assert.equal(config.app.sessionStorage.stateDir, "/tmp/adjutant-state");
+    assert.equal(config.app.sessionStorage.agentId, "ops");
+    assert.equal(config.app.sessionStorage.transcriptsDir, "/tmp/custom/sessions");
+    assert.equal(config.app.sessionStorage.sessionEntriesPath, "/tmp/custom/sessions.json");
+    assert.equal(config.app.markdownSummaryBatch.enabled, true);
+    assert.equal(config.app.markdownSummaryBatch.intervalMs, 60000);
+    assert.equal(config.app.markdownSummaryBatch.messages, 20);
+    assert.equal(config.app.markdownSummaryBatch.maxSessions, 300);
   });
 
   it("route LLM 設定は不正値を既定値へフォールバックする", () => {

@@ -199,7 +199,9 @@ type SessionSummaryChunk = {
 {
   "schema": "adjutant.summary.batch.watermark.v1",
   "updatedAt": "2026-02-22T10:05:00.000Z",
-  "sessions": { "main": { "lastProcessedOffset": 18240, "lastProcessedTs": "2026-02-22T10:02:00.000Z" } }
+  "sessions": {
+    "main": { "lastProcessedOffset": 18240, "lastProcessedTs": "2026-02-22T10:02:00.000Z" }
+  }
 }
 ```
 
@@ -311,53 +313,53 @@ sequenceDiagram
 
 ### Phase 1 設計と準備
 
-- [ ] OpenClaw 準拠仕様を `doc/spec.md` の「日次 Markdown 要約バッチ」節へ具体化
-- [ ] 新規設定値（enabled/interval/messages/maxSessions）の契約を runtime config に追加
-- [ ] セッション保存先を workspace から state 配下へ寄せるパス契約を追加（`<stateDir>/agents/<agentId>/sessions`）
-- [ ] watermark スキーマ `adjutant.summary.batch.watermark.v1` を定義
-- [ ] バッチ I/O パスを「入力=state 配下」「出力=workspace memory」に分離定義
-- [ ] テスト雛形を作成（tmp workspace ヘルパ活用）
+- [x] OpenClaw 準拠仕様を `doc/spec.md` の「日次 Markdown 要約バッチ」節へ具体化
+- [x] 新規設定値（enabled/interval/messages/maxSessions）の契約を runtime config に追加
+- [x] セッション保存先を workspace から state 配下へ寄せるパス契約を追加（`<stateDir>/agents/<agentId>/sessions`）
+- [x] watermark スキーマ `adjutant.summary.batch.watermark.v1` を定義
+- [x] バッチ I/O パスを「入力=state 配下」「出力=workspace memory」に分離定義
+- [x] テスト雛形を作成（tmp workspace ヘルパ活用）
 
 ### Phase 2 抽出器の実装
 
-- [ ] Test `SessionTranscriptExtractor`: 非 message 行除外（Red）
-- [ ] Impl user/assistant 抽出 + `/` 開始行除外（Green）
-- [ ] Refactor filter 後 slice の共通化（OpenClaw 準拠）
-- [ ] Test 壊れた JSON 行が混在しても継続する（Red→Green）
-- [ ] Docs 抽出契約を plan/spec に反映
+- [x] Test `SessionTranscriptExtractor`: 非 message 行除外（Red）
+- [x] Impl user/assistant 抽出 + `/` 開始行除外（Green）
+- [x] Refactor filter 後 slice の共通化（OpenClaw 準拠）
+- [x] Test 壊れた JSON 行が混在しても継続する（Red→Green）
+- [x] Docs 抽出契約を plan/spec に反映
 
 ### Phase 3 バッチランナーの実装
 
-- [ ] Test `MarkdownSummaryBatchService`: 未処理オフセットのみを処理する（Red）
-- [ ] Impl chunk 生成と `memory/YYYY-MM-DD.md` 追記（Green）
-- [ ] Refactor writer/watermark の責務分離
-- [ ] Integration 旧 `workspace/memory/sessions` からの移行互換（読取）と新規書込先固定（state）を検証
-- [ ] Integration 同一入力 2 回実行で重複追記しない
-- [ ] Docs watermark 例とフォーマット例を更新
+- [x] Test `MarkdownSummaryBatchService`: 未処理オフセットのみを処理する（Red）
+- [x] Impl chunk 生成と `memory/YYYY-MM-DD.md` 追記（Green）
+- [x] Refactor writer/watermark の責務分離
+- [x] Integration 旧 `workspace/memory/sessions` からの移行互換（読取）と新規書込先固定（state）を検証
+- [x] Integration 同一入力 2 回実行で重複追記しない
+- [x] Docs watermark 例とフォーマット例を更新
 
 ### Phase 4 ゲートウェイ統合と検証
 
-- [ ] `assistant/main.ts` に batch timer を配線（起動/停止）
-- [ ] dual-write session 出力先を state 配下に切替し、バッチ入力と一致させる
-- [ ] バッチ失敗時 warning ログのみで継続することを確認
-- [ ] `pnpm run check` 実行
-- [ ] `doc/spec.md` の未実装項目更新
+- [x] `assistant/main.ts` に batch timer を配線（起動/停止）
+- [x] dual-write session 出力先を state 配下に切替し、バッチ入力と一致させる
+- [x] バッチ失敗時 warning ログのみで継続することを確認
+- [x] `pnpm run check` 実行
+- [x] `doc/spec.md` の未実装項目更新
 
 ## 8. 完了の定義 Definition of Done
 
 ### 8.1 機能DoD Functional DoD
 
-- [ ] 受け入れ条件 7 件を満たす
-- [ ] OpenClaw 準拠抽出ルール（filter→slice、command除外、非致命）が実装されている
-- [ ] セッション正本配置が workspace 外 state 配下へ統一されている
-- [ ] 日次 Markdown への追記が checkpoint ベースで冪等動作する
+- [x] 受け入れ条件 7 件を満たす
+- [x] OpenClaw 準拠抽出ルール（filter→slice、command除外、非致命）が実装されている
+- [x] セッション正本配置が workspace 外 state 配下へ統一されている
+- [x] 日次 Markdown への追記が checkpoint ベースで冪等動作する
 
 ### 8.2 品質DoD Quality DoD
 
-- [ ] 追加テストが全て成功する
-- [ ] `pnpm run check` が成功する
-- [ ] warning ログが本文を出力しない
-- [ ] `doc/spec.md` と本計画が実装内容に一致する
+- [x] 追加テストが全て成功する
+- [x] `pnpm run check` が成功する
+- [x] warning ログが本文を出力しない
+- [x] `doc/spec.md` と本計画が実装内容に一致する
 
 ## 9. 懸念事項と未確定事項 Concerns and Questions
 

@@ -324,7 +324,6 @@ flowchart LR
 ## 11. ロードマップ（設計メモ）
 
 - GitHub / git-local アダプタ追加
-- JSONL から日次 Markdown 要約を生成するバッチ
 - cross-source 集計のための検索インデックス強化（SQLite）
 
 ## 12. ファイルファースト保存原則（設計）
@@ -358,8 +357,13 @@ flowchart LR
 ### 13.1 統合ランタイム
 
 - `src/assistant/main.ts` が統合エントリポイントで、API / Vite UI / channel manager / heartbeat / pending flusher を起動する。
-- 起動時に `timeline.jsonl`、`idempotency.jsonl`、`memory/sessions/*.jsonl`、`DATA_DIR` 配下 JSONL を `recoverJsonlFiles` で復旧する。
-- proactive 経路は dual-write で `memory/timeline.jsonl` と `memory/sessions/<sessionKey>.jsonl` の両方へ追記する。
+- 起動時に `timeline.jsonl`、`idempotency.jsonl`、`<stateDir>/agents/<agentId>/sessions/*.jsonl`、移行互換として `memory/sessions/*.jsonl`、`DATA_DIR` 配下 JSONL を `recoverJsonlFiles` で復旧する。
+- proactive 経路は dual-write で `memory/timeline.jsonl` と `<stateDir>/agents/<agentId>/sessions/<sessionKey>.jsonl` の両方へ追記する。
+- `ADJUTANT_MARKDOWN_SUMMARY_BATCH_ENABLED=1` の場合、要約バッチが定期実行される。
+  - 入力: `<stateDir>/agents/<agentId>/sessions/*.jsonl`（互換として `memory/sessions/*.jsonl` も読取）
+  - 抽出: `user/assistant` のみ、`/` で始まる command 行を除外、filter 後 slice（既定 15）
+  - 出力: `memory/YYYY-MM-DD.md` へ append
+  - checkpoint: `<stateDir>/agents/<agentId>/summary-batch-watermark.json`
 
 ### 13.2 ルーティングパイプライン v1.5
 

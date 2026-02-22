@@ -1,5 +1,10 @@
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import {
+  resolveAdjutantStateDir,
+  resolveSessionAgentId,
+  resolveSessionEntriesPath as resolveSessionEntriesPathForState,
+} from "./session-paths.js";
 
 export type SessionEntryRecord = Record<string, unknown> & {
   sessionId?: unknown;
@@ -17,7 +22,14 @@ export type SessionEntryRecord = Record<string, unknown> & {
 
 export type SessionEntryStore = Record<string, SessionEntryRecord>;
 
-const DEFAULT_SESSION_ENTRIES_PATH = join(process.cwd(), "data", "_assistant", "sessions.json");
+function resolveDefaultSessionEntriesPath(env: NodeJS.ProcessEnv): string {
+  const stateDir = resolveAdjutantStateDir({
+    env,
+    dataDir: env.ADJUTANT_DATA_DIR?.trim() || join(process.cwd(), "data"),
+  });
+  const agentId = resolveSessionAgentId({ env });
+  return resolveSessionEntriesPathForState({ stateDir, agentId });
+}
 
 export function resolveSessionEntriesPath(customPath?: string): string {
   const preferred = customPath?.trim();
@@ -28,7 +40,7 @@ export function resolveSessionEntriesPath(customPath?: string): string {
   if (fromEnv) {
     return fromEnv;
   }
-  return DEFAULT_SESSION_ENTRIES_PATH;
+  return resolveDefaultSessionEntriesPath(process.env);
 }
 
 export async function readSessionEntryStore(

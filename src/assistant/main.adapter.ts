@@ -8,6 +8,7 @@ type AdapterConfig = {
   workspaceDir: string;
   timezone: string;
   model?: string;
+  sessionEntriesPath?: string;
   onTerminalRecord?: AgentRunOptions["onTerminalRecord"];
 };
 
@@ -30,6 +31,7 @@ export function createAgentRunAdapter(cfg: AdapterConfig, runAgentFn: AgentRunFn
         workspaceDir: cfg.workspaceDir,
         timezone: cfg.timezone,
         model: cfg.model,
+        sessionEntriesPath: cfg.sessionEntriesPath,
         onTextDelta: (delta) => {
           onDelta({
             runId,
