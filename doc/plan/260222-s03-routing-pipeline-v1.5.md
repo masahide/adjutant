@@ -90,9 +90,12 @@
 4. Given sessionKey=A のエージェントが応答完了し `assistant_final` が記録された
    When sessionKey=B に未対応 post がある
    Then Flusher は sessionKey=B の未対応を正しく検出する（sessionKey=A の境界に隠れない）
-5. Given maxConcurrent=3 が全て使用中
+5. Given totalSlots=4（maxConcurrent=3 + burstSlot=1）が全て使用中かつ DM が 3 枠使用中
+   When さらに DM メッセージが到着する
+   Then maxRunningDM=3 により DM の追加起動はブロックされ、非 DM 用 1 枠が保証される
+5b. Given maxConcurrent=3 が全て使用中（DM は 2 枠使用中）
    When DM メッセージが到着する
-   Then DM burst slot により即時エージェント起動され、4 並行が許可される
+   Then DM burst slot により即時エージェント起動され、4 並行が許可される（dmRunning=3 ≤ maxRunningDM=3）
 6. Given Pending Flusher が未対応 post を検出したスレッドに他者の返信がある
    When Flusher が判定する
    Then 抑制バイアスにより即時起動せず、次周期まで様子見する
@@ -137,9 +140,10 @@
   - `ADJUTANT_ROUTING_DM_IDLE_MS`: DM 用 idle（既定 `200`）
   - `ADJUTANT_ROUTING_DM_MAX_WAIT_MS`: DM 用 maxWait（既定 `1000`）
   - `ADJUTANT_ROUTING_CONFIDENCE_THRESHOLD`: Route LLM confidence 閾値（既定 `0.7`）
-  - `ADJUTANT_GLOBAL_MAX_CONCURRENT`: エージェント同時起動上限（既定 `3`）
-  - `ADJUTANT_GLOBAL_DM_BURST_SLOT`: DM 例外枠（既定 `1`）
-  - `ADJUTANT_GLOBAL_STARVATION_MS`: aging 昇格閾値（既定 `120000`）
+  - `ADJUTANT_GLOBAL_MAX_CONCURRENT`: エージェント基本同時起動上限（既定 `3`）
+  - `ADJUTANT_GLOBAL_DM_BURST_SLOT`: DM 例外枠（既定 `1`、totalSlots = maxConcurrent + burstSlot）
+  - `ADJUTANT_GLOBAL_MAX_RUNNING_DM`: DM 同時実行上限（既定 `totalSlots - 1`、非 DM 用 1 枠を保証）
+  - `ADJUTANT_GLOBAL_STARVATION_MS`: aging 昇格閾値（既定 `120000`）。`waitMs >= starvationMs` で `effectivePriority = PRIORITY_MAX`（ステップ関数、MVP 向き）。**`PRIORITY_MAX` は DM の基礎優先度より必ず高い**（aging が DM 優先を確実に上書きできることを保証する）
   - `ADJUTANT_FLUSHER_INTERVAL_MS`: Flusher 周期（既定 `300000`）
   - `ADJUTANT_FLUSHER_STALE_MS`: 未対応判定閾値（既定 `900000`）
 - 永続化ストレージ（新設/改修）
@@ -157,7 +161,8 @@ type TimelineRecordV1_5 = {
   recordType: "event" | "action";
   role: "user" | "assistant" | "tool";
   sessionKey: string;
-  ts: string; // ISO8601
+  ts: string;       // ISO8601 — イベント発生時刻（Slack の ts 等）
+  loggedAt: string;  // ISO8601 — timeline への記録時刻（JsonlWriter が補完）
 
   // event 用
   kind?: string;
@@ -170,9 +175,13 @@ type TimelineRecordV1_5 = {
 };
 ```
 
+- `ts`: イベント自体の発生時刻。Slack の `message_ts` 等に由来。遅延到着時は過去の値になりうる
+- `loggedAt`: **必須フィールド**。JsonlWriter が書き込み時に必ず補完する。Flusher の stale 判定（`oldestOpenPostTs`）はこの値を使う。起動直後の過去ログ流入で `ts` が古くて即 stale になる誤発火を防ぐ。optional にすると Flusher が「不明な時刻」をどう扱うかで実装が割れるため、必須とする
+
 - `assistant_final`: エージェント実行が正常完了。watermark の `lastHandledOffset` を進める唯一のトリガー
-- `assistant_aborted`: エージェント実行が中断。watermark は進めない（Flusher が再回収）
-- `assistant_error`: エージェント実行がエラー終了。watermark は進めない
+- `assistant_aborted`: エージェント実行が中断（終端したが対応完了とはみなさない）。watermark は進めない（Flusher が再回収）
+- `assistant_error`: エージェント実行がエラー終了（終端したが対応完了とはみなさない）。watermark は進めない
+- `assistant_final` は「ユーザーへの最終応答が確定し、SSE 上も終端した」ことの宣言
 
 #### WatermarksV1
 
@@ -189,18 +198,35 @@ type WatermarksV1 = {
 
   sessions: Record<string, {
     handled: {
-      lastHandledOffset: number; // assistant_final を観測した timeline 上の byte offset
+      lastHandledOffset?: number; // assistant_final の行頭 byte offset。未定義=未対応
+      lastHandledTs?: string;     // デバッグ/監視専用。ロジックの条件分岐には使用しない
     };
     open: {
-      oldestOpenPostTs?: string; // 最古の未対応 post 時刻（stale 判定用）
+      oldestOpenPostTs?: string; // 最古の未対応 post の loggedAt 時刻（stale 判定用）
       openPostCount?: number;    // 未対応 post カウンタ
     };
   }>;
 };
 ```
 
-- 更新は `.tmp` + `fs.rename` によるアトミック書き込み
-- timeline.jsonl が truncate 復旧で縮小した場合、`lastScannedOffset > fileSize` なら offset を `0` にリセット
+**境界は offset を正とする**: 遅延到着（古い `ts` のイベントが後から追記される）に対して、offset ベースなら「timeline 上の物理位置」で判定するため、取りこぼしが発生しない。`lastHandledTs` はログ可読性のためのデバッグ用であり、Flusher の境界判定には一切使用しない。
+
+**`oldestOpenPostTs` は `loggedAt` を使用**: イベント時刻（`ts`）ではなく記録時刻（`loggedAt`）を使う。起動直後に過去ログが流入した場合、`ts` が古くて即 stale 判定される誤発火を防ぐ。
+
+**境界更新ルール**:
+- `lastHandledOffset` を前進させるのは `actionType="assistant_final"` のみ。終端状態（`final`/`aborted`/`error`）のうち `final` のみが対応完了を意味する
+- `assistant_aborted` / `assistant_error` / `tool` / `tool_result` では絶対に前進させない
+- 1 run につき終端レコード（`assistant_final` / `assistant_aborted` / `assistant_error`）は 1 回のみ書き込む
+
+**`lastGoodOffset` 更新規約**:
+- Flusher tick 終了時は **`lastScannedOffset = lastGoodOffset`** を原則とする。末尾が不完全で JSON parse に失敗した行を超えた offset を永続化しない
+- 末尾行が不完全で parse に失敗した場合は **「その行には触れず、次周期で再試行」** する（末尾不完全行は書き込み途中の可能性があるため）
+
+**永続化**:
+- 更新は `.tmp` + `fs.rename` によるアトミック書き込み。**同一ファイルシステム内**で行う前提（別 FS 間の `rename` は原子性が保証されない）
+- timeline.jsonl が truncate 復旧で縮小した場合、`lastScannedOffset > fileSize` なら `scan` の offset を `0` にリセットし、`sessions` の全エントリも削除して全走査から再構築する（scan だけのリセットでは sessions の offset が不整合を起こす）
+
+**Session pruning**: Flusher tick 完了後、`openPostCount === 0` かつ `lastHandledOffset` が定義済みかつ `<= lastScannedOffset`（走査に追いついた）セッションエントリを削除する。削除されたセッションに新イベントが来た場合、次回スキャンで `lastScannedOffset` 以降のレコードから再作成される。想定同時アクティブセッション数は 30-110 程度（スレッド含む）で、pruning により watermarks.json は数十 KB 以内に収まる
 
 #### PolicyRoutingV1
 
@@ -247,6 +273,9 @@ type ReportHeartbeatStatusInput = {
   - Watermark I/O 失敗: warn ログ + 次周期で再試行（Flusher は安全に skip）
   - Global queue 満杯（DM 以外）: 待機キューに積む（aging で昇格）
   - エージェント異常終了: `assistant_error` 記録 + watermark 不進行 + Flusher 再回収
+  - エージェント中断: `assistant_aborted` 記録 + watermark 不進行 + Flusher 再回収
+  - ツール呼び出し中のクラッシュ: 終端レコードなし → `lastHandledOffset` 不変 → Flusher が次周期で再回収
+  - 1 run につき終端レコード（`assistant_final` / `assistant_aborted` / `assistant_error`）は 1 回のみ。二重書き込みは禁止
 - リトライ方針
   - Route LLM: リトライなし（タイムアウトでフォールバック）
   - Watermark 書き込み: 次の Flusher 周期で自然にリトライ
@@ -357,9 +386,13 @@ NormalizedEvent (from SlackPlugin.emit())
              ▼
 ┌────────────────────────────────────────────┐
 │ 層3: GlobalConcurrencyQueue                 │
-│   maxConcurrent=3, dmBurstSlot=1            │
+│   totalSlots=4 (maxConcurrent=3+burst=1)    │
+│   maxRunningDM=3 (totalSlots-1, 非DM1枠保証)│
+│   work-conserving:                            │
+│     非DM待ち≥1件→dmRunning<maxRunningDM厳守 │
+│     非DM待ち0件→DM全枠可                    │
 │   priority: DM>Group>Channel>Flusher>HB     │
-│   aging: starvationMs=120s → priority boost  │
+│   aging: waitMs≥120s → PRIORITY_MAX(>DM基礎) │
 │   → AgentRunner.runAgent()                   │
 └─────────────────────────────────────────────┘
              │
@@ -404,6 +437,8 @@ classDiagram
   class GlobalConcurrencyQueue {
     -running: number
     -dmRunning: number
+    -maxRunningDM: number
+    -totalSlots: number
     -queue: PriorityQueue~QueueEntry~
     +enqueue(request): Promise~void~
     +onSlotFree(): void
@@ -480,8 +515,8 @@ stateDiagram-v2
   - `RuleTriage`: self/DM/mention/channel の分類正確性、channel type キャッシュ依存
   - `AttentionWindow`: idle タイマー動作、maxWait 強制フラッシュ、バッファ合流
   - `BatchClassifier`: ツール呼び出し parse、confidence 閾値、タイムアウトフォールバック
-  - `GlobalConcurrencyQueue`: maxConcurrent 遵守、DM burst slot、aging 昇格、FIFO 順序
-  - `WatermarkStore`: atomic write、truncate 復旧、offset リセット
+  - `GlobalConcurrencyQueue`: totalSlots 遵守、maxRunningDM による非 DM 枠保証、work-conserving（非 DM 待ちなしなら DM が全枠使用可）、aging（waitMs ≥ starvationMs → PRIORITY_MAX、PRIORITY_MAX > DM 基礎優先度）、同一優先度は FIFO
+  - `WatermarkStore`: atomic write（同一 FS 前提）、truncate 復旧、offset リセット、session pruning、tick 終了時 `lastScannedOffset = lastGoodOffset` 保証
   - `PendingFlusher`: 差分走査、sessionKey 別境界、他者返信の抑制バイアス、旧レコード無視
   - `DeepHeartbeat`: ツール呼び出し強制、HEARTBEAT_OK 文字列マッチ非使用
 - Integration
@@ -508,6 +543,8 @@ stateDiagram-v2
   - timeline.jsonl が空の場合
   - watermarks.json 不在での初回起動
   - 旧スキーマレコードと新スキーマレコードの混在
+  - session pruning 後に同一 sessionKey の新イベント到着（再作成）
+  - pruning 対象外の session（openPostCount > 0）が正しく残存
 
 ## 7. 実装タスクリスト Implementation Plan
 
@@ -517,7 +554,7 @@ stateDiagram-v2
       対象: `tests/proactive/timeline-record.test.ts`（新設）
 - [ ] Impl `TimelineRecordV1_5` 型定義と validate 実装 Green
       対象: `src/proactive/timeline-record.ts`（新設）
-- [ ] Test `WatermarkStore` の load/save/atomic-write/truncate-recovery の失敗テスト Red
+- [ ] Test `WatermarkStore` の load/save/atomic-write/truncate-recovery/session-pruning の失敗テスト Red
       対象: `tests/proactive/watermark-store.test.ts`（新設）
 - [ ] Impl `WatermarkStore` 実装 Green
       対象: `src/proactive/watermark-store.ts`（新設）
@@ -545,7 +582,7 @@ stateDiagram-v2
 
 ### Phase 3: 層 3（グローバル並行制御キュー）
 
-- [ ] Test `GlobalConcurrencyQueue` の maxConcurrent/burst-slot/aging/priority テスト Red
+- [ ] Test `GlobalConcurrencyQueue` の totalSlots/maxRunningDM/work-conserving/aging-step/priority テスト Red
       対象: `tests/proactive/global-concurrency-queue.test.ts`（新設）
 - [ ] Impl `GlobalConcurrencyQueue` 実装 Green
       対象: `src/proactive/global-concurrency-queue.ts`（新設）
@@ -615,9 +652,9 @@ stateDiagram-v2
 
 ## 9. 懸念事項と未確定事項 Concerns and Questions
 
-- Route LLM のモデル選定: `gpt-4o-mini` が最適か、他の軽量モデル（`gpt-5-mini` 等）を検証すべきか。コスト/精度/レイテンシのトレードオフを実測で決定する必要がある
+- Route LLM のモデルは `gpt-5-mini` を使用する。精度/レイテンシの実測結果次第で変更の可能性あり
 - `report_route_decision` ツールを pi-coding-agent SDK のカスタムツール機構で定義できるか要確認。SDK の制約次第ではスタンドアロンの OpenAI API 呼び出し（現行 `route-llm-classifier.ts` ベース）を継続する可能性がある
 - Route LLM のバッチ分類は pi-coding-agent SDK のセッション外で動作するため、SDK のセッション管理/コンテキストとは独立。ツール定義の共有方法を検討する必要がある
 - `POLICY_ROUTING.json` の初期値をどう作成するか。ワークスペース初期化時にデフォルトファイルを生成するか、存在しない場合はデフォルト値にフォールバックするか
 - Watermark の `lastHandledOffset` は byte offset であり、Node.js の `fs.read` による部分読み込みが前提。大規模 timeline での性能を実測で確認する必要がある
-- `assistant_final` の書き込みが agent-runner の `finally` ブロックで保証されるとしても、プロセス自体が SIGKILL で死んだ場合は書き込まれない。この場合の Flusher の挙動（永久に未対応扱い）が許容可能か要確認
+- `assistant_final` の書き込みが agent-runner の `finally` ブロックで保証されるとしても、プロセス自体が SIGKILL で死んだ場合は書き込まれない。ただし Flusher が次 tick で当該セッションを「未対応」として再検出・再回収するため、自己回復する。重複応答のリスクはあるが MVP では許容（将来的に `runId` ベースの冪等投稿で対応可能）
