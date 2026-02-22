@@ -5,9 +5,13 @@ export type DualWriteRecord = {
 };
 
 export type DualWriteAppendResult =
-  | { status: "committed" }
+  | { status: "committed"; timelineOffset?: number }
   | { status: "pending-timeline" }
-  | { status: "pending-session-backfill" };
+  | { status: "pending-session-backfill"; timelineOffset?: number };
+
+type TimelineAppendResult = {
+  offset: number;
+};
 
 export type DualWriteRetryResult = {
   timelineRecovered: number;
@@ -17,7 +21,7 @@ export type DualWriteRetryResult = {
 };
 
 export type DualWriteCoordinatorDeps = {
-  appendTimelineRecord: (record: DualWriteRecord) => Promise<void>;
+  appendTimelineRecord: (record: DualWriteRecord) => Promise<void | TimelineAppendResult>;
   appendSessionRecord: (record: DualWriteRecord) => Promise<void>;
   nowMs?: () => number;
   backfillWarningMs?: number;
@@ -93,18 +97,33 @@ function buildPendingWrite(input: {
   };
 }
 
+function normalizeTimelineOffset(value: unknown): number | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const offset = (value as { offset?: unknown }).offset;
+  if (typeof offset !== "number" || !Number.isFinite(offset)) {
+    return undefined;
+  }
+  return Math.max(0, Math.floor(offset));
+}
+
 async function appendSessionAndQueueOnError(params: {
   uid: string;
   nowMs: number;
   timelineRecord: DualWriteRecord;
   sessionRecord: DualWriteRecord;
+  timelineOffset?: number;
   appendSessionRecord: (record: DualWriteRecord) => Promise<void>;
   pendingSessionBackfill: Map<string, PendingWrite>;
 }): Promise<DualWriteAppendResult> {
   try {
     await params.appendSessionRecord(params.sessionRecord);
     params.pendingSessionBackfill.delete(params.uid);
-    return { status: "committed" };
+    return {
+      status: "committed",
+      timelineOffset: params.timelineOffset,
+    };
   } catch (error) {
     const reason = toReason(error);
     const previous = params.pendingSessionBackfill.get(params.uid);
@@ -119,7 +138,10 @@ async function appendSessionAndQueueOnError(params: {
         reason,
       })
     );
-    return { status: "pending-session-backfill" };
+    return {
+      status: "pending-session-backfill",
+      timelineOffset: params.timelineOffset,
+    };
   }
 }
 
@@ -130,6 +152,7 @@ export function createDualWriteCoordinator(deps: DualWriteCoordinatorDeps): Dual
     Math.floor(deps.backfillWarningMs ?? DEFAULT_BACKFILL_WARNING_MS)
   );
   const timelineCommittedUids = new Set<string>();
+  const timelineOffsetsByUid = new Map<string, number>();
   const sessionCommittedUids = new Set<string>();
   const pendingTimelineWrites = new Map<string, PendingWrite>();
   const pendingSessionBackfill = new Map<string, PendingWrite>();
@@ -146,12 +169,19 @@ export function createDualWriteCoordinator(deps: DualWriteCoordinatorDeps): Dual
       throw new Error("timelineRecord.sessionKey must match sessionRecord.sessionKey");
     }
     if (sessionCommittedUids.has(uid)) {
-      return { status: "committed" };
+      return {
+        status: "committed",
+        timelineOffset: timelineOffsetsByUid.get(uid),
+      };
     }
 
     if (!timelineCommittedUids.has(uid)) {
       try {
-        await deps.appendTimelineRecord(input.timelineRecord);
+        const result = await deps.appendTimelineRecord(input.timelineRecord);
+        const timelineOffset = normalizeTimelineOffset(result);
+        if (typeof timelineOffset === "number") {
+          timelineOffsetsByUid.set(uid, timelineOffset);
+        }
         timelineCommittedUids.add(uid);
         pendingTimelineWrites.delete(uid);
       } catch (error) {
@@ -177,6 +207,7 @@ export function createDualWriteCoordinator(deps: DualWriteCoordinatorDeps): Dual
       nowMs: nowMs(),
       timelineRecord: input.timelineRecord,
       sessionRecord: input.sessionRecord,
+      timelineOffset: timelineOffsetsByUid.get(uid),
       appendSessionRecord: deps.appendSessionRecord,
       pendingSessionBackfill,
     });
@@ -193,7 +224,11 @@ export function createDualWriteCoordinator(deps: DualWriteCoordinatorDeps): Dual
 
     for (const [uid, pending] of Array.from(pendingTimelineWrites.entries())) {
       try {
-        await deps.appendTimelineRecord(pending.timelineRecord);
+        const result = await deps.appendTimelineRecord(pending.timelineRecord);
+        const timelineOffset = normalizeTimelineOffset(result);
+        if (typeof timelineOffset === "number") {
+          timelineOffsetsByUid.set(uid, timelineOffset);
+        }
         timelineCommittedUids.add(uid);
         pendingTimelineWrites.delete(uid);
         timelineRecovered += 1;
@@ -203,6 +238,7 @@ export function createDualWriteCoordinator(deps: DualWriteCoordinatorDeps): Dual
           nowMs: nowMs(),
           timelineRecord: pending.timelineRecord,
           sessionRecord: pending.sessionRecord,
+          timelineOffset: timelineOffsetsByUid.get(uid),
           appendSessionRecord: deps.appendSessionRecord,
           pendingSessionBackfill,
         });
@@ -236,6 +272,7 @@ export function createDualWriteCoordinator(deps: DualWriteCoordinatorDeps): Dual
         nowMs: nowMs(),
         timelineRecord: pending.timelineRecord,
         sessionRecord: pending.sessionRecord,
+        timelineOffset: timelineOffsetsByUid.get(uid),
         appendSessionRecord: deps.appendSessionRecord,
         pendingSessionBackfill,
       });

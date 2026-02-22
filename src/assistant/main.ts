@@ -2,6 +2,7 @@ import { createApiServer } from "./api-server.js";
 import * as ChatHandler from "./chat-handler.js";
 import * as StreamEventBridge from "./stream-event-bridge.js";
 import { createAgentRunAdapter } from "./main.adapter.js";
+import { handleTerminalRecord } from "./terminal-record-handler.js";
 import type { NormalizedEvent } from "../core/events.js";
 import {
   enqueueSystemEvent,
@@ -23,7 +24,6 @@ import { createChannelPluginRegistry } from "../proactive/plugin-registry.js";
 import { createOpenAiSecondaryClassifier } from "../proactive/route-llm-classifier.js";
 import { createSlackChannelPlugin } from "../proactive/slack-channel-plugin.js";
 import { createTriggerFilter, type SecondaryClassifier } from "../proactive/trigger-filter.js";
-import { TIMELINE_RECORD_SCHEMA_V1_5 } from "../proactive/types.js";
 import { createGlobalConcurrencyQueue } from "../proactive/global-concurrency-queue.js";
 import { createPendingFlusher } from "../proactive/pending-flusher.js";
 import { createWatermarkStore } from "../proactive/watermark-store.js";
@@ -32,7 +32,7 @@ import { createProactiveMetrics } from "../proactive/metrics.js";
 import { listJsonlFiles, recoverJsonlFiles } from "../io/jsonl-recovery.js";
 import { loadAssistantGatewayRuntimeConfig } from "../runtime/runtime-config-loader.js";
 import { spawn, type ChildProcess } from "node:child_process";
-import { appendFile, mkdir } from "node:fs/promises";
+import { appendFile, mkdir, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
 const runtimeConfig = loadAssistantGatewayRuntimeConfig();
@@ -123,9 +123,44 @@ function buildChunkEvent(events: NormalizedEvent[], prompt: string): NormalizedE
   };
 }
 
-async function appendJsonl(path: string, record: DualWriteRecord): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  await appendFile(path, `${JSON.stringify(record)}\n`, "utf8");
+const appendTails = new Map<string, Promise<void>>();
+
+async function withAppendLock<T>(path: string, task: () => Promise<T>): Promise<T> {
+  const previousTail = appendTails.get(path) ?? Promise.resolve();
+  let releaseTail!: () => void;
+  const hold = new Promise<void>((resolve) => {
+    releaseTail = resolve;
+  });
+  const nextTail = previousTail.then(() => hold);
+  appendTails.set(path, nextTail);
+  await previousTail;
+  try {
+    return await task();
+  } finally {
+    releaseTail();
+    if (appendTails.get(path) === nextTail) {
+      appendTails.delete(path);
+    }
+  }
+}
+
+async function appendJsonl(path: string, record: DualWriteRecord): Promise<{ offset: number }> {
+  return await withAppendLock(path, async () => {
+    await mkdir(dirname(path), { recursive: true });
+    let offset = 0;
+    try {
+      const info = await stat(path);
+      offset = Math.max(0, Math.floor(info.size));
+    } catch (error) {
+      const errno = error as NodeJS.ErrnoException;
+      if (errno.code !== "ENOENT") {
+        throw error;
+      }
+    }
+
+    await appendFile(path, `${JSON.stringify(record)}\n`, "utf8");
+    return { offset };
+  });
 }
 
 function resolveSessionRecordPath(workspaceDir: string, sessionKey: string): string {
@@ -165,7 +200,7 @@ StreamEventBridge.configureReplay({
 
 const dualWriteCoordinator = createDualWriteCoordinator({
   appendTimelineRecord: async (record) => {
-    await appendJsonl(TIMELINE_PATH, record);
+    return await appendJsonl(TIMELINE_PATH, record);
   },
   appendSessionRecord: async (record) => {
     const sessionKey =
@@ -194,6 +229,13 @@ const globalConcurrencyQueue = createGlobalConcurrencyQueue({
   starvationMs: parsePositiveInt(process.env.ADJUTANT_GLOBAL_STARVATION_MS, 120_000),
   metrics: proactiveMetrics,
 });
+const watermarkStore = createWatermarkStore({
+  path: join(WORKSPACE_DIR, "memory", "watermarks.json"),
+  timelinePath: TIMELINE_PATH,
+  onWarn: (message, meta) => {
+    console.warn("[AssistantGateway][WatermarkStore]", message, meta ?? {});
+  },
+});
 
 const agentRunFn = createAgentRunAdapter(
   {
@@ -201,33 +243,31 @@ const agentRunFn = createAgentRunAdapter(
     timezone: TIMEZONE,
     model: MODEL,
     onTerminalRecord: async (terminal) => {
-      const uid = `${terminal.runId}:${terminal.actionType}`;
-      const baseRecord: DualWriteRecord = {
-        schema: TIMELINE_RECORD_SCHEMA_V1_5,
-        uid,
-        sessionKey: terminal.sessionKey,
-        recordType: "action",
-        role: "assistant",
-        actionType: terminal.actionType,
-        runId: terminal.runId,
-        ts: terminal.ts,
-        loggedAt: terminal.ts,
-        reason: terminal.reason,
-        durationMs: terminal.durationMs,
-      };
-      const result = await dualWriteCoordinator.appendAssistant({
-        uid,
-        timelineRecord: { ...baseRecord, target: "timeline" },
-        sessionRecord: { ...baseRecord, target: "session" },
-      });
-      if (result.status !== "committed") {
-        console.warn("[AssistantGateway][DualWrite] terminal record queued", {
-          runId: terminal.runId,
-          sessionKey: terminal.sessionKey,
-          actionType: terminal.actionType,
-          status: result.status,
-        });
-      }
+      await handleTerminalRecord(
+        {
+          dualWriteCoordinator,
+          watermarkStore,
+          onWarn: (message, meta) => {
+            if (message === "terminal-record-queued") {
+              console.warn("[AssistantGateway][DualWrite] terminal record queued", meta ?? {});
+              return;
+            }
+            if (message === "terminal-watermark-apply-failed") {
+              console.warn("[AssistantGateway][WatermarkStore] terminal apply failed", meta ?? {});
+              return;
+            }
+            if (message === "terminal-timeline-offset-missing") {
+              console.warn(
+                "[AssistantGateway][WatermarkStore] timeline offset missing",
+                meta ?? {}
+              );
+              return;
+            }
+            console.warn("[AssistantGateway][TerminalRecord]", message, meta ?? {});
+          },
+        },
+        terminal
+      );
     },
   },
   runAgent
@@ -380,13 +420,6 @@ const heartbeatConfig: HeartbeatConfig = {
 };
 
 const heartbeatHandle = startHeartbeat(heartbeatConfig);
-const watermarkStore = createWatermarkStore({
-  path: join(WORKSPACE_DIR, "memory", "watermarks.json"),
-  timelinePath: TIMELINE_PATH,
-  onWarn: (message, meta) => {
-    console.warn("[AssistantGateway][WatermarkStore]", message, meta ?? {});
-  },
-});
 const pendingFlusher = createPendingFlusher({
   timelinePath: TIMELINE_PATH,
   watermarkStore,

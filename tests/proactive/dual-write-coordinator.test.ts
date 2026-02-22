@@ -63,6 +63,7 @@ describe("dual-write-coordinator", () => {
     const coordinator = createDualWriteCoordinator({
       appendTimelineRecord: async (record) => {
         timelineWritten.push(record.uid);
+        return { offset: 42 };
       },
       appendSessionRecord: async (record) => {
         if (sessionFailOnce) {
@@ -79,6 +80,7 @@ describe("dual-write-coordinator", () => {
       sessionRecord: makeRecord("uid-2", "event"),
     });
     assert.equal(result.status, "pending-session-backfill");
+    assert.equal(result.timelineOffset, 42);
     assert.equal(coordinator.hasPendingSessionBackfill("uid-2"), true);
     assert.deepEqual(timelineWritten, ["uid-2"]);
     assert.deepEqual(sessionWritten, []);
@@ -94,8 +96,25 @@ describe("dual-write-coordinator", () => {
       sessionRecord: makeRecord("uid-2", "event"),
     });
     assert.equal(duplicate.status, "committed");
+    assert.equal(duplicate.timelineOffset, 42);
     assert.deepEqual(timelineWritten, ["uid-2"]);
     assert.deepEqual(sessionWritten, ["uid-2"]);
+  });
+
+  it("timeline append が成功したとき committed に timelineOffset を含める", async () => {
+    const coordinator = createDualWriteCoordinator({
+      appendTimelineRecord: async () => ({ offset: 128 }),
+      appendSessionRecord: async () => {},
+    });
+
+    const result = await coordinator.appendAssistant({
+      uid: "uid-offset-1",
+      timelineRecord: makeRecord("uid-offset-1", "action"),
+      sessionRecord: makeRecord("uid-offset-1", "action"),
+    });
+
+    assert.equal(result.status, "committed");
+    assert.equal(result.timelineOffset, 128);
   });
 
   it("backfill が長時間未解消なら health warning を出す", async () => {
