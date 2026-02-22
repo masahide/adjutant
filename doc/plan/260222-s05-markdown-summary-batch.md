@@ -200,7 +200,10 @@ type SessionSummaryChunk = {
   "schema": "adjutant.summary.batch.watermark.v1",
   "updatedAt": "2026-02-22T10:05:00.000Z",
   "sessions": {
-    "main": { "lastProcessedOffset": 18240, "lastProcessedTs": "2026-02-22T10:02:00.000Z" }
+    "state:main.jsonl": {
+      "lastProcessedOffset": 18240,
+      "lastProcessedTs": "2026-02-22T10:02:00.000Z"
+    }
   }
 }
 ```

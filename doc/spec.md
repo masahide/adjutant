@@ -44,7 +44,6 @@ Adjutant は Slack Desktop の CDP イベントを収集し、`NormalizedEvent` 
 ### 2.2 未実装
 
 - GitHub / git-local の収集
-- 日次 Markdown 要約バッチ
 - `POLICY_ROUTING.json` の実ルーティング適用（priority/quiet-hours/cooldown の反映）
 - 通知キューの永続化（現状はインメモリ）
 - 実行中ランへの steer / action 承認 / run 状態追跡 API
@@ -364,6 +363,13 @@ flowchart LR
   - 抽出: `user/assistant` のみ、`/` で始まる command 行を除外、filter 後 slice（既定 15）
   - 出力: `memory/YYYY-MM-DD.md` へ append
   - checkpoint: `<stateDir>/agents/<agentId>/summary-batch-watermark.json`
+  - checkpoint `sessions` のキーは絶対パスではなく相対安定キー（`state:<relpath>` / `legacy:<relpath>`）を使う
+  - 旧 checkpoint（絶対パスキー）は読取互換で受理し、次回保存で相対安定キーへ移行する
+  - `maxSessions` 上限時は `lastProcessedTs` が古いもの（未処理含む）を優先し、固定ファイル飢餓を防ぐ
+  - transcript が truncate/rotate で縮小した場合は `previousOffset > fileSize` を検知して offset を 0 に戻し再走査する
+  - 日付グループ追記が途中で失敗した場合は、成功済みグループ分の offset まで watermark を前進させ重複追記を抑止する
+  - JSONL 最終行が改行なしでも 1 行として解析する
+  - バッチ実行は単一 in-flight（実行中 tick は skip）で重複実行を防ぐ
 
 ### 13.2 ルーティングパイプライン v1.5
 

@@ -13,6 +13,21 @@ type SummaryLine = {
   sessionKey?: string;
 };
 
+type ParsedSummaryLine = SummaryLine & {
+  endOffset: number;
+};
+
+type SessionSource = {
+  id: "state" | "legacy";
+  dir: string;
+};
+
+type SessionFileCandidate = {
+  filePath: string;
+  source: SessionSource;
+  watermarkKey: string;
+};
+
 export type SummaryBatchWatermarkV1 = {
   schema: typeof SUMMARY_BATCH_WATERMARK_SCHEMA_V1;
   updatedAt: string;
@@ -45,7 +60,21 @@ export type MarkdownSummaryBatchResult = {
 };
 
 export type MarkdownSummaryBatchService = {
-  runOnce: () => Promise<MarkdownSummaryBatchResult>;
+  runOnce: (
+    overrides?: Partial<
+      Pick<
+        MarkdownSummaryBatchRunOptions,
+        | "workspaceDir"
+        | "timezone"
+        | "sessionTranscriptsDir"
+        | "watermarkPath"
+        | "messages"
+        | "maxSessions"
+        | "legacySessionTranscriptsDir"
+        | "now"
+      >
+    >
+  ) => Promise<MarkdownSummaryBatchResult>;
 };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -83,7 +112,7 @@ function normalizeText(value: unknown): string | undefined {
   if (parts.length === 0) {
     return undefined;
   }
-  return parts.join("\n");
+  return parts.join(" ");
 }
 
 function normalizeIsoTimestamp(value: unknown): string | undefined {
@@ -304,7 +333,7 @@ async function appendDailySummary(
   try {
     const info = await stat(filePath);
     if (info.size > 0) {
-      prefix = "\n";
+      prefix = "\n\n";
     }
   } catch (error) {
     const errno = error as NodeJS.ErrnoException;
@@ -341,6 +370,78 @@ function buildSummaryEntry(params: {
   ].join("\n");
 }
 
+function normalizeRelativePath(input: string): string {
+  return input.replaceAll("\\", "/");
+}
+
+function createWatermarkKey(source: SessionSource, filePath: string): string {
+  const rel = relative(resolve(source.dir), resolve(filePath));
+  if (!rel || rel.startsWith("..")) {
+    return `${source.id}:${basename(filePath)}`;
+  }
+  return `${source.id}:${normalizeRelativePath(rel)}`;
+}
+
+function resolveWatermarkState(
+  watermark: SummaryBatchWatermarkV1,
+  candidate: SessionFileCandidate
+): {
+  key: string;
+  state?: { lastProcessedOffset: number; lastProcessedTs?: string };
+  legacyAbsoluteKey?: string;
+} {
+  const current = watermark.sessions[candidate.watermarkKey];
+  if (current) {
+    return { key: candidate.watermarkKey, state: current };
+  }
+  const legacyAbsoluteKey = resolve(candidate.filePath);
+  const legacy = watermark.sessions[legacyAbsoluteKey];
+  if (legacy) {
+    return {
+      key: candidate.watermarkKey,
+      state: legacy,
+      legacyAbsoluteKey,
+    };
+  }
+  return { key: candidate.watermarkKey };
+}
+
+function rankCandidateForScheduling(state?: {
+  lastProcessedOffset: number;
+  lastProcessedTs?: string;
+}): number {
+  if (!state?.lastProcessedTs) {
+    return Number.NEGATIVE_INFINITY;
+  }
+  const parsed = Date.parse(state.lastProcessedTs);
+  if (!Number.isFinite(parsed)) {
+    return Number.NEGATIVE_INFINITY;
+  }
+  return parsed;
+}
+
+function listJsonlLinesWithOffsets(
+  raw: Buffer,
+  fromOffset: number
+): Array<{ line: string; endOffset: number }> {
+  const lines: Array<{ line: string; endOffset: number }> = [];
+  let cursor = fromOffset;
+  while (cursor < raw.length) {
+    const newlineIndex = raw.indexOf(0x0a, cursor);
+    if (newlineIndex === -1) {
+      const tailBuffer = raw.subarray(cursor, raw.length);
+      const tailText = tailBuffer.toString("utf8").replace(/\r$/, "");
+      lines.push({ line: tailText, endOffset: raw.length });
+      break;
+    }
+    const lineBuffer = raw.subarray(cursor, newlineIndex);
+    const text = lineBuffer.toString("utf8").replace(/\r$/, "");
+    lines.push({ line: text, endOffset: newlineIndex + 1 });
+    cursor = newlineIndex + 1;
+  }
+  return lines;
+}
+
 export async function runMarkdownSummaryBatch(
   options: MarkdownSummaryBatchRunOptions
 ): Promise<MarkdownSummaryBatchResult> {
@@ -363,28 +464,45 @@ export async function runMarkdownSummaryBatch(
     });
   }
 
-  const sourceDirs: string[] = [options.sessionTranscriptsDir];
+  const sourceDirs: SessionSource[] = [{ id: "state", dir: options.sessionTranscriptsDir }];
   const legacyDir =
     options.legacySessionTranscriptsDir?.trim() ||
     resolveLegacyWorkspaceSessionsDir(options.workspaceDir);
   if (legacyDir !== options.sessionTranscriptsDir) {
-    sourceDirs.push(legacyDir);
+    sourceDirs.push({ id: "legacy", dir: legacyDir });
   }
 
-  const uniqueFiles = new Set<string>();
-  for (const dir of sourceDirs) {
+  const candidatesByPath = new Map<string, SessionFileCandidate>();
+  for (const source of sourceDirs) {
     try {
-      for (const filePath of await listJsonlFiles(dir)) {
-        uniqueFiles.add(resolve(filePath));
+      for (const filePath of await listJsonlFiles(source.dir)) {
+        const absolutePath = resolve(filePath);
+        if (candidatesByPath.has(absolutePath)) {
+          continue;
+        }
+        candidatesByPath.set(absolutePath, {
+          filePath: absolutePath,
+          source,
+          watermarkKey: createWatermarkKey(source, absolutePath),
+        });
       }
     } catch (error) {
       warn("markdown-summary-list-jsonl-failed", {
-        dir,
+        dir: source.dir,
         reason: error instanceof Error ? error.message : String(error),
       });
     }
   }
-  const sessionFiles = Array.from(uniqueFiles).sort().slice(0, maxSessions);
+  const sessionFiles = Array.from(candidatesByPath.values())
+    .sort((left, right) => {
+      const leftRank = rankCandidateForScheduling(resolveWatermarkState(watermark, left).state);
+      const rightRank = rankCandidateForScheduling(resolveWatermarkState(watermark, right).state);
+      if (leftRank !== rightRank) {
+        return leftRank - rightRank;
+      }
+      return left.filePath.localeCompare(right.filePath);
+    })
+    .slice(0, maxSessions);
 
   let processedSessions = 0;
   let writtenEntries = 0;
@@ -395,7 +513,8 @@ export async function runMarkdownSummaryBatch(
     sessions: { ...watermark.sessions },
   };
 
-  for (const filePath of sessionFiles) {
+  for (const sessionFile of sessionFiles) {
+    const filePath = sessionFile.filePath;
     processedSessions += 1;
     let raw: Buffer;
     let fileSize = 0;
@@ -410,21 +529,38 @@ export async function runMarkdownSummaryBatch(
       continue;
     }
 
-    const state = nextWatermark.sessions[filePath];
+    const stateInfo = resolveWatermarkState(nextWatermark, sessionFile);
+    const state = stateInfo.state;
     const previousOffset =
       typeof state?.lastProcessedOffset === "number" && Number.isFinite(state.lastProcessedOffset)
         ? Math.max(0, Math.floor(state.lastProcessedOffset))
         : 0;
-    const fromOffset = Math.min(previousOffset, fileSize);
+    const offsetResetByTruncate = previousOffset > fileSize;
+    if (offsetResetByTruncate) {
+      warn("markdown-summary-offset-reset", {
+        sessionKey: stateInfo.key,
+        filePath,
+        previousOffset,
+        fileSize,
+      });
+    }
+    const fromOffset = offsetResetByTruncate ? 0 : previousOffset;
+    const nowIso = now.toISOString();
     if (fromOffset >= fileSize) {
+      nextWatermark.sessions[stateInfo.key] = {
+        lastProcessedOffset: fileSize,
+        lastProcessedTs: nowIso,
+      };
+      if (stateInfo.legacyAbsoluteKey) {
+        delete nextWatermark.sessions[stateInfo.legacyAbsoluteKey];
+      }
       continue;
     }
 
-    const chunkText = raw.subarray(fromOffset).toString("utf8");
-    const parsed: SummaryLine[] = [];
+    const parsed: ParsedSummaryLine[] = [];
     let parsedSessionKey: string | undefined;
-    const chunkLines = chunkText.split(/\r?\n/);
-    for (const line of chunkLines) {
+    for (const chunkLine of listJsonlLinesWithOffsets(raw, fromOffset)) {
+      const line = chunkLine.line;
       if (!line.trim()) {
         continue;
       }
@@ -440,7 +576,10 @@ export async function runMarkdownSummaryBatch(
           skippedEntries += 1;
           continue;
         }
-        parsed.push(extracted);
+        parsed.push({
+          ...extracted,
+          endOffset: chunkLine.endOffset,
+        });
         if (!parsedSessionKey && extracted.sessionKey) {
           parsedSessionKey = extracted.sessionKey;
         }
@@ -451,55 +590,106 @@ export async function runMarkdownSummaryBatch(
 
     const filtered = parsed.slice(-messages);
     if (filtered.length === 0) {
-      nextWatermark.sessions[filePath] = {
+      nextWatermark.sessions[stateInfo.key] = {
         lastProcessedOffset: fileSize,
-        lastProcessedTs: state?.lastProcessedTs,
+        lastProcessedTs: nowIso,
       };
+      if (stateInfo.legacyAbsoluteKey) {
+        delete nextWatermark.sessions[stateInfo.legacyAbsoluteKey];
+      }
       continue;
     }
 
     const sessionKey = parsedSessionKey || basename(filePath, ".jsonl");
-    const grouped = new Map<string, string[]>();
-    let lastProcessedTs = state?.lastProcessedTs;
-    for (const item of filtered) {
-      const tsIso = item.tsIso ?? now.toISOString();
-      lastProcessedTs = tsIso;
-      const dateKey = formatDateKeyInTimezone(new Date(tsIso), options.timezone);
-      const current = grouped.get(dateKey) ?? [];
-      current.push(`${item.role}: ${collapseMarkdownLine(item.text)}`);
-      grouped.set(dateKey, current);
-    }
+    const sourcePath = toSourcePathLabel(
+      filePath,
+      sourceDirs.map((source) => source.dir)
+    );
+    let progressOffset = fromOffset;
+    let progressTs = state?.lastProcessedTs ?? nowIso;
+    let failed = false;
 
-    const sourcePath = toSourcePathLabel(filePath, sourceDirs);
-    let wroteAllGroups = true;
-    for (const [dateKey, lines] of grouped.entries()) {
+    let activeDateKey: string | null = null;
+    let activeLines: string[] = [];
+    let activeEndOffset = fromOffset;
+    let activeLastTs = nowIso;
+
+    const flushSegment = async (): Promise<boolean> => {
+      if (!activeDateKey || activeLines.length === 0) {
+        return true;
+      }
       const markdown = buildSummaryEntry({
         sessionKey,
         sourcePath,
-        lines,
+        lines: activeLines,
       });
       try {
-        await appendDailySummary(options.workspaceDir, dateKey, markdown);
-        writtenEntries += lines.length;
+        await appendDailySummary(options.workspaceDir, activeDateKey, markdown);
+        writtenEntries += activeLines.length;
+        progressOffset = activeEndOffset;
+        progressTs = activeLastTs;
+        return true;
       } catch (error) {
-        wroteAllGroups = false;
         warn("markdown-summary-write-failed", {
-          dateKey,
+          dateKey: activeDateKey,
           sessionKey,
           sourcePath,
           reason: error instanceof Error ? error.message : String(error),
         });
-        break;
+        return false;
       }
+    };
+
+    for (const item of filtered) {
+      const tsIso = item.tsIso ?? nowIso;
+      const dateKey = formatDateKeyInTimezone(new Date(tsIso), options.timezone);
+      const summaryLine = `${item.role}: ${collapseMarkdownLine(item.text)}`;
+
+      if (activeDateKey === null) {
+        activeDateKey = dateKey;
+        activeLines = [summaryLine];
+        activeEndOffset = item.endOffset;
+        activeLastTs = tsIso;
+        continue;
+      }
+      if (activeDateKey !== dateKey) {
+        if (!(await flushSegment())) {
+          failed = true;
+          break;
+        }
+        activeDateKey = dateKey;
+        activeLines = [summaryLine];
+        activeEndOffset = item.endOffset;
+        activeLastTs = tsIso;
+        continue;
+      }
+      activeLines.push(summaryLine);
+      activeEndOffset = item.endOffset;
+      activeLastTs = tsIso;
     }
 
-    if (!wroteAllGroups) {
+    if (!failed) {
+      failed = !(await flushSegment());
+    }
+
+    if (failed) {
+      nextWatermark.sessions[stateInfo.key] = {
+        lastProcessedOffset: progressOffset,
+        lastProcessedTs: progressOffset > fromOffset ? progressTs : nowIso,
+      };
+      if (stateInfo.legacyAbsoluteKey) {
+        delete nextWatermark.sessions[stateInfo.legacyAbsoluteKey];
+      }
       continue;
     }
-    nextWatermark.sessions[filePath] = {
+
+    nextWatermark.sessions[stateInfo.key] = {
       lastProcessedOffset: fileSize,
-      lastProcessedTs,
+      lastProcessedTs: progressTs,
     };
+    if (stateInfo.legacyAbsoluteKey) {
+      delete nextWatermark.sessions[stateInfo.legacyAbsoluteKey];
+    }
   }
 
   try {
@@ -523,6 +713,7 @@ export function createMarkdownSummaryBatchService(
   options: MarkdownSummaryBatchRunOptions
 ): MarkdownSummaryBatchService {
   return {
-    runOnce: async () => await runMarkdownSummaryBatch(options),
+    runOnce: async (overrides) =>
+      await runMarkdownSummaryBatch({ ...options, ...(overrides ?? {}) }),
   };
 }

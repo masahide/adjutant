@@ -481,12 +481,25 @@ const markdownSummaryBatchService = createMarkdownSummaryBatchService({
     console.warn("[AssistantGateway][MarkdownSummaryBatch]", message, meta ?? {});
   },
 });
+let markdownSummaryBatchRunning = false;
 const markdownSummaryBatchTimer =
   MARKDOWN_SUMMARY_BATCH.enabled && MARKDOWN_SUMMARY_BATCH.intervalMs > 0
     ? setInterval(() => {
-        void markdownSummaryBatchService.runOnce().catch((error) => {
-          console.warn("[AssistantGateway][MarkdownSummaryBatch] run failed", toReason(error));
-        });
+        if (markdownSummaryBatchRunning) {
+          console.warn(
+            "[AssistantGateway][MarkdownSummaryBatch] skipped: previous run is still in-flight"
+          );
+          return;
+        }
+        markdownSummaryBatchRunning = true;
+        void markdownSummaryBatchService
+          .runOnce()
+          .catch((error) => {
+            console.warn("[AssistantGateway][MarkdownSummaryBatch] run failed", toReason(error));
+          })
+          .finally(() => {
+            markdownSummaryBatchRunning = false;
+          });
       }, MARKDOWN_SUMMARY_BATCH.intervalMs)
     : null;
 

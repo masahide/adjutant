@@ -15,6 +15,14 @@ Slack Desktop の Chrome DevTools Protocol (CDP) からイベントを収集し�
 
 GitHub / ローカル Git 収集は未実装で、仕様メモは `doc/spec.md` にあります。日次 Markdown 要約は `ADJUTANT_MARKDOWN_SUMMARY_BATCH_ENABLED=1` で有効化できます。
 
+日次 Markdown 要約バッチの実装挙動（抜粋）は次のとおりです。
+
+- 実行は単一 in-flight（前回実行中の tick は skip）
+- checkpoint キーは絶対パスではなく相対安定キー（`state:<relpath>` / `legacy:<relpath>`）
+- `maxSessions` 上限時は未処理/古いもの優先で巡回（飢餓回避）
+- transcript truncate/rotate（サイズ縮小）時は offset を自動リセットして再走査
+- JSONL 最終行が改行なしでも処理
+
 ## ディレクトリ構成
 
 ```text
