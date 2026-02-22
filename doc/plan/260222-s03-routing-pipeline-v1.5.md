@@ -342,7 +342,85 @@ Watermarks.json の例:
 - 各層の主要クラス関係を示すクラス図
 - Watermark 更新の状態遷移図
 
-### 5.2 パイプラインフロー図
+### 5.2 クラス図 Class Diagram
+
+```mermaid
+classDiagram
+  class ChannelNotificationPipeline {
+    +enqueue(input: ChannelNotificationInput): void
+  }
+
+  class RuleTriage {
+    +classify(event, channelTypeCache): TriageResult
+  }
+
+  class AttentionWindow {
+    -buffers: Map~sessionKey, ChunkBuffer~
+    +push(sessionKey, event, config): void
+    +onFlush: (sessionKey, chunk) => void
+    -scheduleFlush(sessionKey): void
+  }
+
+  class ChunkBuffer {
+    +events: NormalizedEvent[]
+    +firstEventAt: number
+    +lastEventAt: number
+    +idleTimer: NodeJS.Timeout
+    +maxWaitTimer: NodeJS.Timeout
+  }
+
+  class BatchClassifier {
+    +classify(chunk, transcript, policy): RouteDecision
+    -callRouteLlm(prompt): ToolCallResult
+    -buildPrompt(chunk, transcript, policy): string
+  }
+
+  class GlobalConcurrencyQueue {
+    -running: number
+    -dmRunning: number
+    -maxRunningDM: number
+    -totalSlots: number
+    -queue: PriorityQueue~QueueEntry~
+    +enqueue(request): Promise~void~
+    +onSlotFree(): void
+    -tryDispatch(): void
+    -applyAging(): void
+  }
+
+  class PendingFlusher {
+    -watermarkStore: WatermarkStore
+    -timelinePath: string
+    +tick(): Promise~void~
+    -scanTimeline(fromOffset): ScanResult
+    -evaluateSession(key, records): FlushDecision
+  }
+
+  class WatermarkStore {
+    +load(): WatermarksV1
+    +save(data: WatermarksV1): void
+    +advanceScanOffset(offset): void
+    +advanceHandled(sessionKey, offset): void
+    +updateOpenPosts(sessionKey, ts, count): void
+  }
+
+  class DeepHeartbeat {
+    +run(): HeartbeatRunResult
+    -executeWithToolCall(): ToolCallResult
+  }
+
+  ChannelNotificationPipeline --> RuleTriage
+  ChannelNotificationPipeline --> AttentionWindow
+  AttentionWindow --> BatchClassifier
+  BatchClassifier --> GlobalConcurrencyQueue
+  PendingFlusher --> WatermarkStore
+  PendingFlusher --> GlobalConcurrencyQueue
+  DeepHeartbeat --> GlobalConcurrencyQueue
+  AttentionWindow *-- ChunkBuffer
+```
+
+### 5.3 その他の図 Optional
+
+#### パイプラインフロー図
 
 ```
 NormalizedEvent (from SlackPlugin.emit())
@@ -405,83 +483,7 @@ NormalizedEvent (from SlackPlugin.emit())
 └──────────────────────────────────┘
 ```
 
-### 5.3 クラス図
-
-```mermaid
-classDiagram
-  class RuleTriage {
-    +classify(event, channelTypeCache): TriageResult
-  }
-
-  class AttentionWindow {
-    -buffers: Map~sessionKey, ChunkBuffer~
-    +push(sessionKey, event, config): void
-    +onFlush: (sessionKey, chunk) => void
-    -scheduleFlush(sessionKey): void
-  }
-
-  class ChunkBuffer {
-    +events: NormalizedEvent[]
-    +firstEventAt: number
-    +lastEventAt: number
-    +idleTimer: NodeJS.Timeout
-    +maxWaitTimer: NodeJS.Timeout
-  }
-
-  class BatchClassifier {
-    +classify(chunk, transcript, policy): RouteDecision
-    -callRouteLlm(prompt): ToolCallResult
-    -buildPrompt(chunk, transcript, policy): string
-  }
-
-  class GlobalConcurrencyQueue {
-    -running: number
-    -dmRunning: number
-    -maxRunningDM: number
-    -totalSlots: number
-    -queue: PriorityQueue~QueueEntry~
-    +enqueue(request): Promise~void~
-    +onSlotFree(): void
-    -tryDispatch(): void
-    -applyAging(): void
-  }
-
-  class PendingFlusher {
-    -watermarkStore: WatermarkStore
-    -timelinePath: string
-    +tick(): Promise~void~
-    -scanTimeline(fromOffset): ScanResult
-    -evaluateSession(key, records): FlushDecision
-  }
-
-  class WatermarkStore {
-    +load(): WatermarksV1
-    +save(data: WatermarksV1): void
-    +advanceScanOffset(offset): void
-    +advanceHandled(sessionKey, offset): void
-    +updateOpenPosts(sessionKey, ts, count): void
-  }
-
-  class DeepHeartbeat {
-    +run(): HeartbeatRunResult
-    -executeWithToolCall(): ToolCallResult
-  }
-
-  class ChannelNotificationPipeline {
-    +enqueue(input: ChannelNotificationInput): void
-  }
-
-  ChannelNotificationPipeline --> RuleTriage
-  ChannelNotificationPipeline --> AttentionWindow
-  AttentionWindow --> BatchClassifier
-  BatchClassifier --> GlobalConcurrencyQueue
-  PendingFlusher --> WatermarkStore
-  PendingFlusher --> GlobalConcurrencyQueue
-  DeepHeartbeat --> GlobalConcurrencyQueue
-  AttentionWindow *-- ChunkBuffer
-```
-
-### 5.4 Watermark 状態遷移
+#### Watermark 状態遷移
 
 ```mermaid
 stateDiagram-v2
@@ -548,7 +550,15 @@ stateDiagram-v2
 
 ## 7. 実装タスクリスト Implementation Plan
 
-### Phase 1: データモデル基盤
+### Phase 1: 設計と準備
+
+- [ ] 要件と仕様の確定（§2.4 受け入れ条件の最終確認）
+- [ ] インターフェース契約の確定（§4 のスキーマと例の確定）
+      対象: `src/proactive/types.ts`（新設）に `TimelineRecordV1_5`, `WatermarksV1`, `PolicyRoutingV1`, `RouteDecision` 等の型定義を作成
+- [ ] Mermaid 図の作成・更新（§5.2 クラス図、§5.3 フロー図・状態遷移図）
+- [ ] テスト基盤の確認（`node:test` + `assert/strict`、tmpdir I/O テスト用ユーティリティの有無）
+
+### Phase 2: データモデル基盤
 
 - [ ] Test `TimelineRecordV1_5` の型定義と validate 関数の失敗テスト Red
       対象: `tests/proactive/timeline-record.test.ts`（新設）
@@ -566,8 +576,11 @@ stateDiagram-v2
       対象: `src/proactive/dual-write-coordinator.ts`
 - [ ] Impl エージェント終端レコード（`assistant_final` / `assistant_aborted` / `assistant_error`）の timeline 書き込み
       対象: `src/assistant/agent-runner.ts`（finally ブロック追加）
+- [ ] Integration 終端レコード書き込み後に watermark が正しく進行/不進行するか確認
+      対象: `tests/proactive/watermark-store.test.ts`
+- [ ] Docs §4.2 データモデルとスキーマの型定義との整合確認
 
-### Phase 2: 層 0 + 層 1（ルール判定 + アテンションウィンドウ）
+### Phase 3: 層 0 + 層 1（ルール判定 + アテンションウィンドウ）
 
 - [ ] Test `RuleTriage` の self/DM/mention/channel 分類テスト Red
       対象: `tests/proactive/rule-triage.test.ts`（新設）
@@ -579,8 +592,11 @@ stateDiagram-v2
       対象: `src/proactive/attention-window.ts`（新設）
 - [ ] Refactor `ChannelNotificationPipeline` が `RuleTriage` + `AttentionWindow` を使うよう改修
       対象: `src/proactive/channel-notification-pipeline.ts`
+- [ ] Integration DM イベント → micro-batch → 即時ルートの E2E 確認
+      対象: `tests/proactive/channel-notification-pipeline.test.ts`
+- [ ] Docs 層 0/1 の設定値と挙動を §4.1 と照合
 
-### Phase 3: 層 3（グローバル並行制御キュー）
+### Phase 4: 層 3（グローバル並行制御キュー）
 
 - [ ] Test `GlobalConcurrencyQueue` の totalSlots/maxRunningDM/work-conserving/aging-step/priority テスト Red
       対象: `tests/proactive/global-concurrency-queue.test.ts`（新設）
@@ -588,8 +604,11 @@ stateDiagram-v2
       対象: `src/proactive/global-concurrency-queue.ts`（新設）
 - [ ] Refactor エージェント起動パスを `GlobalConcurrencyQueue` 経由に統一
       対象: `src/proactive/channel-notification-pipeline.ts`, `src/assistant/chat-handler.ts`
+- [ ] Integration 全スロット使用中 → DM burst slot → 非 DM 枠保証の E2E 確認
+      対象: `tests/proactive/global-concurrency-queue.test.ts`
+- [ ] Docs §4.3 エラーと例外の aging/work-conserving 記述と実装の照合
 
-### Phase 4: 層 2（バッチ分類）
+### Phase 5: 層 2（バッチ分類）
 
 - [ ] Test `BatchClassifier` のツール呼び出し parse / confidence 閾値 / タイムアウト テスト Red
       対象: `tests/proactive/batch-classifier.test.ts`（新設）
@@ -599,8 +618,11 @@ stateDiagram-v2
       対象: `src/proactive/routing-tools.ts`（新設）
 - [ ] Refactor `AttentionWindow.onFlush` → `BatchClassifier` → `GlobalConcurrencyQueue` の接続
       対象: `src/proactive/channel-notification-pipeline.ts`
+- [ ] Integration チャンネル投稿 → window-batch → Route LLM → enqueue の E2E 確認
+      対象: `tests/proactive/channel-notification-pipeline.test.ts`
+- [ ] Docs Route LLM プロンプト例（§4.4）と実装の照合
 
-### Phase 5: 層 4（Pending Flusher）
+### Phase 6: 層 4（Pending Flusher）
 
 - [ ] Test `PendingFlusher` の差分走査 / sessionKey 別境界 / 他者返信抑制 / 旧レコード無視 テスト Red
       対象: `tests/proactive/pending-flusher.test.ts`（新設）
@@ -608,8 +630,11 @@ stateDiagram-v2
       対象: `src/proactive/pending-flusher.ts`（新設）
 - [ ] Refactor `heartbeat-scanner.ts` の未処理走査ロジックを `PendingFlusher` に移管
       対象: `src/proactive/heartbeat-scanner.ts`（走査部分を削除/委譲）
+- [ ] Integration Flusher + Watermark: timeline 書き込み → tick → 未対応検出 → エージェント起動
+      対象: `tests/proactive/pending-flusher.test.ts`
+- [ ] Docs §2.4 AC4（sessionKey 別境界）の動作確認と照合
 
-### Phase 6: 層 5（Deep Heartbeat 改修）
+### Phase 7: 層 5（Deep Heartbeat 改修）
 
 - [ ] Test `DeepHeartbeat` の `report_heartbeat_status` ツール強制テスト Red
       対象: `tests/assistant/heartbeat-runner.test.ts`
@@ -617,23 +642,30 @@ stateDiagram-v2
       対象: `src/assistant/heartbeat-runner.ts`, `src/proactive/routing-tools.ts`
 - [ ] Refactor Heartbeat から未処理救済ロジックを完全に除去
       対象: `src/assistant/heartbeat-runner.ts`
+- [ ] Integration Heartbeat 実行 → ツール呼び出し → GlobalConcurrencyQueue 連携確認
+      対象: `tests/assistant/heartbeat-runner.test.ts`
+- [ ] Docs §2.4 AC7（HEARTBEAT_OK 文字列マッチ非使用）の確認
 
-### Phase 7: オブザーバビリティ
+### Phase 8: オブザーバビリティ
 
-- [ ] Impl 4 メトリクスのログ出力追加
+- [ ] Test メトリクス記録の失敗テスト Red（各メトリクスのカウント/タイムスタンプ記録）
+      対象: `tests/proactive/metrics.test.ts`（新設）
+- [ ] Impl 4 メトリクスのログ出力追加 Green
       - `route_llm_calls_per_hour`: `BatchClassifier` に計測追加
       - `flusher_fire_count`: `PendingFlusher` に計測追加
       - `agent_invocations_by_source`: `GlobalConcurrencyQueue` に source 別集計追加
       - `event_to_response_p95_ms`: パイプライン入口と出口にタイムスタンプ追加
       対象: 各モジュール + `src/proactive/metrics.ts`（新設）
+- [ ] Refactor メトリクス収集の共通インターフェース整理
+      対象: `src/proactive/metrics.ts`
 
-### Phase 8: 統合と検証
+### Phase 9: 統合と検証
 
 - [ ] 全体テスト実行（`pnpm run check`）
 - [ ] E2E シナリオ検証（DM 即時 / チャンネルバッチ / Flusher 救済 / Heartbeat 分離）
-- [ ] 旧レコード混在時のマイグレーション動作確認
-- [ ] ログとメトリクスの出力確認
-- [ ] `doc/spec-unified.md` の差分更新
+- [ ] エッジケースの動作確認（旧レコード混在 / truncate 復旧 / SIGKILL 後の再起動）
+- [ ] ログと例外の確認（想定外入力 / タイムアウト / リトライ）
+- [ ] ドキュメント更新（`doc/spec-unified.md` の差分更新）
 
 ## 8. 完了の定義 Definition of Done
 
