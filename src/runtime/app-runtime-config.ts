@@ -35,6 +35,8 @@ export type HeartbeatRuntimeConfig = {
 export type SlackRuntimeConfig = {
   retryBaseMs: number;
   retryMaxMs: number;
+  defaultAccountId: string;
+  domCaptureDisabled: boolean;
 };
 
 export type AppRuntimeConfig = {

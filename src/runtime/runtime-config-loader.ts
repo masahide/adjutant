@@ -22,6 +22,7 @@ export type RouteLlmRuntimeConfig = {
 
 export type CollectorRuntimeConfig = {
   timezone: string;
+  domCaptureDisabled: boolean;
   debugUiEnabled: boolean;
   debugUiPort: number;
   cdpEventLogEnabled: boolean;
@@ -38,6 +39,7 @@ export type AssistantGatewayRuntimeConfig = {
   channelsConfigPath?: string;
   dualWriteRetryIntervalMs: number;
   vitePort: number;
+  corsOrigin: string;
   openAiApiKey?: string;
   piCacheRetention: string;
 };
@@ -72,6 +74,7 @@ export function loadCollectorRuntimeConfig(params: {
 
   return {
     timezone: parseStringEnv(env.ADJUTANT_TZ, "Asia/Tokyo"),
+    domCaptureDisabled: parseBooleanEnv(env.ADJUTANT_DISABLE_DOM_CAPTURE, false),
     debugUiEnabled: parseBooleanEnv(env.ADJUTANT_DEBUG_UI, false),
     debugUiPort: parsePositiveIntEnv(env.ADJUTANT_DEBUG_UI_PORT, 8787),
     cdpEventLogEnabled: parseBooleanEnv(env.ADJUTANT_CDP_EVENT_LOG, false),
@@ -105,11 +108,14 @@ export function loadAssistantGatewayRuntimeConfig(
   const dataDir = parseStringEnv(env.ADJUTANT_DATA_DIR, "data");
   const workspaceDir = parseStringEnv(env.ADJUTANT_WORKSPACE_DIR, dataDir);
   const timezone = parseStringEnv(env.ADJUTANT_TZ, "Asia/Tokyo");
+  const vitePort = parsePositiveIntEnv(env.ADJUTANT_VITE_PORT, 5173);
   const timelinePath =
     env.ADJUTANT_TIMELINE_PATH?.trim() || join(workspaceDir, "memory", "timeline.jsonl");
   const idempotencyStorePath =
     env.ADJUTANT_IDEMPOTENCY_STORE_PATH?.trim() ||
     join(workspaceDir, "memory", "idempotency.jsonl");
+  const slackAccountId = parseStringEnv(env.ADJUTANT_SLACK_ACCOUNT_ID, "default");
+  const corsOrigin = env.ADJUTANT_CORS_ORIGIN?.trim() || `http://127.0.0.1:${String(vitePort)}`;
   const routeLlm = resolveRouteLlmRuntimeConfig(env);
 
   return {
@@ -146,6 +152,8 @@ export function loadAssistantGatewayRuntimeConfig(
       slack: {
         retryBaseMs: parsePositiveIntEnv(env.ADJUTANT_SLACK_RETRY_BASE_MS, 1000),
         retryMaxMs: parsePositiveIntEnv(env.ADJUTANT_SLACK_RETRY_MAX_MS, 10000),
+        defaultAccountId: slackAccountId,
+        domCaptureDisabled: parseBooleanEnv(env.ADJUTANT_DISABLE_DOM_CAPTURE, false),
       },
     },
     channelsConfigPath: env.ADJUTANT_CHANNELS_CONFIG_PATH?.trim() || undefined,
@@ -153,7 +161,8 @@ export function loadAssistantGatewayRuntimeConfig(
       env.ADJUTANT_DUAL_WRITE_RETRY_INTERVAL_MS,
       DEFAULT_DUAL_WRITE_RETRY_INTERVAL_MS
     ),
-    vitePort: parsePositiveIntEnv(env.ADJUTANT_VITE_PORT, 5173),
+    vitePort,
+    corsOrigin,
     openAiApiKey: env.OPENAI_API_KEY?.trim() || undefined,
     piCacheRetention: ensurePiCacheRetention(env),
   };

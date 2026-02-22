@@ -4,16 +4,9 @@ import { dirname, join, relative, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { chunkMarkdownByChars } from "./chunker.js";
 import { OpenAiEmbeddingProvider } from "./embedding-provider.js";
-import { MemorySearchError, normalizeMemorySearchError } from "./errors.js";
+import { MemorySearchError } from "./errors.js";
 import { MemoryPathGuard } from "./path-guard.js";
-import {
-  CHUNKS_TABLE,
-  FILES_TABLE,
-  FTS_TABLE,
-  SQL,
-  VECTOR_TABLE,
-  createVectorTableSql,
-} from "./sql.js";
+import { SQL, createVectorTableSql } from "./sql.js";
 import type {
   EmbeddingProvider,
   MemoryFileRecord,

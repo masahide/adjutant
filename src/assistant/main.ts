@@ -42,6 +42,7 @@ const SSE_REPLAY_BUFFER_SIZE = runtimeConfig.app.sse.replayBufferSize;
 const SSE_REPLAY_MAX_AGE_MS = runtimeConfig.app.sse.replayMaxAgeMs;
 const SLACK_RETRY_BASE_MS = runtimeConfig.app.slack.retryBaseMs;
 const SLACK_RETRY_MAX_MS = runtimeConfig.app.slack.retryMaxMs;
+const SLACK_DEFAULT_ACCOUNT_ID = runtimeConfig.app.slack.defaultAccountId;
 
 function toReason(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -184,6 +185,8 @@ pluginRegistry.register(
   createSlackChannelPlugin({
     dataDir: DATA_DIR,
     timezone: TIMEZONE,
+    defaultAccountId: SLACK_DEFAULT_ACCOUNT_ID,
+    domCaptureDisabled: runtimeConfig.app.slack.domCaptureDisabled,
     retryBaseMs: Number.isFinite(SLACK_RETRY_BASE_MS)
       ? Math.max(1, Math.floor(SLACK_RETRY_BASE_MS))
       : 1000,
@@ -221,6 +224,7 @@ const heartbeatHandle = startHeartbeat(heartbeatConfig);
 const api = createApiServer({
   port: PORT,
   host: HOST,
+  corsOrigin: runtimeConfig.corsOrigin,
   heartbeatProvider: {
     onHeartbeatEvent,
     getLastHeartbeatEvent,

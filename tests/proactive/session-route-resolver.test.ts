@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { afterEach, describe, it } from "node:test";
+import { describe, it } from "node:test";
 import type { NormalizedEvent } from "../../src/core/events.js";
 import {
   resolveAccountId,
@@ -19,20 +19,8 @@ function makeEvent(meta?: Record<string, unknown>): NormalizedEvent {
   };
 }
 
-const originalAccountEnv = process.env.ADJUTANT_SLACK_ACCOUNT_ID;
-
 describe("session-route-resolver", () => {
-  afterEach(() => {
-    if (originalAccountEnv === undefined) {
-      delete process.env.ADJUTANT_SLACK_ACCOUNT_ID;
-      return;
-    }
-    process.env.ADJUTANT_SLACK_ACCOUNT_ID = originalAccountEnv;
-  });
-
-  it("accountId 解決順: event.meta.account_id > configured > env > default", () => {
-    process.env.ADJUTANT_SLACK_ACCOUNT_ID = "env-account";
-
+  it("accountId 解決順: event.meta.account_id > configured > default", () => {
     const fromMeta = resolveAccountId({
       event: makeEvent({ account_id: "meta-account" }),
       configuredDefaultAccountId: "configured-account",
@@ -41,18 +29,12 @@ describe("session-route-resolver", () => {
       event: makeEvent(),
       configuredDefaultAccountId: "configured-account",
     });
-    const fromEnv = resolveAccountId({
-      event: makeEvent(),
-    });
-
-    delete process.env.ADJUTANT_SLACK_ACCOUNT_ID;
     const fromDefault = resolveAccountId({
       event: makeEvent(),
     });
 
     assert.equal(fromMeta, "meta-account");
     assert.equal(fromConfigured, "configured-account");
-    assert.equal(fromEnv, "env-account");
     assert.equal(fromDefault, "default");
   });
 

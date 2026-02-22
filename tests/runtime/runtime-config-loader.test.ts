@@ -13,6 +13,7 @@ describe("runtime-config-loader", () => {
       dataDir: "/tmp/adjutant-data",
       env: {
         ADJUTANT_TZ: "",
+        ADJUTANT_DISABLE_DOM_CAPTURE: "true",
         ADJUTANT_DEBUG_UI: "true",
         ADJUTANT_DEBUG_UI_PORT: "NaN",
         ADJUTANT_CDP_EVENT_LOG: "1",
@@ -23,6 +24,7 @@ describe("runtime-config-loader", () => {
     });
 
     assert.equal(config.timezone, "Asia/Tokyo");
+    assert.equal(config.domCaptureDisabled, true);
     assert.equal(config.debugUiEnabled, true);
     assert.equal(config.debugUiPort, 8787);
     assert.equal(config.cdpEventLogEnabled, true);
@@ -59,7 +61,24 @@ describe("runtime-config-loader", () => {
     assert.equal(config.app.routeLlm.model, "gpt-4.1-mini");
     assert.equal(config.app.routeLlm.timeoutMs, 1500);
     assert.equal(config.app.routeLlm.maxConcurrent, 2);
+    assert.equal(config.app.slack.defaultAccountId, "default");
+    assert.equal(config.app.slack.domCaptureDisabled, false);
+    assert.equal(config.corsOrigin, "http://127.0.0.1:5173");
     assert.equal(config.openAiApiKey, "test-key");
+  });
+
+  it("assistant 設定は CORS origin と Slack accountId を明示設定できる", () => {
+    const config = loadAssistantGatewayRuntimeConfig({
+      ADJUTANT_VITE_PORT: "5300",
+      ADJUTANT_CORS_ORIGIN: "https://adjutant.example.com",
+      ADJUTANT_SLACK_ACCOUNT_ID: "acc-123",
+      ADJUTANT_DISABLE_DOM_CAPTURE: "1",
+    } as NodeJS.ProcessEnv);
+
+    assert.equal(config.vitePort, 5300);
+    assert.equal(config.corsOrigin, "https://adjutant.example.com");
+    assert.equal(config.app.slack.defaultAccountId, "acc-123");
+    assert.equal(config.app.slack.domCaptureDisabled, true);
   });
 
   it("route LLM 設定は不正値を既定値へフォールバックする", () => {

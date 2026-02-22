@@ -14,12 +14,14 @@ export type HeartbeatProvider = {
 export type ApiServerConfig = {
   port: number;
   host: string;
+  corsOrigin: string;
   heartbeatProvider?: HeartbeatProvider;
 };
 
 const DEFAULT_CONFIG: ApiServerConfig = {
   port: 3100,
   host: "127.0.0.1",
+  corsOrigin: "*",
 };
 
 const KEEPALIVE_INTERVAL_MS = 15_000;
@@ -147,8 +149,8 @@ async function handleRequest(
   const method = req.method ?? "GET";
   const path = url.pathname;
 
-  // TODO: restrict CORS origin to Vite dev server / production domain
-  res.setHeader("Access-Control-Allow-Origin", "*");
+  const corsOrigin = cfg.corsOrigin.trim() || "*";
+  res.setHeader("Access-Control-Allow-Origin", corsOrigin);
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Last-Event-ID, Idempotency-Key");
 

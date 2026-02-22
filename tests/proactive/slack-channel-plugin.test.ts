@@ -175,4 +175,46 @@ describe("slack-channel-plugin", () => {
     assert.equal(sleepDurations.includes(5), true);
     assert.equal(warnings.includes("slack-plugin-start-failed"), true);
   });
+
+  it("domCaptureDisabled 設定を adapter 作成時に引き渡す", async () => {
+    const client = new FakeClient();
+    const captured: boolean[] = [];
+
+    const plugin = createSlackChannelPlugin({
+      dataDir: "data",
+      accountIds: ["acc-1"],
+      domCaptureDisabled: true,
+      connectToSlackPage: async () => ({
+        client: client as never,
+        slackUrl: "https://app.slack.com",
+      }),
+      createWriter: () => ({ append: async () => {} }),
+      createAdapter: (input) => {
+        captured.push(input.domCaptureDisabled);
+        return {
+          name: "slack-stub",
+          start: async () => {},
+          stop: async () => {},
+        } satisfies IngestionAdapter;
+      },
+      sleep: async () => {},
+    });
+
+    const abort = new AbortController();
+    const context: ChannelGatewayContext<unknown> = {
+      accountId: "acc-1",
+      runtime: undefined,
+      abortSignal: abort.signal,
+      emit: async () => {},
+      getStatus: () => ({ accountId: "acc-1" }),
+      setStatus: () => {},
+    };
+
+    const running = plugin.startAccount(context);
+    await waitUntil(() => captured.length > 0);
+    abort.abort();
+    await running;
+
+    assert.deepEqual(captured, [true]);
+  });
 });

@@ -272,4 +272,62 @@ describe("channel-notification-pipeline", () => {
     assert.equal(drained.length, 1);
     assert.equal(drained[0]?.includes("[Slack reaction]"), true);
   });
+
+  it("flushSession は指定 session のバッファだけ即時 dispatch する", async () => {
+    const accepted: Array<{ message: string; sessionKey: string }> = [];
+    const pipeline = createChannelNotificationPipeline({
+      triggerFilter: createTriggerFilter({ primaryClassifier: () => "run" }),
+      queueConfig: { debounceMs: 1000 },
+      acceptMessage: async (request) => {
+        accepted.push({ message: request.message, sessionKey: request.sessionKey });
+        return { runId: request.idempotencyKey, status: "started" };
+      },
+    });
+
+    await pipeline.enqueue(createPostInput("uid-flush-1", "first"));
+    await pipeline.enqueue(createPostInput("uid-flush-2", "second"));
+    await pipeline.flushSession("slack:channel:C123");
+
+    assert.equal(accepted.length, 1);
+    assert.equal(accepted[0]?.sessionKey, "main");
+    assert.equal(accepted[0]?.message, "first\nsecond");
+  });
+
+  it("dispatch が失敗しても warning を出して処理継続する", async () => {
+    const warnings: string[] = [];
+    const pipeline = createChannelNotificationPipeline({
+      triggerFilter: createTriggerFilter({ primaryClassifier: () => "run" }),
+      queueConfig: { debounceMs: 1 },
+      onWarn: (message) => warnings.push(message),
+      acceptMessage: async () => {
+        throw new Error("dispatch failed");
+      },
+    });
+
+    await pipeline.enqueue(createPostInput("uid-dispatch-fail-1"));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await pipeline.enqueue(createPostInput("uid-dispatch-fail-2"));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    assert.equal(warnings.includes("pipeline-dispatch-failed"), true);
+  });
+
+  it("clearSession は pending バッファを削除し dispatch を抑止する", async () => {
+    let accepted = 0;
+    const pipeline = createChannelNotificationPipeline({
+      triggerFilter: createTriggerFilter({ primaryClassifier: () => "run" }),
+      queueConfig: { debounceMs: 20 },
+      acceptMessage: async (request) => {
+        accepted += 1;
+        return { runId: request.idempotencyKey, status: "started" };
+      },
+    });
+
+    await pipeline.enqueue(createPostInput("uid-clear-1"));
+    const removed = pipeline.clearSession("slack:channel:C123");
+    await new Promise((resolve) => setTimeout(resolve, 40));
+
+    assert.equal(removed, 1);
+    assert.equal(accepted, 0);
+  });
 });

@@ -4,7 +4,6 @@ import { access, rename } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { appendDailyMemory, updateLongTermMemory } from "./memory-writer.js";
 import { readMemoryFiles } from "./memory-reader.js";
-import { renderProjectContext, type EmbeddedContextFile } from "./bootstrap-context.js";
 import {
   createCompactionEventTracker,
   resolveCompactionRuntimeSettings,
@@ -17,7 +16,6 @@ import {
   writeSessionEntryStore,
   getSessionEntry,
   upsertSessionEntry,
-  parseIsoMs,
   type SessionEntryStore,
 } from "./session-entry-store.js";
 import {
@@ -35,14 +33,15 @@ import {
   resolveAgentRunContext,
   shouldInjectBootstrapContext,
 } from "./agent-prompt-builder.js";
-import { normalizeTimezone } from "./shared-normalizers.js";
+import { AgentRunExecutor } from "./agent-run-executor.js";
 import {
-  createSessionWithRecovery as createSessionWithRecoveryFromRepository,
-  persistSessionStore as persistSessionStoreFromRepository,
+  createSessionWithRecovery as createSessionWithRecoveryFromPersistence,
+  persistSessionStore as persistSessionStoreFromPersistence,
   resolveSessionFilePath,
-  resolveSessionMetadata as resolveSessionMetadataFromRepository,
+  resolveSessionMetadata as resolveSessionMetadataFromPersistence,
+  type SessionStoreState,
   toSessionStoreLockKey,
-} from "./session-store-repository.js";
+} from "./session-persistence.js";
 
 export type AgentRunOptions = {
   runId: string;
@@ -70,8 +69,6 @@ export type AgentRunResult = {
   durationMs?: number;
   modelId?: string;
 };
-
-type UnknownRecord = Record<string, unknown>;
 
 type SessionLike = AgentSessionLike;
 
@@ -111,17 +108,6 @@ type AgentRunnerRuntime = {
 const lockTails = new Map<string, Promise<void>>();
 
 let runtimeOverride: Partial<AgentRunnerRuntime> | null = null;
-
-function relativizeSessionFilePath(sessionEntriesPath: string, sessionFile: string): string {
-  if (!sessionFile.startsWith("/")) {
-    return sessionFile;
-  }
-  const relPath = sessionFile.replace(`${dirname(sessionEntriesPath)}/`, "");
-  if (!relPath || relPath.startsWith("..")) {
-    return sessionFile;
-  }
-  return relPath;
-}
 
 function createLockAcquirer(): AgentRunnerRuntime["acquireLock"] {
   return async (lockKey: string) => {
@@ -261,144 +247,6 @@ function withSystemPrompt(prompt: string, systemPrompt: string | undefined): str
   return `${cleanedSystemPrompt}\n\n${cleanedPrompt}`;
 }
 
-function appendMemoryContext(
-  prompt: string,
-  memory: { longTerm: string | null; daily: string | null }
-): string {
-  const sections: string[] = [];
-  const longTerm = memory.longTerm?.trim();
-  if (longTerm) {
-    sections.push(`## Memory\n${longTerm}`);
-  }
-  const daily = memory.daily?.trim();
-  if (daily) {
-    sections.push(`## Daily Memory\n${daily}`);
-  }
-  if (sections.length === 0) {
-    return prompt;
-  }
-  return `${sections.join("\n\n")}\n\n${prompt}`;
-}
-
-function asRecord(value: unknown): UnknownRecord | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-  return value as UnknownRecord;
-}
-
-function tryGetTextDelta(event: unknown): string | null {
-  const top = asRecord(event);
-  if (!top || top.type !== "message_update") {
-    return null;
-  }
-  const assistantMessageEvent = asRecord(top.assistantMessageEvent);
-  if (!assistantMessageEvent || assistantMessageEvent.type !== "text_delta") {
-    return null;
-  }
-  const delta = assistantMessageEvent.delta;
-  return typeof delta === "string" ? delta : null;
-}
-
-function tryGetToolCall(event: unknown): { name: string; args: unknown } | null {
-  const top = asRecord(event);
-  if (!top || top.type !== "tool_execution_start") {
-    return null;
-  }
-  const toolName = top.toolName;
-  if (typeof toolName !== "string") {
-    return null;
-  }
-  return {
-    name: toolName,
-    args: top.args,
-  };
-}
-
-function tryGetToolResult(event: unknown): { name: string; result: unknown } | null {
-  const top = asRecord(event);
-  if (!top || top.type !== "tool_execution_end") {
-    return null;
-  }
-  const toolName = top.toolName;
-  if (typeof toolName !== "string") {
-    return null;
-  }
-  return {
-    name: toolName,
-    result: top.result,
-  };
-}
-
-function getEntryUpdatedAt(store: SessionEntryStore, sessionKey: string): string | null {
-  const entry = getSessionEntry(store, sessionKey);
-  if (!entry) {
-    return null;
-  }
-  return typeof entry.updatedAt === "string" ? entry.updatedAt : null;
-}
-
-function resolveUpdatedAt(params: {
-  nowIso: string;
-  isHeartbeat?: boolean;
-  previousUpdatedAt: string | null;
-}): string {
-  if (!params.isHeartbeat) {
-    return params.nowIso;
-  }
-  const previousMs = parseIsoMs(params.previousUpdatedAt);
-  if (previousMs === null) {
-    return params.nowIso;
-  }
-  const currentMs = parseIsoMs(params.nowIso);
-  if (currentMs === null) {
-    return new Date(previousMs).toISOString();
-  }
-  return new Date(Math.max(previousMs, currentMs)).toISOString();
-}
-
-function resolveSessionMetadata(session: SessionLike): {
-  sessionId?: string;
-  sessionFile?: string;
-  modelId?: string;
-} {
-  const modelRecord = asRecord(session.model);
-  const modelId =
-    typeof modelRecord?.id === "string" && modelRecord.id.trim()
-      ? modelRecord.id.trim()
-      : undefined;
-  const sessionId =
-    typeof session.sessionId === "string" && session.sessionId.trim()
-      ? session.sessionId.trim()
-      : undefined;
-  const sessionFile =
-    typeof session.sessionFile === "string" && session.sessionFile.trim()
-      ? session.sessionFile.trim()
-      : undefined;
-  return {
-    sessionId,
-    sessionFile,
-    modelId,
-  };
-}
-
-function shouldEnableMemoryWrite(opts: AgentRunOptions): boolean {
-  if (opts.isHeartbeat) {
-    return false;
-  }
-  if (typeof opts.memoryWriteRequested === "boolean") {
-    return opts.memoryWriteRequested;
-  }
-  return /覚えておいて|覚えといて|remember\s+(this|that)|remember\b/i.test(opts.prompt);
-}
-
-function resolveMemoryScope(opts: AgentRunOptions, sessionKey: string): "main" | "spoke" {
-  if (opts.memoryScope === "main" || opts.memoryScope === "spoke") {
-    return opts.memoryScope;
-  }
-  return sessionKey === "main" ? "main" : "spoke";
-}
-
 function classifyError(
   error: unknown
 ): "transient" | "context_overflow" | "model_unavailable" | "unknown" {
@@ -428,227 +276,12 @@ function classifyError(
   return "unknown";
 }
 
-function isSessionCorruptionError(error: unknown): boolean {
-  const message =
-    error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
-  return (
-    (message.includes("session") && message.includes("parse")) ||
-    (message.includes("json") && message.includes("parse")) ||
-    message.includes("corrupt") ||
-    message.includes("malformed")
-  );
-}
-
 function shrinkPrompt(prompt: string): string {
   if (prompt.length <= 200) {
     return prompt;
   }
   const keep = Math.floor(prompt.length * 0.7);
   return `[context trimmed]\n${prompt.slice(prompt.length - keep)}`;
-}
-
-function resolveTimezone(opts: AgentRunOptions): string {
-  return normalizeTimezone(opts.timezone);
-}
-
-function resolveWorkspaceDir(opts: AgentRunOptions): string {
-  const workspace = opts.workspaceDir?.trim();
-  return workspace || process.cwd();
-}
-
-function appendProjectContext(prompt: string, contextFiles: EmbeddedContextFile[]): string {
-  const projectContext = renderProjectContext(contextFiles).trim();
-  if (!projectContext) {
-    return prompt;
-  }
-  return `${projectContext}\n\n${prompt}`;
-}
-
-function parseMemoryWriteArgs(
-  args: unknown
-): { scope: "daily" | "long-term"; content: string } | null {
-  const record = asRecord(args);
-  if (!record) {
-    return null;
-  }
-  const rawContent =
-    typeof record.content === "string"
-      ? record.content
-      : typeof record.text === "string"
-        ? record.text
-        : "";
-  const content = rawContent.trim();
-  if (!content) {
-    return null;
-  }
-
-  const rawScope =
-    typeof record.scope === "string"
-      ? record.scope.trim().toLowerCase()
-      : typeof record.target === "string"
-        ? record.target.trim().toLowerCase()
-        : "daily";
-  if (rawScope === "long-term" || rawScope === "longterm" || rawScope === "memory") {
-    return { scope: "long-term", content };
-  }
-  return { scope: "daily", content };
-}
-
-function parseNonNegativeInt(value: unknown): number | null {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return null;
-  }
-  const int = Math.floor(value);
-  return int >= 0 ? int : null;
-}
-
-type SessionStoreState = { path: string; store: SessionEntryStore };
-
-async function createSessionWithRecovery(params: {
-  runtime: AgentRunnerRuntime;
-  sessionKey: string;
-  sessionId?: string;
-  sessionEntriesPath: string;
-  sessionStoreState: SessionStoreState;
-  workspaceDir: string;
-  model?: string;
-  isHeartbeat?: boolean;
-  memoryWriteEnabled: boolean;
-  memoryScope: "main" | "spoke";
-}): Promise<{
-  created: { session: SessionLike };
-  sessionStoreState: SessionStoreState;
-  previousUpdatedAt: string | null;
-}> {
-  const createWithStore = async (storeState: SessionStoreState) => {
-    const sessionManager = params.runtime.openSessionManager({
-      sessionKey: params.sessionKey,
-      sessionId: params.sessionId,
-      sessionEntriesPath: params.sessionEntriesPath,
-      sessionEntryStore: storeState.store,
-      workspaceDir: params.workspaceDir,
-    });
-    return await params.runtime.createSession({
-      sessionManager,
-      model: params.model,
-      isHeartbeat: params.isHeartbeat,
-      memoryWriteEnabled: params.memoryWriteEnabled,
-      memoryScope: params.memoryScope,
-      workspaceDir: params.workspaceDir,
-    });
-  };
-
-  let currentStoreState = params.sessionStoreState;
-  let previousUpdatedAt = getEntryUpdatedAt(currentStoreState.store, params.sessionKey);
-
-  try {
-    const created = await createWithStore(currentStoreState);
-    return { created, sessionStoreState: currentStoreState, previousUpdatedAt };
-  } catch (error) {
-    if (!isSessionCorruptionError(error)) {
-      throw error;
-    }
-    const repaired = await params.runtime.repairSessionData(
-      params.sessionKey,
-      params.sessionEntriesPath
-    );
-    if (!repaired) {
-      throw error;
-    }
-    currentStoreState = await params.runtime.loadSessionEntryStore(params.sessionEntriesPath);
-    previousUpdatedAt = getEntryUpdatedAt(currentStoreState.store, params.sessionKey);
-    const created = await createWithStore(currentStoreState);
-    return { created, sessionStoreState: currentStoreState, previousUpdatedAt };
-  }
-}
-
-function subscribeSessionEvents(params: {
-  session: SessionLike;
-  opts: AgentRunOptions;
-  runtime: AgentRunnerRuntime;
-  memoryWriteEnabled: boolean;
-  workspaceDir: string;
-  timezone: string;
-  compactionTracker: CompactionEventTracker;
-  isSilentTurn: () => boolean;
-}): {
-  unsubscribe: () => void;
-  output: { text: string };
-  toolCalls: Array<{ name: string; result: unknown }>;
-  memoryWriteTasks: Promise<void>[];
-  waitForSettledMemoryWrites: () => Promise<void>;
-} {
-  const output = { text: "" };
-  const toolCalls: Array<{ name: string; result: unknown }> = [];
-  const memoryWriteTasks: Promise<void>[] = [];
-  let settledMemoryTaskCount = 0;
-
-  const unsubscribe = params.session.subscribe((event) => {
-    params.compactionTracker.onEvent(event);
-
-    const delta = tryGetTextDelta(event);
-    if (delta && !params.isSilentTurn()) {
-      output.text += delta;
-      params.opts.onTextDelta?.(delta);
-    }
-
-    const toolCall = tryGetToolCall(event);
-    if (toolCall) {
-      if (toolCall.name === "memory_write" && !params.memoryWriteEnabled) {
-        return;
-      }
-      if (toolCall.name === "memory_write") {
-        const parsed = parseMemoryWriteArgs(toolCall.args);
-        if (!parsed) {
-          return;
-        }
-        memoryWriteTasks.push(
-          (async () => {
-            if (parsed.scope === "daily") {
-              await params.runtime.appendDailyMemory(parsed.content, {
-                workspaceDir: params.workspaceDir,
-                timezone: params.timezone,
-              });
-            } else {
-              await params.runtime.updateLongTermMemory(parsed.content, {
-                workspaceDir: params.workspaceDir,
-                timezone: params.timezone,
-              });
-            }
-          })()
-        );
-      }
-      if (!params.isSilentTurn()) {
-        params.opts.onToolCall?.(toolCall.name, toolCall.args);
-      }
-    }
-
-    const toolResult = tryGetToolResult(event);
-    if (!toolResult) {
-      return;
-    }
-    if (toolResult.name === "memory_write" && !params.memoryWriteEnabled) {
-      return;
-    }
-    if (params.isSilentTurn()) {
-      return;
-    }
-    toolCalls.push(toolResult);
-  });
-
-  return {
-    unsubscribe,
-    output,
-    toolCalls,
-    memoryWriteTasks,
-    waitForSettledMemoryWrites: async () => {
-      const pending = memoryWriteTasks.slice(settledMemoryTaskCount);
-      settledMemoryTaskCount = memoryWriteTasks.length;
-      if (pending.length > 0) {
-        await Promise.all(pending);
-      }
-    },
-  };
 }
 
 async function promptWithRetry(params: {
@@ -690,57 +323,6 @@ async function promptWithRetry(params: {
       throw error;
     }
   }
-}
-
-async function persistSessionStore(params: {
-  runtime: AgentRunnerRuntime;
-  sessionStoreState: SessionStoreState;
-  sessionKey: string;
-  sessionMetadata: { sessionId?: string; sessionFile?: string };
-  explicitSessionId?: string;
-  nowIso: string;
-  isHeartbeat?: boolean;
-  previousUpdatedAt: string | null;
-  compactionTracker: CompactionEventTracker;
-  memoryFlushMetadata?: {
-    executedAtIso: string;
-    compactionCountAtFlush: number;
-  };
-}): Promise<void> {
-  const entry = upsertSessionEntry(params.sessionStoreState.store, params.sessionKey);
-  const sessionId = params.explicitSessionId || params.sessionMetadata.sessionId;
-  if (sessionId) {
-    entry.sessionId = sessionId;
-  }
-  if (params.sessionMetadata.sessionFile) {
-    entry.sessionFile = relativizeSessionFilePath(
-      params.sessionStoreState.path,
-      params.sessionMetadata.sessionFile
-    );
-  }
-  entry.updatedAt = resolveUpdatedAt({
-    nowIso: params.nowIso,
-    isHeartbeat: params.isHeartbeat,
-    previousUpdatedAt: params.previousUpdatedAt,
-  });
-
-  const storedCompactionCount = parseNonNegativeInt(entry.compactionCount) ?? 0;
-  const trackedCompactionCount = params.compactionTracker.getCompactionCount();
-  entry.compactionCount = Math.max(storedCompactionCount, trackedCompactionCount);
-
-  const context = params.compactionTracker.getContextSnapshot();
-  entry.contextTokens = context.contextTokens;
-  entry.contextWindowTokens = context.contextWindowTokens;
-
-  if (params.memoryFlushMetadata) {
-    entry.memoryFlushAt = params.memoryFlushMetadata.executedAtIso;
-    entry.memoryFlushCompactionCount = params.memoryFlushMetadata.compactionCountAtFlush;
-  }
-
-  await params.runtime.saveSessionEntryStore(
-    params.sessionStoreState.store,
-    params.sessionStoreState.path
-  );
 }
 
 async function runPreCompactionMemoryFlush(params: {
@@ -800,7 +382,7 @@ async function runPreCompactionMemoryFlush(params: {
   }
 }
 
-export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
+async function runAgentInternal(opts: AgentRunOptions): Promise<AgentRunResult> {
   const runtime = getRuntime();
   const startedAtMs = runtime.nowMs();
   const context = resolveAgentRunContext(opts);
@@ -864,7 +446,7 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
     const sessionEntry = getSessionEntry(sessionStoreState.store, context.sessionKey);
     const sessionCompactionMetadata = resolveSessionCompactionMetadata(sessionEntry);
     compactionTracker = createCompactionEventTracker(sessionCompactionMetadata.compactionCount);
-    const createdState = await createSessionWithRecoveryFromRepository({
+    const createdState = await createSessionWithRecoveryFromPersistence({
       runtime,
       sessionKey: context.sessionKey,
       sessionId: context.sessionId,
@@ -927,10 +509,10 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
     const durationMs = Math.max(0, runtime.nowMs() - startedAtMs);
     output = subscribed.output.text;
     toolCalls = subscribed.toolCalls;
-    sessionMetadata = resolveSessionMetadataFromRepository(created.session);
+    sessionMetadata = resolveSessionMetadataFromPersistence(created.session);
 
     if (sessionStoreState && sessionMetadata) {
-      await persistSessionStoreFromRepository({
+      await persistSessionStoreFromPersistence({
         runtime,
         sessionStoreState,
         sessionKey: context.sessionKey,
@@ -967,6 +549,12 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
       await releaseLock();
     }
   }
+}
+
+const defaultAgentRunExecutor = new AgentRunExecutor(runAgentInternal);
+
+export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
+  return await defaultAgentRunExecutor.run(opts);
 }
 
 export function setAgentRunnerRuntimeForTest(runtime: Partial<AgentRunnerRuntime> | null): void {

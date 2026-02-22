@@ -16,6 +16,7 @@ type SlackAdapterFactoryInput = {
   client: SlackCdpClient;
   timezone: string;
   dataDir: string;
+  domCaptureDisabled: boolean;
 };
 
 type SlackChannelPluginOptions = {
@@ -27,6 +28,7 @@ type SlackChannelPluginOptions = {
   defaultAccountId?: string;
   retryBaseMs?: number;
   retryMaxMs?: number;
+  domCaptureDisabled?: boolean;
   resolveEndpoint?: () => CdpEndpoint;
   connectToSlackPage?: (
     host: string,
@@ -70,10 +72,6 @@ function resolveAccountIds(options: SlackChannelPluginOptions): string[] {
   const explicit = (options.accountIds ?? []).map((value) => value.trim()).filter(Boolean);
   if (explicit.length > 0) {
     return explicit;
-  }
-  const fromEnv = process.env.ADJUTANT_SLACK_ACCOUNT_ID?.trim();
-  if (fromEnv) {
-    return [fromEnv];
   }
   const fallback = options.defaultAccountId?.trim() || "default";
   return [fallback];
@@ -126,6 +124,7 @@ function createDefaultAdapterFactory(
     new SlackAdapter({
       client: input.client,
       timezone: input.timezone,
+      domCaptureDisabled: input.domCaptureDisabled,
       now: () => new Date(),
       channelCachePath: join(options.dataDir, "_cache", "slack", "channel-names-by-team.json"),
       userCachePath: join(options.dataDir, "_cache", "slack", "user-names-by-team.json"),
@@ -137,12 +136,13 @@ export function createSlackChannelPlugin(
 ): ChannelIngestionPlugin<unknown> {
   const pluginId = options.id?.trim() || "slack";
   const channelId = options.channelId?.trim() || "slack";
-  const timezone = options.timezone?.trim() || process.env.ADJUTANT_TZ || "Asia/Tokyo";
+  const timezone = options.timezone?.trim() || "Asia/Tokyo";
   const retryBaseMs = normalizeRetryMs(options.retryBaseMs, DEFAULT_RETRY_BASE_MS);
   const retryMaxMs = Math.max(
     normalizeRetryMs(options.retryMaxMs, DEFAULT_RETRY_MAX_MS),
     retryBaseMs
   );
+  const domCaptureDisabled = options.domCaptureDisabled ?? false;
   const endpointResolver = options.resolveEndpoint ?? resolveEndpoint;
   const connectFn = options.connectToSlackPage ?? connectToSlackPage;
   const createAdapter = options.createAdapter ?? createDefaultAdapterFactory(options);
@@ -186,6 +186,7 @@ export function createSlackChannelPlugin(
           client,
           timezone,
           dataDir: options.dataDir,
+          domCaptureDisabled,
         });
         activeSessions.set(ctx.accountId, { client, adapter });
         ctx.setStatus({

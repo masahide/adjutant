@@ -60,6 +60,7 @@ type SlackAdapterDeps = {
   client: SlackClient;
   now?: () => Date;
   timezone?: string;
+  domCaptureDisabled?: boolean;
   channelCachePath?: string;
   userCachePath?: string;
   debugFetchHookEnabled?: boolean;
@@ -102,9 +103,6 @@ const DEBUG_RUNTIME_ENABLED = hasSlackDebugTarget(
   "slack:runtime",
   "slack:runtime:verbose"
 );
-const DOM_CAPTURE_DISABLED =
-  (process.env.ADJUTANT_DISABLE_DOM_CAPTURE ?? "").toLowerCase() === "1" ||
-  (process.env.ADJUTANT_DISABLE_DOM_CAPTURE ?? "").toLowerCase() === "true";
 
 export class SlackAdapter implements IngestionAdapter {
   name = "slack";
@@ -122,7 +120,7 @@ export class SlackAdapter implements IngestionAdapter {
   private readonly ingressHandlers: SlackIngressHandlers;
   private readonly domProbeEnabled = DOM_PROBE_DEBUG_ENABLED;
   private readonly domDebugDetailed = DOM_VERBOSE_ENABLED;
-  private readonly domCaptureDisabled = DOM_CAPTURE_DISABLED;
+  private readonly domCaptureDisabled: boolean;
   private readonly debugNetworkEvents = DEBUG_NETWORK_ENABLED;
   private readonly debugFetchEvents = DEBUG_FETCH_ENABLED;
   private readonly debugFetchHookEnabled: boolean;
@@ -139,6 +137,7 @@ export class SlackAdapter implements IngestionAdapter {
   constructor(private readonly deps: SlackAdapterDeps) {
     this.now = deps.now ?? (() => new Date());
     this.timezone = deps.timezone ?? "Asia/Tokyo";
+    this.domCaptureDisabled = deps.domCaptureDisabled ?? false;
     this.nameCacheRepository = new SlackNameCacheRepository({
       channelCachePath: deps.channelCachePath,
       userCachePath: deps.userCachePath,

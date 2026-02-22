@@ -8,17 +8,16 @@ import {
 } from "./dispatch-adapter.js";
 import type { ChannelNotificationInput } from "./channel-plugin.js";
 import type { DualWriteCoordinator, DualWriteRecord } from "./dual-write-coordinator.js";
+import {
+  NotificationQueueService,
+  resolveNotificationQueueConfig,
+  type NotificationQueueConfig,
+} from "./notification-queue-service.js";
 import type { SelfMessageState } from "./route-decision.js";
 import { resolveQueueKey, resolveThreadSessionKeys } from "./session-route-resolver.js";
 import { createTriggerFilter, type TriggerFilter } from "./trigger-filter.js";
 
-export type NotificationQueueConfig = {
-  cap: number;
-  debounceMs: number;
-  dropPolicy: "summarize" | "old" | "new";
-  maxDispatchChars: number;
-  maxEventUidsPerDispatch: number;
-};
+export type { NotificationQueueConfig };
 
 export type ChannelNotificationPipelineDeps = {
   triggerFilter?: TriggerFilter;
@@ -34,25 +33,6 @@ export type ChannelNotificationPipelineDeps = {
   mainSessionKey?: string;
   queueConfig?: Partial<NotificationQueueConfig>;
   onWarn?: (message: string, meta?: Record<string, unknown>) => void;
-};
-
-type EventBuffer = {
-  queueKey: string;
-  accountId: string;
-  originSessionKey: string;
-  channelKey?: string;
-  senderId?: string;
-  threadKey?: string;
-  events: NormalizedEvent[];
-  timer: ReturnType<typeof setTimeout> | null;
-};
-
-const DEFAULT_QUEUE_CONFIG: NotificationQueueConfig = {
-  cap: 20,
-  debounceMs: 1000,
-  dropPolicy: "summarize",
-  maxDispatchChars: 4000,
-  maxEventUidsPerDispatch: 50,
 };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -159,15 +139,6 @@ function renderSystemEventText(event: NormalizedEvent): string {
   return `[Slack event] kind=${event.kind} channel=${channelId}.`;
 }
 
-function resolveQueueConfig(
-  overrides: Partial<NotificationQueueConfig> | undefined
-): NotificationQueueConfig {
-  return {
-    ...DEFAULT_QUEUE_CONFIG,
-    ...(overrides ?? {}),
-  };
-}
-
 function buildDualWriteRecords(params: { input: ChannelNotificationInput; sessionKey: string }): {
   timelineRecord: DualWriteRecord;
   sessionRecord: DualWriteRecord;
@@ -201,23 +172,12 @@ export function createChannelNotificationPipeline(
   const triggerFilter = deps.triggerFilter ?? createTriggerFilter();
   const dispatchAdapter = deps.dispatchAdapter ?? toChatDispatchRequest;
   const apiAdapter = deps.toApiRequest ?? toApiRequest;
-  const queueConfig = resolveQueueConfig(deps.queueConfig);
-  const buffers = new Map<string, EventBuffer>();
-
-  const flushQueueKey = async (queueKey: string): Promise<void> => {
-    const buffer = buffers.get(queueKey);
-    if (!buffer) {
-      return;
-    }
-    if (buffer.timer) {
-      clearTimeout(buffer.timer);
-      buffer.timer = null;
-    }
-    buffers.delete(queueKey);
-    if (buffer.events.length === 0) {
-      return;
-    }
-    try {
+  const queueConfig = resolveNotificationQueueConfig(deps.queueConfig);
+  const queueService = new NotificationQueueService({
+    config: queueConfig,
+    enqueueSystemEvent: deps.enqueueSystemEvent,
+    onWarn: deps.onWarn,
+    dispatch: async (buffer) => {
       const dispatch = dispatchAdapter({
         events: buffer.events,
         accountId: buffer.accountId,
@@ -229,26 +189,8 @@ export function createChannelNotificationPipeline(
       });
       const request = apiAdapter(dispatch);
       await deps.acceptMessage(request);
-    } catch (error) {
-      deps.onWarn?.("pipeline-dispatch-failed", {
-        queueKey,
-        reason: error instanceof Error ? error.message : String(error),
-      });
-    }
-  };
-
-  const scheduleFlush = (queueKey: string): void => {
-    const buffer = buffers.get(queueKey);
-    if (!buffer || buffer.timer) {
-      return;
-    }
-    buffer.timer = setTimeout(
-      () => {
-        void flushQueueKey(queueKey);
-      },
-      Math.max(1, queueConfig.debounceMs)
-    );
-  };
+    },
+  });
 
   const enqueue = async (input: ChannelNotificationInput): Promise<void> => {
     const channelId = extractChannelId(input.event);
@@ -311,67 +253,22 @@ export function createChannelNotificationPipeline(
       return;
     }
 
-    const existing = buffers.get(queueKey);
-    if (existing) {
-      if (existing.events.length >= queueConfig.cap) {
-        if (queueConfig.dropPolicy === "new") {
-          deps.onWarn?.("pipeline-buffer-cap-reached", { queueKey, drop: "new" });
-          return;
-        }
-        if (queueConfig.dropPolicy === "old") {
-          existing.events.shift();
-        } else {
-          deps.enqueueSystemEvent?.(
-            `[Queue overflow] Dropped 1 event for ${session.sessionKey} due to cap=${queueConfig.cap}.`,
-            {
-              sessionKey: session.sessionKey,
-              contextKey: `${queueKey}:overflow`,
-            }
-          );
-          existing.events.shift();
-        }
-      }
-      existing.events.push(input.event);
-      scheduleFlush(queueKey);
-      return;
-    }
-
-    buffers.set(queueKey, {
+    await queueService.enqueue({
       queueKey,
       accountId: input.accountId,
       originSessionKey: session.sessionKey,
       channelKey,
       senderId,
       threadKey,
-      events: [input.event],
-      timer: null,
+      event: input.event,
     });
-    scheduleFlush(queueKey);
   };
 
   const flushSession = async (sessionKey: string): Promise<void> => {
-    const queueKeys = Array.from(buffers.entries())
-      .filter(([, buffer]) => buffer.originSessionKey === sessionKey)
-      .map(([queueKey]) => queueKey);
-    for (const queueKey of queueKeys) {
-      await flushQueueKey(queueKey);
-    }
+    await queueService.flushSession(sessionKey);
   };
 
-  const clearSession = (sessionKey: string): number => {
-    let removed = 0;
-    for (const [queueKey, buffer] of buffers.entries()) {
-      if (buffer.originSessionKey !== sessionKey) {
-        continue;
-      }
-      if (buffer.timer) {
-        clearTimeout(buffer.timer);
-      }
-      buffers.delete(queueKey);
-      removed += 1;
-    }
-    return removed;
-  };
+  const clearSession = (sessionKey: string): number => queueService.clearSession(sessionKey);
 
   return {
     enqueue,

@@ -4,6 +4,7 @@ import { dirname, isAbsolute, join } from "node:path";
 import { scanHeartbeatTimeline } from "../proactive/heartbeat-scanner.js";
 import { buildEventContext } from "./context-builder.js";
 import { HeartbeatExecution } from "./heartbeat-execution.js";
+import { HeartbeatOrchestrator } from "./heartbeat-orchestrator.js";
 import { HeartbeatPrecheck } from "./heartbeat-precheck.js";
 import { HeartbeatResultWriter } from "./heartbeat-result-writer.js";
 import { readEvents } from "./event-reader.js";
@@ -55,8 +56,6 @@ export type HeartbeatConfig = {
 
 type ActiveHoursConfig = NonNullable<HeartbeatConfig["activeHours"]>;
 type UnknownRecord = Record<string, unknown>;
-type IntervalTimer = ReturnType<typeof setInterval>;
-type TimeoutTimer = ReturnType<typeof setTimeout>;
 type HeartbeatAgentResult = Pick<AgentRunResult, "text" | "modelId">;
 
 type HeartbeatRuntime = {
@@ -951,52 +950,20 @@ export function startHeartbeat(config: HeartbeatConfig): { stop: () => void } {
   const runtime = getRuntime();
   const intervalMs = resolveIntervalMs(config);
   const retryDelayMs = resolveRetryDelayMs(config);
-
-  let stopped = false;
-  let running = false;
-  let intervalTimer: IntervalTimer | null = null;
-  let retryTimer: TimeoutTimer | null = null;
-
-  const scheduleRetry = () => {
-    if (stopped || retryTimer) {
-      return;
-    }
-    retryTimer = runtime.setTimeout(() => {
-      retryTimer = null;
-      void executeTick("requests-in-flight-retry");
-    }, retryDelayMs);
-  };
-
-  const executeTick = async (reason: string) => {
-    if (stopped || running) {
-      return;
-    }
-    running = true;
-    try {
-      const result = await runOnce(config, { reason });
-      if (result.status === "skipped" && result.reason === "requests-in-flight") {
-        scheduleRetry();
-      }
-    } finally {
-      running = false;
-    }
-  };
-
-  intervalTimer = runtime.setInterval(() => {
-    void executeTick("timer");
-  }, intervalMs);
+  const orchestrator = new HeartbeatOrchestrator({
+    intervalMs,
+    retryDelayMs,
+    runTick: async (reason) => await runOnce(config, { reason }),
+    setInterval: runtime.setInterval,
+    clearInterval: runtime.clearInterval,
+    setTimeout: runtime.setTimeout,
+    clearTimeout: runtime.clearTimeout,
+  });
+  orchestrator.start();
 
   return {
     stop: () => {
-      stopped = true;
-      if (intervalTimer) {
-        runtime.clearInterval(intervalTimer);
-        intervalTimer = null;
-      }
-      if (retryTimer) {
-        runtime.clearTimeout(retryTimer);
-        retryTimer = null;
-      }
+      orchestrator.stop();
     },
   };
 }

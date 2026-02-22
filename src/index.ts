@@ -224,6 +224,7 @@ async function main() {
       client,
       now,
       timezone,
+      domCaptureDisabled: runtimeConfig.domCaptureDisabled,
       channelCachePath: path.join(dataDir, "_cache", "slack", "channel-names-by-team.json"),
       userCachePath: path.join(dataDir, "_cache", "slack", "user-names-by-team.json"),
       debugFetchHookEnabled: rawFetchEventLogger ? true : undefined,

@@ -77,9 +77,6 @@ export function resolveAccountId(input: ResolveAccountIdInput): string {
   if (input.configuredDefaultAccountId?.trim()) {
     return input.configuredDefaultAccountId.trim();
   }
-  if (process.env.ADJUTANT_SLACK_ACCOUNT_ID?.trim()) {
-    return process.env.ADJUTANT_SLACK_ACCOUNT_ID.trim();
-  }
   return "default";
 }
 
