@@ -1,11 +1,21 @@
-# Adjutant 仕様書 v0.2
+# Adjutant 仕様書 v0.3
 
-この文書は、`src/` の現行実装に対応した仕様を記述する。将来計画は最後に分離して記載する。
+この文書は、`src/` の現行実装に対応した統合仕様書である（旧 `doc/spec-unified.md` を統合）。
 
 ## 1. 目的
 
 Adjutant は Slack Desktop の CDP イベントを収集し、`NormalizedEvent` 形式で JSONL に追記保存する。
-主目的は「後段で再利用しやすいイベント基盤の整備」であり、要約生成や他ソース統合は現時点では未実装。
+加えて `pnpm run assistant` では、プロアクティブ通知ルーティング・Heartbeat・エージェント実行・メモリ検索を同一プロセスで提供する。
+主目的は「後段で再利用しやすいイベント基盤 + 運用可能な AI アシスタント基盤」の整備である。
+
+### 1.1 基本原則
+
+- 永続データの正本はファイルとして保存する（File First）。
+- イベント/メッセージデータの正本は JSONL とする。
+- エージェントが保持する記憶情報の正本は Markdown とする。
+- SQLite は正本ではなく、検索性能のためのインデックス専用ストアとして扱う。
+- インデックス更新は非同期で実行し、正本ファイル保存を先行する。
+- 障害時は正本ファイルから再インデックスできる設計を前提にする。
 
 ## 2. 実装スコープ
 
@@ -21,13 +31,34 @@ Adjutant は Slack Desktop の CDP イベントを収集し、`NormalizedEvent` 
 - JSONL 追記保存 (`JsonlWriter`)
 - Debug UI (SSE) (`DebugUiServer`)
 - Slack 名称キャッシュ (`SlackNameCacheRepository`)
+- Assistant UI 本体（`pnpm run assistant` / `src/ui/*`）
+- Assistant 用検索インデックス（SQLite + sqlite-vec, `memory/index/main.sqlite`）
+- Proactive routing pipeline v1.5（rule triage / attention window / batch classifier / global concurrency queue）
+- Timeline v1.5 (`memory/timeline.jsonl`) と sessionKey 必須化
+- Pending Flusher + Watermark store (`memory/watermarks.json`)
+- Agent 終端レコード（`assistant_final` / `assistant_aborted` / `assistant_error`）
+- 初回実行リチュアル（workspace bootstrap / BOOTSTRAP context 注入）
+- Pre-compaction memory flush + context compaction 連動制御
+- `memory_search` / `memory_get`（main セッション限定）
 
 ### 2.2 未実装
 
 - GitHub / git-local の収集
 - 日次 Markdown 要約バッチ
-- 永続 DB（SQLite 等）
-- UI 本体（Debug UI を除く）
+- `POLICY_ROUTING.json` の実ルーティング適用（priority/quiet-hours/cooldown の反映）
+- 通知キューの永続化（現状はインメモリ）
+- 実行中ランへの steer / action 承認 / run 状態追跡 API
+- session transcript の `memory_search` 索引統合
+- Heartbeat 誤通知削減のための専用重要イベント分類器
+- マルチチャネル本番接続（Slack 以外）
+
+### 2.3 保存基盤（部分実装）
+
+- 永続データの正本はファイル保存
+- イベント/メッセージデータは JSONL を正本として保存
+- エージェント記憶は Markdown を正本として保存（設計方針）
+- SQLite は Assistant の memory search 用インデックスとして利用
+- Slack 収集イベントを SQLite に正本保存する方式は採用しない
 
 ## 3. 実行アーキテクチャ
 
@@ -37,7 +68,7 @@ flowchart LR
   B --> C[SlackAdapter]
   C --> D[SlackIngestor]
   D --> E[JsonlWriter]
-  E --> F[data/YYYY/MM/DD/slack/events.jsonl]
+  E --> F[data/YYYY/MM/DD/source/events.jsonl]
   C --> G[SlackNameCacheRepository]
   C --> H[DomCaptureService]
   C --> I[DebugUiServer optional]
@@ -46,13 +77,15 @@ flowchart LR
 ### 3.1 起動と再接続
 
 - エントリポイントは `src/index.ts`。
+- 起動時に既存 JSONL を走査し、破損末尾が見つかったファイルは当該オフセットまで truncate してから収集を開始する（`listJsonlFiles` → `recoverJsonlFiles`）。
 - `resolveEndpoint()` は以下優先順位で接続先を解決する。
   1. `CDP_ENDPOINT_FILE`（既定 `.adjutant/cdp-endpoint.json`）
   2. `CDP_HOST` / `CDP_PORT`
   3. 既定値 `127.0.0.1:9222`
 - セッション切断時は再接続ループへ移行する。
-  - リトライ待機: `1000ms * retryCount`
-  - 上限: `10000ms`
+  - リトライ待機: `computeFullJitterDelayMs()` による指数バックオフ + フルジッタ
+  - 基本式: `maxDelay = min(10000, 1000 * 2^(attempt - 1))`、`delay = floor(random() * maxDelay)`
+  - `attempt` は最小 1（初回再接続時も 1）
 - `SIGINT` / `SIGTERM` で adapter/client/debug UI を停止して終了する。
 
 ## 4. データモデル
@@ -149,12 +182,13 @@ flowchart LR
 出力先:
 
 ```text
-<dataDir>/YYYY/MM/DD/slack/events.jsonl
+<dataDir>/YYYY/MM/DD/<source>/events.jsonl
 ```
 
 - 1 行 1 JSON
 - `logged_at` が未設定なら `JsonlWriter` が現在時刻で補完
 - `logged_at` を基準に日付ディレクトリを決定
+- 書き込み時に `checksum` フィールド（sha256 ベース 16 文字）を付与
 - append 失敗時は最大 2 回リトライ（`ENOENT` は mkdir 後に再試行）
 
 ### 7.2 名称キャッシュ
@@ -186,7 +220,22 @@ flowchart LR
 - `method`, `params`, `session_id`, `host`, `port`, `slack_url` を保持
 - `ADJUTANT_CDP_EVENT_LOG_MAX_PARAM_CHARS` で `params` の最大文字数を制限可能
 
+### 7.4 Raw Fetch ログ（任意）
+
+`ADJUTANT_RAW_FETCH_LOG=1` の場合、次へ JSONL 追記する。
+
+```text
+<dataDir>/_debug/raw-fetch.jsonl
+```
+
+- `schema=adjutant.raw-fetch.event.v1`
+- `kind=raw_fetch`
+- `source`, `at`, `payload`, `logged_at` を保持
+- `ADJUTANT_RAW_FETCH_LOG_MAX_PAYLOAD_CHARS` が 0 より大きい場合、`payload` は文字数上限を超えると `_truncated` 付き preview に切り詰める
+
 ## 8. 設定
+
+### 8.1 収集ランタイム
 
 | 変数                                     | 既定値                              | 用途                               |
 | ---------------------------------------- | ----------------------------------- | ---------------------------------- |
@@ -202,6 +251,9 @@ flowchart LR
 | `ADJUTANT_CDP_EVENT_LOG`                 | `0`                                 | CDP 生イベントを JSONL 保存        |
 | `ADJUTANT_CDP_EVENT_LOG_PATH`            | `<dataDir>/_debug/cdp-events.jsonl` | CDP 生イベント出力先               |
 | `ADJUTANT_CDP_EVENT_LOG_MAX_PARAM_CHARS` | `0`                                 | params 切り詰め上限 (`0` は無制限) |
+| `ADJUTANT_RAW_FETCH_LOG`                 | `0`                                 | Raw Fetch イベントを JSONL 保存    |
+| `ADJUTANT_RAW_FETCH_LOG_PATH`            | `<dataDir>/_debug/raw-fetch.jsonl`  | Raw Fetch イベント出力先           |
+| `ADJUTANT_RAW_FETCH_LOG_MAX_PAYLOAD_CHARS` | `0`                               | payload 切り詰め上限 (`0` は無制限) |
 | `CDP_WAIT_ATTEMPTS`                      | `10` (script)                       | CDP 起動待ち試行回数               |
 | `CDP_WAIT_DELAY`                         | `1` (script, sec)                   | CDP 起動待ち間隔                   |
 
@@ -215,9 +267,50 @@ flowchart LR
 - `slack:fetch:hook`
 - `slack:runtime`
 
+### 8.2 Assistant / Proactive
+
+| 変数                                         | 既定値                                      | 用途 |
+| -------------------------------------------- | ------------------------------------------- | ---- |
+| `ADJUTANT_ROUTING_IDLE_MS`                   | `1000`                                      | channel attention-window idle |
+| `ADJUTANT_ROUTING_MAX_WAIT_MS`               | `30000`                                     | channel attention-window max wait |
+| `ADJUTANT_ROUTING_DM_IDLE_MS`                | `200`                                       | DM attention-window idle |
+| `ADJUTANT_ROUTING_DM_MAX_WAIT_MS`            | `1000`                                      | DM attention-window max wait |
+| `ADJUTANT_ROUTING_CONFIDENCE_THRESHOLD`      | `0.7`                                       | batch classifier confidence 閾値 |
+| `ADJUTANT_ROUTE_LLM_ENABLED`                 | `false`                                     | secondary classifier（Route LLM）有効化 |
+| `ADJUTANT_ROUTE_LLM_MODEL`                   | `gpt-5-mini`                                | Route LLM モデル |
+| `ADJUTANT_ROUTE_LLM_TIMEOUT_MS`              | `1000`                                      | Route LLM / batch classifier timeout |
+| `ADJUTANT_ROUTE_LLM_MAX_CONCURRENT`          | `1`                                         | Route LLM 同時実行上限 |
+| `ADJUTANT_GLOBAL_MAX_CONCURRENT`             | `3`                                         | global queue 基本同時実行上限 |
+| `ADJUTANT_GLOBAL_DM_BURST_SLOT`              | `1`                                         | DM burst slot |
+| `ADJUTANT_GLOBAL_MAX_RUNNING_DM`             | `3`                                         | DM 同時実行上限 |
+| `ADJUTANT_GLOBAL_STARVATION_MS`              | `120000`                                    | starvation 昇格閾値 |
+| `ADJUTANT_FLUSHER_INTERVAL_MS`               | `300000`                                    | Pending Flusher 周期 |
+| `ADJUTANT_FLUSHER_STALE_MS`                  | `900000`                                    | stale open post 判定閾値 |
+| `ADJUTANT_POLICY_ROUTING_PATH`               | `memory/POLICY_ROUTING.json`                | routing policy ファイルパス（ローダー用） |
+| `ADJUTANT_COMPACTION_ENABLED`                | `true`                                      | overflow 時 compaction 優先 |
+| `ADJUTANT_MEMORY_FLUSH_ENABLED`              | `true`                                      | pre-compaction flush 有効化 |
+| `ADJUTANT_COMPACTION_RESERVE_TOKENS_FLOOR`   | `20000`                                     | flush 閾値計算の reserve |
+| `ADJUTANT_MEMORY_FLUSH_SOFT_THRESHOLD_TOKENS`| `4000`                                      | flush 閾値計算の soft threshold |
+| `ADJUTANT_MEMORY_FLUSH_PROMPT`               | 組み込み既定文                              | flush turn の user prompt |
+| `ADJUTANT_MEMORY_FLUSH_SYSTEM_PROMPT`        | 組み込み既定文                              | flush turn の system prompt |
+| `ADJUTANT_MEMORY_SEARCH_ENABLED`             | `true`                                      | memory_search/memory_get 有効化 |
+| `ADJUTANT_MEMORY_SEARCH_DB_PATH`             | `<workspaceDir>/memory/index/main.sqlite`   | メモリ検索インデックス DB |
+| `ADJUTANT_MEMORY_SEARCH_MODEL`               | `text-embedding-3-small`                    | 埋め込みモデル |
+| `ADJUTANT_MEMORY_SEARCH_MAX_RESULTS`         | `5`                                         | 検索結果上限 |
+| `ADJUTANT_MEMORY_SEARCH_MIN_SCORE`           | `0`                                         | 最低スコア |
+| `ADJUTANT_MEMORY_SEARCH_VECTOR_ENABLED`      | `true`                                      | vector 検索有効化 |
+| `ADJUTANT_MEMORY_SEARCH_SQLITE_VEC_PATH`     | `""`                                        | sqlite-vec 拡張パス |
+| `ADJUTANT_MEMORY_SEARCH_CHUNK_CHARS`         | `1600`                                      | chunk 文字数 |
+| `ADJUTANT_MEMORY_SEARCH_CHUNK_OVERLAP_CHARS` | `320`                                       | chunk overlap |
+| `ADJUTANT_MEMORY_SEARCH_SNIPPET_MAX_CHARS`   | `700`                                       | snippet 文字数上限 |
+| `ADJUTANT_MEMORY_SEARCH_CANDIDATE_MULTIPLIER`| `3`                                         | 候補拡張倍率 |
+| `ADJUTANT_MEMORY_SEARCH_VECTOR_WEIGHT`       | `0.7`                                       | hybrid score の vector 重み |
+| `ADJUTANT_MEMORY_SEARCH_TEXT_WEIGHT`         | `0.3`                                       | hybrid score の text 重み |
+
 ## 9. 実行コマンド
 
 - `pnpm start`: 収集プロセスを直接起動
+- `pnpm run assistant`: 統合起動（API + UI + proactive pipeline + heartbeat）
 - `pnpm dev`: `ensureSlackWithCdp` 実行後に `pnpm start`
 - `pnpm run serve`: `dist/backend/index.js` を起動（事前に `pnpm run build:backend`）
 
@@ -225,10 +318,113 @@ flowchart LR
 
 - CDP 依存のため Slack クライアント実装変更の影響を受けやすい。
 - `uid` 去重はプロセス内のみで、再起動をまたぐ厳密な重複排除は未実装。
-- 永続層は JSONL のみで、高速検索・集計機能は未提供。
+- 永続層はファイル保存（現行は JSONL）中心で、検索は補助インデックスに依存する。
+- `POLICY_ROUTING.json` のローダーは実装済みだが、現時点では routing pipeline 本体への適用は未接続。
 
 ## 11. ロードマップ（設計メモ）
 
 - GitHub / git-local アダプタ追加
 - JSONL から日次 Markdown 要約を生成するバッチ
-- cross-source 集計のための二次インデックスまたは DB 導入
+- cross-source 集計のための検索インデックス強化（SQLite）
+
+## 12. ファイルファースト保存原則（設計）
+
+この章は保存設計の原則を示す。
+
+- 正本データはファイルとして保存する（File First）。
+- イベント/メッセージデータの正本は JSONL とする。
+- エージェント記憶データの正本は Markdown とする。
+- SQLite は検索インデックス専用の派生ストアとして扱う。
+- 書き込み順序は「正本ファイル保存を先行」し、その後に非同期で SQLite インデックスを更新する。
+- 一貫性モデルは Eventual Consistency とし、検索結果の反映遅延を許容する。
+- 障害時の復旧は正本ファイル（JSONL/Markdown）からの再インデックスを基本とする（SQLite は再生成可能なキャッシュ）。
+- バックアップ/移行の基準は正本ファイル群とし、SQLite は必須バックアップ対象から分離可能とする。
+
+### 12.1 非同期インデックス更新フロー（想定）
+
+1. イベントまたは記憶データを正本ファイル（JSONL または Markdown）へ append/update する。
+2. append 成功後にインデックス更新ジョブをキューへ投入する。
+3. ワーカーが正本ファイル差分を読み取り、SQLite の FTS/補助テーブルを更新する。
+4. 更新失敗時はジョブを再試行し、必要に応じて日次または全量リビルドを実行する。
+
+### 12.2 設計上の制約
+
+- SQLite 側のスキーマは検索最適化のための冗長化を許容する。
+- 重複更新に耐えるため、インデックス更新は冪等に設計する。
+- 正本ファイル（JSONL/Markdown）と SQLite の不整合検知のため、最終インデックス時刻や対象ファイルハッシュを保持する。
+
+## 13. Assistant / Proactive 実装仕様
+
+### 13.1 統合ランタイム
+
+- `src/assistant/main.ts` が統合エントリポイントで、API / Vite UI / channel manager / heartbeat / pending flusher を起動する。
+- 起動時に `timeline.jsonl`、`idempotency.jsonl`、`memory/sessions/*.jsonl`、`DATA_DIR` 配下 JSONL を `recoverJsonlFiles` で復旧する。
+- proactive 経路は dual-write で `memory/timeline.jsonl` と `memory/sessions/<sessionKey>.jsonl` の両方へ追記する。
+
+### 13.2 ルーティングパイプライン v1.5
+
+- pipeline は `rule triage` -> `attention window` -> `batch classifier` -> `notification queue` -> `chat dispatch` の順で処理する。
+- sessionKey は Slack channel/thread から解決する。
+  - channel: `slack:channel:<channelId>`
+  - group/im: `slack:group:<channelId>` / `slack:<channelId>`
+  - thread: `:thread:<threadTs>` を付与
+- `rule triage`:
+  - self 投稿は drop
+  - DM は immediate
+  - mention は immediate
+  - channel post は accumulate
+- `attention window` は sessionKey 単位でバッファし、idle または maxWait で flush する。
+- 既定値:
+  - channel: `idle=1000ms`, `maxWait=30000ms`
+  - DM: `idle=200ms`, `maxWait=1000ms`
+- `batch classifier` は `respond|note|ignore` を返す。タイムアウト/例外/低 confidence は fail-closed で `note` として扱う。
+- dispatch は既定で `runTarget=main` へ送信し、元セッションは `originSessionKey` で保持する。
+- global queue は `dm/group/channel/flusher/heartbeat` の source 優先度で同時実行を制御し、DM burst slot と starvation 昇格を持つ。
+
+### 13.3 Timeline v1.5 / Watermark / Pending Flusher
+
+- `TimelineRecordV1_5` は `schema=adjutant.timeline.record.v1.5`、`sessionKey`、`ts`、`loggedAt` を必須とする。
+- action record の `actionType` は `assistant_final|assistant_aborted|assistant_error`。
+- `assistant_final` のみ handled 境界として扱い、`aborted/error` では境界を進めない。
+- Pending Flusher は `memory/timeline.jsonl` を byte offset で差分走査し、sessionKey 別に open post を集計する。
+- stale 判定は `loggedAt` と `ADJUTANT_FLUSHER_STALE_MS`（既定 900000ms）で行う。
+- 別人返信（oldest actor と異なる actor）を検出した session は抑制して起動しない。
+- tick 後は `watermarks.scan.lastGoodOffset` に `lastScannedOffset` を揃えて保存し、prune を実行する。
+- timeline truncate 復旧で `lastScannedOffset > fileSize` の場合、offset と session 状態を 0 / 空へリセットする。
+
+### 13.4 初回実行リチュアル（BOOTSTRAP 注入）
+
+- `origin=user` の実行前に workspace bootstrap を保証する。
+- 初期化で `AGENTS.md`, `SOUL.md`, `TOOLS.md`, `IDENTITY.md`, `USER.md`, `HEARTBEAT.md` を不足時のみ作成する。
+- brand-new workspace の場合のみ `BOOTSTRAP.md` を作成する。
+- prompt 注入条件:
+  - `origin=user`
+  - `isHeartbeat=false`
+  - `sessionKey=main`
+  - `memoryScope=main`
+- 注入対象は bootstrap 7 ファイル + 存在時のみ `MEMORY.md` / `memory.md`。
+- `BOOTSTRAP.md` が missing のときは context へ含めない（削除後に自然停止）。
+- 各ファイルは既定 20000 文字で head/tail トリミング（70% / 20%）される。
+
+### 13.5 Pre-compaction Memory Flush / Context Compaction
+
+- pre-flush 判定は `session.getContextUsage()` を使い、しきい値 `contextWindow - reserveFloor - softThreshold` を超えた場合のみ実行する。
+- pre-flush 実行条件:
+  - memory flush enabled
+  - main scope
+  - non-heartbeat
+  - workspace writable
+  - 同一 compaction cycle で未実行（`memoryFlushCompactionCount !== compactionCount`）
+- flush turn は silent で実行し、失敗時は warning のみで本処理を継続する。
+- `context_overflow` は `session.compact()` を優先し、失敗時のみ prompt trim fallback を使う。
+- `sessions.json` には `compactionCount`, `memoryFlushAt`, `memoryFlushCompactionCount`, `contextTokens`, `contextWindowTokens` を保存する。
+
+### 13.6 SQLite Hybrid Memory Search（Local File First）
+
+- `memory_search` / `memory_get` は `memoryScope=main` のセッションでのみ custom tool として登録する。
+- source of truth はローカル Markdown（`MEMORY.md` と `memory/**/*.md`）。
+- index DB の既定値は `<workspaceDir>/memory/index/main.sqlite`。
+- 検索は FTS5(BM25) と sqlite-vec のハイブリッドスコアで返す。
+- 埋め込み取得失敗時は BM25 のみで継続し、`fallback` を返す。
+- `memory_get` は allowlist（`MEMORY.md`, `memory/*.md`）+ workspace 内 + symlink 拒否で path を検証する。
+- 例外は throw せず、`disabled/error` を含む tool 契約レスポンスへ正規化する。
