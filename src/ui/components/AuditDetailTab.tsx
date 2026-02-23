@@ -89,7 +89,7 @@ function isFlatObject(value: unknown): value is Record<string, unknown> {
 }
 
 function ToolAccordion({ tool }: { tool: AuditToolSummary }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(true);
 
   const statusColor =
     tool.status === "ok"
