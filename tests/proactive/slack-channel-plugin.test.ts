@@ -111,6 +111,8 @@ describe("slack-channel-plugin", () => {
     assert.equal(emitted[0]?.event.uid, "uid-1");
     assert.equal(emitted[0]?.channelId, "slack");
     assert.equal(emitted[0]?.accountId, "acc-1");
+    assert.equal(emitted[0]?.event.meta?.account_id, "acc-1");
+    assert.equal(written[0]?.meta?.account_id, "acc-1");
     assert.equal(
       statusHistory.some((snapshot) => snapshot.connected === true),
       true
@@ -179,6 +181,7 @@ describe("slack-channel-plugin", () => {
   it("domCaptureDisabled 設定を adapter 作成時に引き渡す", async () => {
     const client = new FakeClient();
     const captured: boolean[] = [];
+    const capturedAccountIds: string[] = [];
 
     const plugin = createSlackChannelPlugin({
       dataDir: "data",
@@ -191,6 +194,7 @@ describe("slack-channel-plugin", () => {
       createWriter: () => ({ append: async () => {} }),
       createAdapter: (input) => {
         captured.push(input.domCaptureDisabled);
+        capturedAccountIds.push(input.accountId);
         return {
           name: "slack-stub",
           start: async () => {},
@@ -216,5 +220,6 @@ describe("slack-channel-plugin", () => {
     await running;
 
     assert.deepEqual(captured, [true]);
+    assert.deepEqual(capturedAccountIds, ["acc-1"]);
   });
 });

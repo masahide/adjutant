@@ -36,6 +36,7 @@ export type HeartbeatConfig = {
   stateDir?: string;
   workspaceDir?: string;
   userTimezone?: string;
+  defaultAccountId?: string;
   retryDelayMs?: number;
   model?: string;
   globalConcurrencyQueue?: GlobalConcurrencyQueue;
@@ -663,6 +664,7 @@ export async function runOnce(
     const [events, memory, soulPromptRaw, userPromptRaw, agentsPromptRaw] = await Promise.all([
       runtime.readEvents({
         dataDir: config.dataDir,
+        accountId: config.defaultAccountId,
       }),
       runtime.readMemoryFiles({
         workspaceDir,

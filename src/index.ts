@@ -10,6 +10,7 @@ import { DebugUiServer } from "./debug/debugUi.js";
 import type { SlackCdpClient } from "./runtime/slackConnection.js";
 import { computeFullJitterDelayMs } from "./runtime/retry-policy.js";
 import { listJsonlFiles, recoverJsonlFiles } from "./io/jsonl-recovery.js";
+import { normalizeAccountId } from "./runtime/data-paths.js";
 import path from "node:path";
 
 type ActiveSession = {
@@ -73,7 +74,8 @@ async function main() {
   const timezone = runtimeConfig.timezone;
   console.log(`[Adjutant] timezone -> ${timezone}`);
 
-  const writer = new JsonlWriter({ dataDir });
+  const defaultAccountId = normalizeAccountId(process.env.ADJUTANT_SLACK_ACCOUNT_ID, "default");
+  const writer = new JsonlWriter({ dataDir, defaultAccountId });
   const now = () => new Date();
   const debugUiEnabled = runtimeConfig.debugUiEnabled;
   const debugUiPort = runtimeConfig.debugUiPort;

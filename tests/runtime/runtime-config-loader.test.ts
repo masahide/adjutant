@@ -131,6 +131,7 @@ describe("runtime-config-loader", () => {
       ADJUTANT_STATE_DIR: "/tmp/adjutant-state",
     } as NodeJS.ProcessEnv);
 
+    assert.equal(config.app.assistant.dataDir, "/tmp/adjutant-state/data");
     assert.equal(config.app.assistant.workspaceDir, "/tmp/adjutant-state/workspace");
     assert.equal(config.app.assistant.timelinePath, "/tmp/adjutant-state/timeline.jsonl");
     assert.equal(config.app.idempotency.storePath, "/tmp/adjutant-state/idempotency.jsonl");

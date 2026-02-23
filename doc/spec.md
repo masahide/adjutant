@@ -68,7 +68,7 @@ flowchart LR
   B --> C[SlackAdapter]
   C --> D[SlackIngestor]
   D --> E[JsonlWriter]
-  E --> F[data/YYYY/MM/DD/source/events.jsonl]
+  E --> F[data/accounts/accountId/YYYY/MM/DD/source/events.jsonl]
   C --> G[SlackNameCacheRepository]
   C --> H[DomCaptureService]
   C --> I[DebugUiServer optional]
@@ -182,11 +182,12 @@ flowchart LR
 出力先:
 
 ```text
-<dataDir>/YYYY/MM/DD/<source>/events.jsonl
+<dataDir>/accounts/<account_id>/YYYY/MM/DD/<source>/events.jsonl
 ```
 
 - 1 行 1 JSON
 - `logged_at` が未設定なら `JsonlWriter` が現在時刻で補完
+- `meta.account_id` が未設定なら `default` を補完
 - `logged_at` を基準に日付ディレクトリを決定
 - 書き込み時に `checksum` フィールド（sha256 ベース 16 文字）を付与
 - append 失敗時は最大 2 回リトライ（`ENOENT` は mkdir 後に再試行）
@@ -194,8 +195,8 @@ flowchart LR
 ### 7.2 名称キャッシュ
 
 ```text
-<dataDir>/_cache/slack/channel-names-by-team/<team_id>.json
-<dataDir>/_cache/slack/user-names-by-team/<team_id>.json
+<dataDir>/accounts/<account_id>/_cache/slack/channel-names-by-team/<team_id>.json
+<dataDir>/accounts/<account_id>/_cache/slack/user-names-by-team/<team_id>.json
 ```
 
 - team ごとに分割保存
@@ -242,7 +243,8 @@ flowchart LR
 | `CDP_HOST`                                 | `127.0.0.1`                         | CDP 接続先ホスト                    |
 | `CDP_PORT`                                 | `9222`                              | CDP 接続先ポート                    |
 | `CDP_ENDPOINT_FILE`                        | `.adjutant/cdp-endpoint.json`       | 接続先 JSON の読み込み元            |
-| `DATA_DIR`                                 | `./data`                            | 出力ディレクトリ                    |
+| `DATA_DIR`                                 | `<stateDir>/data`                   | 出力ディレクトリ                    |
+| `ADJUTANT_SLACK_ACCOUNT_ID`                | `default`                           | Slack 保存先 account_id             |
 | `ADJUTANT_TZ`                              | `Asia/Tokyo`                        | イベント時刻整形タイムゾーン        |
 | `ADJUTANT_DEBUG`                           | -                                   | Slack デバッグトピック有効化        |
 | `ADJUTANT_DISABLE_DOM_CAPTURE`             | `0`                                 | DOM 補完無効化                      |

@@ -1,6 +1,7 @@
 import type { IngestionAdapter } from "../core/adapter.js";
 import type { NormalizedEvent } from "../core/events.js";
 import { JsonlWriter } from "../io/jsonlWriter.js";
+import { normalizeAccountId, resolveSlackCacheBaseDir } from "../runtime/data-paths.js";
 import { resolveEndpoint, type CdpEndpoint } from "../runtime/config.js";
 import { computeFullJitterDelayMs } from "../runtime/retry-policy.js";
 import { connectToSlackPage, type SlackCdpClient } from "../runtime/slackConnection.js";
@@ -16,6 +17,7 @@ type SlackAdapterFactoryInput = {
   client: SlackCdpClient;
   timezone: string;
   dataDir: string;
+  accountId: string;
   domCaptureDisabled: boolean;
 };
 
@@ -35,7 +37,7 @@ type SlackChannelPluginOptions = {
     port: number
   ) => Promise<{ client: SlackCdpClient; slackUrl: string }>;
   createAdapter?: (input: SlackAdapterFactoryInput) => IngestionAdapter;
-  createWriter?: (dataDir: string) => JsonlEventWriter;
+  createWriter?: (dataDir: string, defaultAccountId: string) => JsonlEventWriter;
   sleep?: (ms: number) => Promise<void>;
   nowMs?: () => number;
   random?: () => number;
@@ -69,12 +71,25 @@ function toReason(error: unknown): string {
 }
 
 function resolveAccountIds(options: SlackChannelPluginOptions): string[] {
-  const explicit = (options.accountIds ?? []).map((value) => value.trim()).filter(Boolean);
+  const explicit = (options.accountIds ?? [])
+    .map((value) => normalizeAccountId(value, "default"))
+    .filter(Boolean);
   if (explicit.length > 0) {
     return explicit;
   }
-  const fallback = options.defaultAccountId?.trim() || "default";
+  const fallback = normalizeAccountId(options.defaultAccountId, "default");
   return [fallback];
+}
+
+function attachAccountId(event: NormalizedEvent, accountId: string): NormalizedEvent {
+  const normalizedAccountId = normalizeAccountId(accountId, "default");
+  return {
+    ...event,
+    meta: {
+      ...(event.meta ?? {}),
+      account_id: normalizedAccountId,
+    },
+  };
 }
 
 async function closeClient(
@@ -120,15 +135,21 @@ async function waitForDisconnectOrAbort(
 function createDefaultAdapterFactory(
   options: SlackChannelPluginOptions
 ): (input: SlackAdapterFactoryInput) => IngestionAdapter {
-  return (input) =>
-    new SlackAdapter({
+  return (input) => {
+    const cacheBase = resolveSlackCacheBaseDir({
+      dataDir: options.dataDir,
+      accountId: input.accountId,
+      fallbackAccountId: options.defaultAccountId ?? "default",
+    });
+    return new SlackAdapter({
       client: input.client,
       timezone: input.timezone,
       domCaptureDisabled: input.domCaptureDisabled,
       now: () => new Date(),
-      channelCachePath: join(options.dataDir, "_cache", "slack", "channel-names-by-team.json"),
-      userCachePath: join(options.dataDir, "_cache", "slack", "user-names-by-team.json"),
+      channelCachePath: join(cacheBase, "channel-names-by-team.json"),
+      userCachePath: join(cacheBase, "user-names-by-team.json"),
     });
+  };
 }
 
 export function createSlackChannelPlugin(
@@ -146,9 +167,10 @@ export function createSlackChannelPlugin(
   const endpointResolver = options.resolveEndpoint ?? resolveEndpoint;
   const connectFn = options.connectToSlackPage ?? connectToSlackPage;
   const createAdapter = options.createAdapter ?? createDefaultAdapterFactory(options);
-  const writer = (options.createWriter ?? ((dataDir) => new JsonlWriter({ dataDir })))(
-    options.dataDir
-  );
+  const writer = (
+    options.createWriter ??
+    ((dataDir, defaultAccountId) => new JsonlWriter({ dataDir, defaultAccountId }))
+  )(options.dataDir, normalizeAccountId(options.defaultAccountId, "default"));
   const sleep =
     options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const nowMs = options.nowMs ?? (() => Date.now());
@@ -186,6 +208,7 @@ export function createSlackChannelPlugin(
           client,
           timezone,
           dataDir: options.dataDir,
+          accountId: ctx.accountId,
           domCaptureDisabled,
         });
         activeSessions.set(ctx.accountId, { client, adapter });
@@ -198,11 +221,12 @@ export function createSlackChannelPlugin(
           lastStartAt: nowMs(),
         });
         await adapter.start(async (event) => {
-          await writer.append(event);
+          const withAccount = attachAccountId(event, ctx.accountId);
+          await writer.append(withAccount);
           await ctx.emit({
             accountId: ctx.accountId,
             channelId,
-            event,
+            event: withAccount,
           });
         });
         retryCount = 0;

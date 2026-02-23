@@ -1,9 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
+import { resolveAdjutantStateDir } from "../assistant/session-paths.js";
+import { resolveDefaultDataDir } from "./data-paths.js";
 
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 9222;
-const DEFAULT_DATA_DIR = path.resolve(process.cwd(), "data");
 
 export type CdpEndpoint = {
   host: string;
@@ -33,5 +34,5 @@ export function resolveEndpoint(): CdpEndpoint {
 export function resolveDataDir(): string {
   const env = process.env.DATA_DIR;
   if (env && env.trim()) return path.resolve(env);
-  return DEFAULT_DATA_DIR;
+  return resolveDefaultDataDir(resolveAdjutantStateDir());
 }

@@ -29,11 +29,21 @@ function createEvent(overrides: Partial<NormalizedEvent> = {}): NormalizedEvent 
 
 async function writeEventsFile(params: {
   dataDir: string;
+  accountId?: string;
   date: string;
   lines: string[];
 }): Promise<string> {
   const [year, month, day] = params.date.split("-");
-  const dir = join(params.dataDir, year ?? "1970", month ?? "01", day ?? "01", "slack");
+  const accountId = params.accountId ?? "default";
+  const dir = join(
+    params.dataDir,
+    "accounts",
+    accountId,
+    year ?? "1970",
+    month ?? "01",
+    day ?? "01",
+    "slack"
+  );
   await mkdir(dir, { recursive: true });
   const filePath = join(dir, "events.jsonl");
   await writeFile(filePath, `${params.lines.join("\n")}\n`, "utf8");
@@ -174,6 +184,45 @@ describe("EventReader", () => {
 
       assert.equal(result.length, 1);
       assert.equal(result[0]?.uid, "post-1");
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("accountId 指定時は対象 account 配下のみを読む", async () => {
+    const tempDir = await mkdtemp(`${tmpdir()}/adjutant-event-reader-`);
+    try {
+      const date = "2026-02-15";
+      const workEvent = createEvent({
+        uid: "work-event",
+        ts: "2026-02-15T10:00:00.000Z",
+      });
+      const privateEvent = createEvent({
+        uid: "private-event",
+        ts: "2026-02-15T11:00:00.000Z",
+      });
+      await writeEventsFile({
+        dataDir: tempDir,
+        accountId: "work",
+        date,
+        lines: [JSON.stringify(workEvent)],
+      });
+      await writeEventsFile({
+        dataDir: tempDir,
+        accountId: "private",
+        date,
+        lines: [JSON.stringify(privateEvent)],
+      });
+
+      const result = await readEvents({
+        dataDir: tempDir,
+        accountId: "work",
+        date,
+        sinceMinutes: 60 * 24 * 365,
+      });
+
+      assert.equal(result.length, 1);
+      assert.equal(result[0]?.uid, "work-event");
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }

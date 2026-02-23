@@ -37,15 +37,38 @@ describe("JsonlWriter", () => {
     await writer.append(event1);
     await writer.append(event2);
 
-    const pathEvent1 = join(tmp, "2024", "03", "22", "slack", "events.jsonl");
-    const pathEvent2 = join(tmp, "2024", "03", "23", "slack", "events.jsonl");
+    const pathEvent1 = join(
+      tmp,
+      "accounts",
+      "default",
+      "2024",
+      "03",
+      "22",
+      "slack",
+      "events.jsonl"
+    );
+    const pathEvent2 = join(
+      tmp,
+      "accounts",
+      "default",
+      "2024",
+      "03",
+      "23",
+      "slack",
+      "events.jsonl"
+    );
 
     const content1 = await readFile(pathEvent1, "utf8");
     const lines1 = content1.trim().split("\n");
     assert.equal(lines1.length, 1);
-    const parsed1 = JSON.parse(lines1[0]) as { uid: string; checksum?: string };
+    const parsed1 = JSON.parse(lines1[0]) as {
+      uid: string;
+      checksum?: string;
+      meta?: { account_id?: string };
+    };
     assert.equal(parsed1.uid, event1.uid);
     assert.equal(typeof parsed1.checksum, "string");
+    assert.equal(parsed1.meta?.account_id, "default");
 
     const content2 = await readFile(pathEvent2, "utf8");
     const lines2 = content2.trim().split("\n");
@@ -68,12 +91,44 @@ describe("JsonlWriter", () => {
 
     const datePart = event.logged_at!.split("T")[0] ?? "1970-01-01";
     const [year, month, day] = datePart.split("-");
-    const targetPath = join(tmp, year!, month!, day!, "slack", "events.jsonl");
+    const targetPath = join(
+      tmp,
+      "accounts",
+      "default",
+      year!,
+      month!,
+      day!,
+      "slack",
+      "events.jsonl"
+    );
     const content = await readFile(targetPath, "utf8");
     const lines = content.trim().split("\n");
     assert.equal(lines.length, 1);
-    const parsed = JSON.parse(lines[0]) as { checksum?: string };
+    const parsed = JSON.parse(lines[0]) as { checksum?: string; meta?: { account_id?: string } };
     assert.equal(typeof parsed.checksum, "string");
+    assert.equal(parsed.meta?.account_id, "default");
+    await rm(tmp, { recursive: true, force: true });
+  });
+
+  it("meta.account_id があれば account 別ディレクトリへ書き込む", async () => {
+    const tmp = await mkdtemp(`${tmpdir()}/adjutant-jsonl-`);
+    const writer = new JsonlWriter({ dataDir: tmp, defaultAccountId: "default" });
+    const event = createEvent({
+      uid: "slack:C999@1711111111.000999",
+      meta: {
+        account_id: "work",
+      },
+    });
+
+    await writer.append(event);
+
+    const targetPath = join(tmp, "accounts", "work", "2024", "03", "22", "slack", "events.jsonl");
+    const content = await readFile(targetPath, "utf8");
+    const lines = content.trim().split("\n");
+    assert.equal(lines.length, 1);
+    const parsed = JSON.parse(lines[0]) as { meta?: { account_id?: string } };
+    assert.equal(parsed.meta?.account_id, "work");
+
     await rm(tmp, { recursive: true, force: true });
   });
 });

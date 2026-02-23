@@ -6,7 +6,7 @@
 
 | 変数名          | 環境変数                                               | デフォルト値                  | 説明                                            |
 | --------------- | ------------------------------------------------------ | ----------------------------- | ----------------------------------------------- |
-| `dataDir`       | Collector: `DATA_DIR` / Assistant: `ADJUTANT_DATA_DIR` | `data`                        | データ保存ルート                                |
+| `dataDir`       | Collector: `DATA_DIR` / Assistant: `ADJUTANT_DATA_DIR` | `{stateDir}/data`             | データ保存ルート                                |
 | `workspaceDir`  | `ADJUTANT_WORKSPACE_DIR`                               | `{stateDir}/workspace`        | ワークスペースルート                            |
 | `stateDir`      | `ADJUTANT_STATE_DIR`                                   | `{home}/.adjutant`            | 内部状態保存先                                  |
 | `agentStateDir` | —                                                      | `{stateDir}/agents/{agentId}` | エージェント別状態 (agentId デフォルト: `main`) |
@@ -15,16 +15,16 @@
 
 ## 1. Slack イベントデータ
 
-| パス                                      | R/W                           | 定義箇所                                                       |
-| ----------------------------------------- | ----------------------------- | -------------------------------------------------------------- |
-| `{dataDir}/YYYY/MM/DD/slack/events.jsonl` | W (Collector) / R (Assistant) | `src/io/jsonlWriter.ts:27`, `src/assistant/event-reader.ts:32` |
+| パス                                                           | R/W                           | 定義箇所                                                 |
+| -------------------------------------------------------------- | ----------------------------- | -------------------------------------------------------- |
+| `{dataDir}/accounts/{accountId}/YYYY/MM/DD/slack/events.jsonl` | W (Collector) / R (Assistant) | `src/io/jsonlWriter.ts`, `src/assistant/event-reader.ts` |
 
 ## 2. キャッシュ
 
-| パス                                                         | R/W | 定義箇所                                                        |
-| ------------------------------------------------------------ | --- | --------------------------------------------------------------- |
-| `{dataDir}/_cache/slack/channel-names-by-team/{teamId}.json` | R/W | `src/index.ts:228`, `src/proactive/slack-channel-plugin.ts:129` |
-| `{dataDir}/_cache/slack/user-names-by-team/{teamId}.json`    | R/W | `src/index.ts:229`, `src/proactive/slack-channel-plugin.ts:130` |
+| パス                                                                              | R/W | 定義箇所                                                                    |
+| --------------------------------------------------------------------------------- | --- | --------------------------------------------------------------------------- |
+| `{dataDir}/accounts/{accountId}/_cache/slack/channel-names-by-team/{teamId}.json` | R/W | `src/proactive/slack-channel-plugin.ts`, `src/slack/nameCacheRepository.ts` |
+| `{dataDir}/accounts/{accountId}/_cache/slack/user-names-by-team/{teamId}.json`    | R/W | `src/proactive/slack-channel-plugin.ts`, `src/slack/nameCacheRepository.ts` |
 
 設定時のベースパスは `.../channel-names-by-team.json` のようにファイル名で渡されるが、`nameCacheRepository.ts` が拡張子を除去してディレクトリ化し、チーム別に `{teamId}.json` を配置する (`src/slack/nameCacheRepository.ts:249,273,369`)。
 
@@ -157,18 +157,19 @@
 │       ├── USER.md                          [R]
 │       ├── HEARTBEAT.md                     [R]
 │       └── BOOTSTRAP.md                     [R]
-├── data/                                    (= dataDir)
-│   ├── YYYY/MM/DD/slack/
-│   │   └── events.jsonl                     [R/W] Slackイベント
-│   ├── _cache/slack/
-│   │   ├── channel-names-by-team/
-│   │   │   └── {teamId}.json                [R/W] チャンネル名
-│   │   └── user-names-by-team/
-│   │       └── {teamId}.json                [R/W] ユーザー名
-│   └── _debug/
-│       ├── cdp-events.jsonl                 [W]   CDPイベントログ
-│       └── raw-fetch.jsonl                  [W]   Fetchログ
 └── ~/.adjutant/                             (= stateDir)
+    ├── data/                                (= dataDir)
+    │   ├── accounts/default/
+    │   │   ├── YYYY/MM/DD/slack/
+    │   │   │   └── events.jsonl             [R/W] Slackイベント
+    │   │   └── _cache/slack/
+    │   │       ├── channel-names-by-team/
+    │   │       │   └── {teamId}.json        [R/W] チャンネル名
+    │   │       └── user-names-by-team/
+    │   │           └── {teamId}.json        [R/W] ユーザー名
+    │   └── _debug/
+    │       ├── cdp-events.jsonl             [W]   CDPイベントログ
+    │       └── raw-fetch.jsonl              [W]   Fetchログ
     ├── workspace/                           (= workspaceDir)
     │   ├── MEMORY.md                        [R/W] 長期記憶
     │   ├── memory.md                        [R]   長期記憶 (別名)

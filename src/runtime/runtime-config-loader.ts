@@ -13,6 +13,7 @@ import {
   resolveSessionEntriesPath,
   resolveSessionTranscriptsDir,
 } from "../assistant/session-paths.js";
+import { normalizeAccountId, resolveDefaultDataDir } from "./data-paths.js";
 import { resolveSandboxConfig } from "../sandbox/config.js";
 
 const DEFAULT_ROUTE_LLM_MODEL = "gpt-5-mini";
@@ -113,8 +114,8 @@ export function ensurePiCacheRetention(env: NodeJS.ProcessEnv = process.env): st
 export function loadAssistantGatewayRuntimeConfig(
   env: NodeJS.ProcessEnv = process.env
 ): AssistantGatewayRuntimeConfig {
-  const dataDir = parseStringEnv(env.ADJUTANT_DATA_DIR, "data");
   const stateDir = resolveAdjutantStateDir({ env });
+  const dataDir = parseStringEnv(env.ADJUTANT_DATA_DIR, resolveDefaultDataDir(stateDir));
   const workspaceDir = resolveAdjutantWorkspaceDir({ env, stateDir });
   const sessionAgentId = resolveSessionAgentId({ env });
   const sessionTranscriptsDir = resolveSessionTranscriptsDir({
@@ -130,7 +131,9 @@ export function loadAssistantGatewayRuntimeConfig(
   const timelinePath = env.ADJUTANT_TIMELINE_PATH?.trim() || join(stateDir, "timeline.jsonl");
   const idempotencyStorePath =
     env.ADJUTANT_IDEMPOTENCY_STORE_PATH?.trim() || join(stateDir, "idempotency.jsonl");
-  const slackAccountId = parseStringEnv(env.ADJUTANT_SLACK_ACCOUNT_ID, "default");
+  const slackAccountId = normalizeAccountId(
+    parseStringEnv(env.ADJUTANT_SLACK_ACCOUNT_ID, "default")
+  );
   const corsOrigin = env.ADJUTANT_CORS_ORIGIN?.trim() || `http://127.0.0.1:${String(vitePort)}`;
   const routeLlm = resolveRouteLlmRuntimeConfig(env);
   const sandbox = resolveSandboxConfig(env);

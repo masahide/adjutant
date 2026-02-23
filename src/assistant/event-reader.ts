@@ -1,12 +1,13 @@
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
 import type { NormalizedEvent } from "../core/events.js";
 import { isNormalizedEvent } from "../core/validateEvent.js";
+import { normalizeAccountId, resolveEventJsonlPath } from "../runtime/data-paths.js";
 import { formatDateKeyInTimezone } from "./memory-paths.js";
 import { normalizeTimezone, shiftDateKey } from "./shared-normalizers.js";
 
 export type ReadEventsOptions = {
   dataDir: string;
+  accountId?: string;
   date?: string;
   timezone?: string;
   kinds?: string[];
@@ -25,11 +26,6 @@ function resolveDateKey(value: string | undefined, timezone: string): string {
     return value;
   }
   return formatDateKeyInTimezone(new Date(Date.now()), timezone);
-}
-
-function resolveEventsPath(dataDir: string, date: string): string {
-  const [year = "1970", month = "01", day = "01"] = date.split("-");
-  return join(dataDir, year, month, day, "slack", "events.jsonl");
 }
 
 function normalizeLimit(limit?: number): number {
@@ -111,6 +107,7 @@ function resolveDateKeysForWindow(params: {
 
 export async function readEvents(opts: ReadEventsOptions): Promise<NormalizedEvent[]> {
   const timezone = normalizeTimezone(opts.timezone);
+  const accountId = normalizeAccountId(opts.accountId, "default");
   const explicitDate = typeof opts.date === "string" && DATE_KEY_PATTERN.test(opts.date);
   const dateKey = resolveDateKey(opts.date, timezone);
   const limit = normalizeLimit(opts.limit);
@@ -132,7 +129,13 @@ export async function readEvents(opts: ReadEventsOptions): Promise<NormalizedEve
 
   const raws: string[] = [];
   for (const targetDate of dateKeys) {
-    const eventsPath = resolveEventsPath(opts.dataDir, targetDate);
+    const eventsPath = resolveEventJsonlPath({
+      dataDir: opts.dataDir,
+      accountId,
+      fallbackAccountId: "default",
+      dateKey: targetDate,
+      source: "slack",
+    }).file;
     try {
       raws.push(await readFile(eventsPath, "utf8"));
     } catch (error) {

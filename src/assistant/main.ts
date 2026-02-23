@@ -461,6 +461,7 @@ const heartbeatConfig: HeartbeatConfig = {
   stateDir: SESSION_STATE_DIR,
   workspaceDir: WORKSPACE_DIR,
   userTimezone: TIMEZONE,
+  defaultAccountId: SLACK_DEFAULT_ACCOUNT_ID,
   model: MODEL,
   globalConcurrencyQueue,
   intervalMs: runtimeConfig.app.heartbeat.intervalMs,

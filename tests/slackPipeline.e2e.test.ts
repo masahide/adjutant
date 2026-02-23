@@ -36,10 +36,11 @@ describe("SlackIngestor end-to-end", () => {
       },
     });
 
-    const [year] = await readdir(tmp);
-    const [month] = await readdir(join(tmp, year));
-    const [day] = await readdir(join(tmp, year, month));
-    const targetPath = join(tmp, year, month, day, "slack", "events.jsonl");
+    const [accountId] = await readdir(join(tmp, "accounts"));
+    const [year] = await readdir(join(tmp, "accounts", accountId));
+    const [month] = await readdir(join(tmp, "accounts", accountId, year));
+    const [day] = await readdir(join(tmp, "accounts", accountId, year, month));
+    const targetPath = join(tmp, "accounts", accountId, year, month, day, "slack", "events.jsonl");
     const content = await readFile(targetPath, "utf8");
     const lines = content.trim().split("\n");
     assert.equal(lines.length, 1);
