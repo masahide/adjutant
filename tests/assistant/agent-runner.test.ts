@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { afterEach, describe, it } from "node:test";
+import { afterEach, describe, it, mock } from "node:test";
 import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { SessionManager } from "@mariozechner/pi-coding-agent";
 import {
   resetAgentRunnerForTest,
   runAgent,
@@ -1245,6 +1246,49 @@ describe("AgentRunner", () => {
       assert.equal(saved.main?.sessionFile, "sessions/session-main-001.jsonl");
     } finally {
       await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("デフォルト実装は sessionEntriesPath の親ディレクトリを transcript 保存先に使う", async () => {
+    const createMock = mock.method(
+      SessionManager as unknown as {
+        create: (workspaceDir: string, sessionDir: string) => unknown;
+      },
+      "create",
+      (_workspaceDir: string, _sessionDir: string) => {
+        return { isPersisted: () => true };
+      }
+    );
+
+    try {
+      setAgentRunnerRuntimeForTest({
+        ...inMemorySessionStoreRuntime(),
+        nowMs: () => 1000,
+        createSession: async () => ({
+          session: {
+            sessionId: "session-main-001",
+            sessionFile: "session-main-001.jsonl",
+            subscribe: () => () => undefined,
+            prompt: async () => undefined,
+            dispose: () => undefined,
+          },
+        }),
+      });
+
+      await runAgent({
+        runId: "run-session-dir",
+        prompt: "hello",
+        sessionKey: "main",
+        workspaceDir: "/tmp/workspace",
+        sessionEntriesPath: "/tmp/adjutant-state/agents/main/sessions/sessions.json",
+      });
+
+      assert.equal(createMock.mock.calls.length, 1);
+      const args = createMock.mock.calls[0]?.arguments ?? [];
+      assert.equal(args[0], "/tmp/workspace");
+      assert.equal(args[1], "/tmp/adjutant-state/agents/main/sessions");
+    } finally {
+      createMock.mock.restore();
     }
   });
 

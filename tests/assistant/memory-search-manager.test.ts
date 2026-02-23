@@ -76,7 +76,6 @@ describe("MemorySearchManager", () => {
       );
 
       const config = resolveMemorySearchRuntimeConfig({
-        workspaceDir,
         env: {
           ...process.env,
           ADJUTANT_MEMORY_SEARCH_DB_PATH: join(workspaceDir, "memory", "index", "test.sqlite"),
@@ -123,7 +122,6 @@ describe("MemorySearchManager", () => {
         "utf8"
       );
       const config = resolveMemorySearchRuntimeConfig({
-        workspaceDir,
         env: {
           ...process.env,
           ADJUTANT_MEMORY_SEARCH_DB_PATH: join(workspaceDir, "memory", "index", "test.sqlite"),
@@ -155,7 +153,6 @@ describe("MemorySearchManager", () => {
       await writeFile(join(workspaceDir, "MEMORY.md"), "some memo text", "utf8");
 
       const config = resolveMemorySearchRuntimeConfig({
-        workspaceDir,
         env: {
           ...process.env,
           ADJUTANT_MEMORY_SEARCH_DB_PATH: join(workspaceDir, "memory", "index", "test.sqlite"),
@@ -181,7 +178,6 @@ describe("MemorySearchManager", () => {
     const workspaceDir = await mkdtemp(`${tmpdir()}/adjutant-memory-search-`);
     try {
       const config = resolveMemorySearchRuntimeConfig({
-        workspaceDir,
         env: {
           ...process.env,
           ADJUTANT_MEMORY_SEARCH_DB_PATH: join(workspaceDir, "memory", "index", "test.sqlite"),
@@ -221,7 +217,6 @@ describe("MemorySearchManager", () => {
       await writeFile(join(workspaceDir, "memory", "b.md"), "foo vector-aligned chunk", "utf8");
 
       const config = resolveMemorySearchRuntimeConfig({
-        workspaceDir,
         env: {
           ...process.env,
           ADJUTANT_MEMORY_SEARCH_DB_PATH: join(workspaceDir, "memory", "index", "test.sqlite"),

@@ -134,6 +134,7 @@ describe("heartbeat-e2e", () => {
 
       const handle = startHeartbeat({
         dataDir: tempDir,
+        stateDir: join(tempDir, "state"),
         workspaceDir: tempDir,
         sessionEntriesPath: join(tempDir, "sessions.json"),
         heartbeatFilePath: join(tempDir, "assistant", "prompts", "HEARTBEAT.md"),
@@ -194,6 +195,7 @@ describe("heartbeat-e2e", () => {
 
       const handle = startHeartbeat({
         dataDir: tempDir,
+        stateDir: join(tempDir, "state"),
         workspaceDir: tempDir,
         sessionEntriesPath: join(tempDir, "sessions.json"),
         heartbeatFilePath: join(tempDir, "assistant", "prompts", "HEARTBEAT.md"),

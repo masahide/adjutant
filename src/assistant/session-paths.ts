@@ -1,7 +1,9 @@
+import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
 const DEFAULT_AGENT_ID = "main";
-const DEFAULT_STATE_RELATIVE_DIR = join("data", "_assistant");
+const DEFAULT_STATE_DIR_NAME = ".adjutant";
+const DEFAULT_WORKSPACE_DIR_NAME = "workspace";
 
 function sanitizeAgentId(agentId?: string): string {
   const normalized = typeof agentId === "string" ? agentId.trim() : "";
@@ -16,20 +18,26 @@ function sanitizeSessionKey(sessionKey: string): string {
   return normalized || "unknown";
 }
 
-export function resolveAdjutantStateDir(params?: {
-  env?: NodeJS.ProcessEnv;
-  dataDir?: string;
-}): string {
+export function resolveAdjutantStateDir(params?: { env?: NodeJS.ProcessEnv }): string {
   const env = params?.env ?? process.env;
   const configured = env.ADJUTANT_STATE_DIR?.trim();
   if (configured) {
     return resolve(configured);
   }
-  const dataDir = params?.dataDir?.trim();
-  if (dataDir) {
-    return resolve(dataDir, "_assistant");
+  return resolve(homedir(), DEFAULT_STATE_DIR_NAME);
+}
+
+export function resolveAdjutantWorkspaceDir(params?: {
+  env?: NodeJS.ProcessEnv;
+  stateDir?: string;
+}): string {
+  const env = params?.env ?? process.env;
+  const configured = env.ADJUTANT_WORKSPACE_DIR?.trim();
+  if (configured) {
+    return resolve(configured);
   }
-  return resolve(DEFAULT_STATE_RELATIVE_DIR);
+  const stateDir = params?.stateDir?.trim() || resolveAdjutantStateDir({ env });
+  return join(resolve(stateDir), DEFAULT_WORKSPACE_DIR_NAME);
 }
 
 export function resolveSessionAgentId(params?: {
@@ -78,7 +86,7 @@ export function resolveSummaryBatchWatermarkPath(params: {
 
 export function resolveSessionEntriesPath(params: { stateDir: string; agentId?: string }): string {
   return join(
-    resolveAgentStateDir({ stateDir: params.stateDir, agentId: params.agentId }),
+    resolveSessionTranscriptsDir({ stateDir: params.stateDir, agentId: params.agentId }),
     "sessions.json"
   );
 }
@@ -97,8 +105,4 @@ export function resolveSessionRecordPath(params: {
     overrideDir: params.sessionTranscriptsDir,
   });
   return join(sessionsDir, `${sanitizeSessionKey(params.sessionKey)}.jsonl`);
-}
-
-export function resolveLegacyWorkspaceSessionsDir(workspaceDir: string): string {
-  return join(workspaceDir, "memory", "sessions");
 }

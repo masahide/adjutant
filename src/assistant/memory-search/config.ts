@@ -1,18 +1,20 @@
 import { join } from "node:path";
 import { parseBooleanEnv, parseNumberEnv, parseStringEnv } from "../../runtime/env-parsers.js";
+import { resolveAdjutantStateDir, resolveSessionAgentId } from "../session-paths.js";
 import type { MemorySearchRuntimeConfig } from "./types.js";
 
 const DEFAULT_MODEL = "text-embedding-3-small";
 
 export function resolveMemorySearchRuntimeConfig(params?: {
   env?: NodeJS.ProcessEnv;
-  workspaceDir?: string;
+  stateDir?: string;
+  agentId?: string;
 }): MemorySearchRuntimeConfig {
   const env = params?.env ?? process.env;
-  const workspaceDir = params?.workspaceDir?.trim() || process.cwd();
+  const stateDir = params?.stateDir?.trim() || resolveAdjutantStateDir({ env });
+  const agentId = resolveSessionAgentId({ env, agentId: params?.agentId });
   const dbPath =
-    env.ADJUTANT_MEMORY_SEARCH_DB_PATH?.trim() ||
-    join(workspaceDir, "memory", "index", "main.sqlite");
+    env.ADJUTANT_MEMORY_SEARCH_DB_PATH?.trim() || join(stateDir, "memory", `${agentId}.sqlite`);
 
   return {
     enabled: parseBooleanEnv(env.ADJUTANT_MEMORY_SEARCH_ENABLED, true),

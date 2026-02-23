@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { resolve } from "node:path";
+import { homedir } from "node:os";
 import {
   resolveAdjutantStateDir,
-  resolveLegacyWorkspaceSessionsDir,
+  resolveAdjutantWorkspaceDir,
   resolveSessionAgentId,
   resolveSessionEntriesPath,
   resolveSessionRecordPath,
@@ -15,17 +15,23 @@ describe("session-paths", () => {
   it("stateDir は ADJUTANT_STATE_DIR を優先する", () => {
     const stateDir = resolveAdjutantStateDir({
       env: { ADJUTANT_STATE_DIR: "/tmp/adjutant-state" } as NodeJS.ProcessEnv,
-      dataDir: "/tmp/adjutant-data",
     });
     assert.equal(stateDir, "/tmp/adjutant-state");
   });
 
-  it("stateDir 既定値は dataDir/_assistant", () => {
+  it("stateDir 既定値は ~/.adjutant", () => {
     const stateDir = resolveAdjutantStateDir({
       env: {} as NodeJS.ProcessEnv,
-      dataDir: "/tmp/adjutant-data",
     });
-    assert.equal(stateDir, "/tmp/adjutant-data/_assistant");
+    assert.equal(stateDir, `${homedir()}/.adjutant`);
+  });
+
+  it("workspaceDir 既定値は <stateDir>/workspace", () => {
+    const workspaceDir = resolveAdjutantWorkspaceDir({
+      env: {} as NodeJS.ProcessEnv,
+      stateDir: "/tmp/adjutant-state",
+    });
+    assert.equal(workspaceDir, "/tmp/adjutant-state/workspace");
   });
 
   it("agentId は sanitize される", () => {
@@ -69,12 +75,7 @@ describe("session-paths", () => {
     );
     assert.equal(
       resolveSessionEntriesPath({ stateDir: "/tmp/adjutant-state", agentId: "ops" }),
-      "/tmp/adjutant-state/agents/ops/sessions.json"
+      "/tmp/adjutant-state/agents/ops/sessions/sessions.json"
     );
-  });
-
-  it("legacy workspace sessions path を返す", () => {
-    const path = resolveLegacyWorkspaceSessionsDir("/tmp/workspace");
-    assert.equal(path, resolve("/tmp/workspace", "memory", "sessions"));
   });
 });

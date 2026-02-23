@@ -24,6 +24,7 @@ async function preparePromptFiles(baseDir: string, heartbeatContent: string): Pr
 function createBaseConfig(tempDir: string) {
   return {
     dataDir: tempDir,
+    stateDir: join(tempDir, "state"),
     workspaceDir: tempDir,
     sessionEntriesPath: join(tempDir, "sessions.json"),
     heartbeatFilePath: join(tempDir, "assistant", "prompts", "HEARTBEAT.md"),
@@ -128,7 +129,7 @@ describe("HeartbeatRunner", () => {
         assert.equal(result.alert?.includes("investigate"), true);
       }
 
-      const recordPath = join(tempDir, "_assistant", "heartbeat-runs.jsonl");
+      const recordPath = join(tempDir, "state", "heartbeat-runs.jsonl");
       const raw = await readFile(recordPath, "utf8");
       const lines = raw.trim().split(/\r?\n/);
       const latest = JSON.parse(lines[lines.length - 1] ?? "{}") as {

@@ -8,6 +8,7 @@ import {
 } from "./env-parsers.js";
 import {
   resolveAdjutantStateDir,
+  resolveAdjutantWorkspaceDir,
   resolveSessionAgentId,
   resolveSessionEntriesPath,
   resolveSessionTranscriptsDir,
@@ -113,8 +114,8 @@ export function loadAssistantGatewayRuntimeConfig(
   env: NodeJS.ProcessEnv = process.env
 ): AssistantGatewayRuntimeConfig {
   const dataDir = parseStringEnv(env.ADJUTANT_DATA_DIR, "data");
-  const workspaceDir = parseStringEnv(env.ADJUTANT_WORKSPACE_DIR, dataDir);
-  const stateDir = resolveAdjutantStateDir({ env, dataDir });
+  const stateDir = resolveAdjutantStateDir({ env });
+  const workspaceDir = resolveAdjutantWorkspaceDir({ env, stateDir });
   const sessionAgentId = resolveSessionAgentId({ env });
   const sessionTranscriptsDir = resolveSessionTranscriptsDir({
     env,
@@ -126,11 +127,9 @@ export function loadAssistantGatewayRuntimeConfig(
     resolveSessionEntriesPath({ stateDir, agentId: sessionAgentId });
   const timezone = parseStringEnv(env.ADJUTANT_TZ, "Asia/Tokyo");
   const vitePort = parsePositiveIntEnv(env.ADJUTANT_VITE_PORT, 5173);
-  const timelinePath =
-    env.ADJUTANT_TIMELINE_PATH?.trim() || join(workspaceDir, "memory", "timeline.jsonl");
+  const timelinePath = env.ADJUTANT_TIMELINE_PATH?.trim() || join(stateDir, "timeline.jsonl");
   const idempotencyStorePath =
-    env.ADJUTANT_IDEMPOTENCY_STORE_PATH?.trim() ||
-    join(workspaceDir, "memory", "idempotency.jsonl");
+    env.ADJUTANT_IDEMPOTENCY_STORE_PATH?.trim() || join(stateDir, "idempotency.jsonl");
   const slackAccountId = parseStringEnv(env.ADJUTANT_SLACK_ACCOUNT_ID, "default");
   const corsOrigin = env.ADJUTANT_CORS_ORIGIN?.trim() || `http://127.0.0.1:${String(vitePort)}`;
   const routeLlm = resolveRouteLlmRuntimeConfig(env);

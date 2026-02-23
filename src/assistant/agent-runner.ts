@@ -169,7 +169,7 @@ const defaultRuntime: AgentRunnerRuntime = {
       return SessionManager.open(resolveSessionFilePath(sessionEntriesPath, sessionFile));
     }
 
-    const sessionDir = join(dirname(sessionEntriesPath), "sessions");
+    const sessionDir = dirname(sessionEntriesPath);
     return SessionManager.create(workspaceDir, sessionDir);
   },
   createSession: async ({

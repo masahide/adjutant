@@ -54,8 +54,7 @@ type MemoryToolFactoryOptions = {
 };
 
 export function createMemoryToolDefinitions(params: MemoryToolFactoryOptions): ToolDefinition[] {
-  const config =
-    params.config ?? resolveMemorySearchRuntimeConfig({ workspaceDir: params.workspaceDir });
+  const config = params.config ?? resolveMemorySearchRuntimeConfig();
   if (!config.enabled) {
     return [];
   }

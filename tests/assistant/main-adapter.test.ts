@@ -230,7 +230,7 @@ describe("createAgentRunAdapter", () => {
       {
         workspaceDir: "/tmp",
         timezone: "UTC",
-        sessionEntriesPath: "/tmp/state/agents/main/sessions.json",
+        sessionEntriesPath: "/tmp/state/agents/main/sessions/sessions.json",
       },
       mockRunAgent
     );
@@ -243,6 +243,6 @@ describe("createAgentRunAdapter", () => {
     });
 
     const args = mockRunAgent.mock.calls[0].arguments[0];
-    assert.equal(args.sessionEntriesPath, "/tmp/state/agents/main/sessions.json");
+    assert.equal(args.sessionEntriesPath, "/tmp/state/agents/main/sessions/sessions.json");
   });
 });

@@ -272,49 +272,49 @@ sequenceDiagram
 
 ### Phase 1 設計と準備
 
-- [ ] 要件確定: openclaw 準拠レイアウトと adjutant 現行差分の最終確認
-- [ ] 契約確定: V2 ストレージ契約（state/workspace 分離）を仕様化
-- [ ] 図更新: 本計画の class/sequence をベースに実装図へ反映
+- [x] 要件確定: openclaw 準拠レイアウトと adjutant 現行差分の最終確認
+- [x] 契約確定: V2 ストレージ契約（state/workspace 分離）を仕様化
+- [x] 図更新: 本計画の class/sequence をベースに実装図へ反映
 
 ### Phase 2 パス解決の Red/Green
 
-- [ ] Test `tests/assistant/session-paths.test.ts` 追加/更新（Red）
+- [x] Test `tests/assistant/session-paths.test.ts` 追加/更新（Red）
   - `sessions.json` が `<sessionsDir>/sessions.json` になること
   - default state/workspace の分離
-- [ ] Impl `src/assistant/session-paths.ts`（Green）
+- [x] Impl `src/assistant/session-paths.ts`（Green）
   - 新 default 契約
   - entries path のネスト修正
-- [ ] Refactor path 組み立てロジックを重複排除
+- [x] Refactor path 組み立てロジックを重複排除
 
 ### Phase 3 Runtime 設定反映の Red/Green
 
-- [ ] Test `tests/runtime/runtime-config-loader.test.ts`（Red）
+- [x] Test `tests/runtime/runtime-config-loader.test.ts`（Red）
   - 新 default path を検証
   - override 優先を維持
-- [ ] Impl `src/runtime/runtime-config-loader.ts`, `src/runtime/app-runtime-config.ts`（Green）
+- [x] Impl `src/runtime/runtime-config-loader.ts`, `src/runtime/app-runtime-config.ts`（Green）
   - timeline/idempotency を state 側へ移す（採用時）
-- [ ] Refactor 設定解決ヘルパーを整理
+- [x] Refactor 設定解決ヘルパーを整理
 
 ### Phase 4 Memory DB パス変更の Red/Green
 
-- [ ] Test `tests/assistant/memory-search-config.test.ts` 新規（Red）
+- [x] Test `tests/assistant/memory-search-config.test.ts` 新規（Red）
   - DB 既定値 `<stateDir>/memory/<agentId>.sqlite`
-- [ ] Impl `src/assistant/memory-search/config.ts`（Green）
+- [x] Impl `src/assistant/memory-search/config.ts`（Green）
   - `workspaceDir` 依存を縮小し state/agentId 依存へ
-- [ ] Integration `memory_search` 初期化テスト更新
+- [x] Integration `memory_search` 初期化テスト更新
 
 ### Phase 5 サブシステム追従
 
-- [ ] `src/assistant/markdown-summary-batch.ts` の input/recovery 対象を state のみに調整
-- [ ] `src/assistant/main.ts` の recovery 対象から legacy workspace sessions を削除
-- [ ] `src/assistant/session-entry-store.ts` の既定 path 契約を更新
+- [x] `src/assistant/markdown-summary-batch.ts` の input/recovery 対象を state のみに調整
+- [x] `src/assistant/main.ts` の recovery 対象から legacy workspace sessions を削除
+- [x] `src/assistant/session-entry-store.ts` の既定 path 契約を更新
 
 ### Phase 6 ドキュメント更新と検証
 
-- [ ] `README.md` 更新（state/workspace と既定値）
-- [ ] `doc/spec.md` 更新（保存パス）
-- [ ] `pnpm run check` 実行
-- [ ] 完了チェックを本計画へ反映
+- [x] `README.md` 更新（state/workspace と既定値）
+- [x] `doc/spec.md` 更新（保存パス）
+- [x] `pnpm run check` 実行
+- [x] 完了チェックを本計画へ反映
 
 ---
 
@@ -322,21 +322,21 @@ sequenceDiagram
 
 ### 8.1 機能DoD Functional DoD
 
-- [ ] 受け入れ条件 6 件を満たす
-- [ ] セッション JSONL/メタ/SQLite index が state 配下へ統一される
-- [ ] workspace には memory と bootstrap ファイルのみが残る
+- [x] 受け入れ条件 6 件を満たす
+- [x] セッション JSONL/メタ/SQLite index が state 配下へ統一される
+- [x] workspace には memory と bootstrap ファイルのみが残る
 
 ### 8.2 品質DoD Quality DoD
 
-- [ ] すべての追加/更新テストがパスする
-- [ ] `pnpm run check` が成功する
-- [ ] 仕様書と README のパス表が実装と一致する
+- [x] すべての追加/更新テストがパスする
+- [x] `pnpm run check` が成功する
+- [x] 仕様書と README のパス表が実装と一致する
 
 ---
 
 ## 9. 懸念事項と未確定事項 Concerns and Questions
 
-1. `ADJUTANT_STATE_DIR` の既定値を `~/.adjutant` に変えるか、現行の `<dataDir>/_assistant` を維持するか。
-2. `timeline.jsonl` / `idempotency.jsonl` を state 側へ移すか（openclaw 寄せ）現状維持か。
-3. 旧 `workspace/memory/sessions/*.jsonl` を無視する方針を `doc/spec.md` にどこまで明示するか。
-4. 既存手動運用スクリプトが旧パスを参照している場合、告知のみで十分か。
+1. `ADJUTANT_STATE_DIR` 既定値は `~/.adjutant` を採用し、`<dataDir>/_assistant` は採用しない。
+2. `timeline.jsonl` / `idempotency.jsonl` は state 側へ移設した。
+3. 旧 `workspace/memory/sessions/*.jsonl` は実装で参照しない方針を `doc/spec.md` に反映済み。
+4. 未リリース前提でマイグレーション非対応とし、旧運用スクリプト互換はスコープ外とする。

@@ -4,11 +4,7 @@ import * as StreamEventBridge from "./stream-event-bridge.js";
 import { configureSandbox } from "./agent-session-factory.js";
 import { createAgentRunAdapter } from "./main.adapter.js";
 import { createMarkdownSummaryBatchService } from "./markdown-summary-batch.js";
-import {
-  resolveLegacyWorkspaceSessionsDir,
-  resolveSessionRecordPath,
-  resolveSummaryBatchWatermarkPath,
-} from "./session-paths.js";
+import { resolveSessionRecordPath, resolveSummaryBatchWatermarkPath } from "./session-paths.js";
 import { handleTerminalRecord } from "./terminal-record-handler.js";
 import type { NormalizedEvent } from "../core/events.js";
 import {
@@ -215,9 +211,6 @@ const jsonlRecoveryTargets = new Set<string>([TIMELINE_PATH, IDEMPOTENCY_STORE_P
 for (const filePath of await listJsonlFiles(SESSION_TRANSCRIPTS_DIR)) {
   jsonlRecoveryTargets.add(filePath);
 }
-for (const filePath of await listJsonlFiles(resolveLegacyWorkspaceSessionsDir(WORKSPACE_DIR))) {
-  jsonlRecoveryTargets.add(filePath);
-}
 for (const filePath of await listJsonlFiles(DATA_DIR)) {
   jsonlRecoveryTargets.add(filePath);
 }
@@ -283,7 +276,7 @@ const globalConcurrencyQueue = createGlobalConcurrencyQueue({
   metrics: proactiveMetrics,
 });
 const watermarkStore = createWatermarkStore({
-  path: join(WORKSPACE_DIR, "memory", "watermarks.json"),
+  path: join(SESSION_STATE_DIR, "watermarks.json"),
   timelinePath: TIMELINE_PATH,
   onWarn: (message, meta) => {
     console.warn("[AssistantGateway][WatermarkStore]", message, meta ?? {});
@@ -465,6 +458,7 @@ const channelManager = createChannelManager({
 
 const heartbeatConfig: HeartbeatConfig = {
   dataDir: DATA_DIR,
+  stateDir: SESSION_STATE_DIR,
   workspaceDir: WORKSPACE_DIR,
   userTimezone: TIMEZONE,
   model: MODEL,
@@ -507,7 +501,6 @@ const markdownSummaryBatchService = createMarkdownSummaryBatchService({
   workspaceDir: WORKSPACE_DIR,
   timezone: TIMEZONE,
   sessionTranscriptsDir: SESSION_TRANSCRIPTS_DIR,
-  legacySessionTranscriptsDir: resolveLegacyWorkspaceSessionsDir(WORKSPACE_DIR),
   watermarkPath: resolveSummaryBatchWatermarkPath({
     stateDir: SESSION_STATE_DIR,
     agentId: SESSION_AGENT_ID,

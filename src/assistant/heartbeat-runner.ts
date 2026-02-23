@@ -3,6 +3,7 @@ import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
 import { validateReportHeartbeatStatusInput } from "../proactive/routing-tools.js";
 import type { GlobalConcurrencyQueue } from "../proactive/global-concurrency-queue.js";
+import { resolveAdjutantStateDir } from "./session-paths.js";
 import { buildEventContext } from "./context-builder.js";
 import { HeartbeatExecution } from "./heartbeat-execution.js";
 import { HeartbeatOrchestrator } from "./heartbeat-orchestrator.js";
@@ -32,6 +33,7 @@ export type HeartbeatConfig = {
   userFilePath?: string;
   agentsFilePath?: string;
   dataDir: string;
+  stateDir?: string;
   workspaceDir?: string;
   userTimezone?: string;
   retryDelayMs?: number;
@@ -64,7 +66,7 @@ type HeartbeatRuntime = {
   buildEventContext: typeof buildEventContext;
   getQueueSize: typeof getQueueSize;
   runAgent: (opts: AgentRunOptions) => Promise<HeartbeatAgentResult>;
-  appendRunRecord: (dataDir: string, record: HeartbeatRunRecord) => Promise<void>;
+  appendRunRecord: (stateDir: string, record: HeartbeatRunRecord) => Promise<void>;
   loadSessionEntryStore: (
     customPath?: string
   ) => Promise<{ path: string; store: SessionEntryStore }>;
@@ -92,7 +94,7 @@ const DEFAULT_HEARTBEAT_PROMPT = [
   "notify はユーザー通知が必要なら true。",
   "reason には簡潔な根拠を書く。",
 ].join("\n");
-const HEARTBEAT_RUN_RECORD_RELATIVE_PATH = join("_assistant", "heartbeat-runs.jsonl");
+const HEARTBEAT_RUN_RECORD_RELATIVE_PATH = "heartbeat-runs.jsonl";
 const HEARTBEAT_DUPLICATE_WINDOW_MS = 24 * 60 * 60 * 1000;
 const SESSION_KEY_PATTERN = /^[A-Za-z0-9:_-]+$/;
 
@@ -120,8 +122,8 @@ function getFormatter(timezone: string): Intl.DateTimeFormat {
   return created;
 }
 
-async function appendRunRecordDefault(dataDir: string, record: HeartbeatRunRecord): Promise<void> {
-  const recordPath = join(dataDir, HEARTBEAT_RUN_RECORD_RELATIVE_PATH);
+async function appendRunRecordDefault(stateDir: string, record: HeartbeatRunRecord): Promise<void> {
+  const recordPath = join(stateDir, HEARTBEAT_RUN_RECORD_RELATIVE_PATH);
   await mkdir(dirname(recordPath), { recursive: true });
   await appendFile(recordPath, `${JSON.stringify(record)}\n`, "utf8");
 }
@@ -171,6 +173,11 @@ function resolveTimezone(config: HeartbeatConfig): string {
 function resolveWorkspaceDir(config: HeartbeatConfig): string {
   const configured = config.workspaceDir?.trim();
   return configured || process.cwd();
+}
+
+function resolveStateDir(config: HeartbeatConfig): string {
+  const configured = config.stateDir?.trim();
+  return configured || resolveAdjutantStateDir();
 }
 
 function resolvePath(filePath: string): string {
@@ -372,7 +379,7 @@ function toReason(error: unknown): string {
 
 type FinalizeRunOptions = {
   runtime: HeartbeatRuntime;
-  dataDir: string;
+  stateDir: string;
   runAt: Date;
   sessionKey: string;
   triggerReason?: string;
@@ -394,7 +401,7 @@ async function finalizeRun(options: FinalizeRunOptions): Promise<HeartbeatRunRes
     },
   });
   return await writer.finalize({
-    dataDir: options.dataDir,
+    stateDir: options.stateDir,
     runAt: options.runAt,
     sessionKey: options.sessionKey,
     triggerReason: options.triggerReason,
@@ -415,7 +422,7 @@ async function resolvePrecheckSkip(params: {
     const result: HeartbeatRunResult = { status: "skipped", reason: "quiet-hours" };
     return await finalizeRun({
       runtime: params.runtime,
-      dataDir: params.config.dataDir,
+      stateDir: resolveStateDir(params.config),
       runAt: params.runAt,
       sessionKey: params.sessionKey,
       triggerReason: params.triggerReason,
@@ -434,7 +441,7 @@ async function resolvePrecheckSkip(params: {
     const result: HeartbeatRunResult = { status: "skipped", reason: "alerts-disabled" };
     return await finalizeRun({
       runtime: params.runtime,
-      dataDir: params.config.dataDir,
+      stateDir: resolveStateDir(params.config),
       runAt: params.runAt,
       sessionKey: params.sessionKey,
       triggerReason: params.triggerReason,
@@ -452,7 +459,7 @@ async function resolvePrecheckSkip(params: {
     const result: HeartbeatRunResult = { status: "skipped", reason: "requests-in-flight" };
     return await finalizeRun({
       runtime: params.runtime,
-      dataDir: params.config.dataDir,
+      stateDir: resolveStateDir(params.config),
       runAt: params.runAt,
       sessionKey: params.sessionKey,
       triggerReason: params.triggerReason,
@@ -639,7 +646,7 @@ export async function runOnce(
       const result: HeartbeatRunResult = { status: "skipped", reason: "empty-heartbeat-file" };
       return await finalizeRun({
         runtime,
-        dataDir: config.dataDir,
+        stateDir: resolveStateDir(config),
         runAt,
         sessionKey,
         triggerReason: opts?.reason,
@@ -719,7 +726,7 @@ export async function runOnce(
         };
         return await finalizeRun({
           runtime,
-          dataDir: config.dataDir,
+          stateDir: resolveStateDir(config),
           runAt,
           sessionKey,
           triggerReason: opts?.reason,
@@ -743,7 +750,7 @@ export async function runOnce(
         const readinessOk = isReadinessOk(config, "ok");
         return await finalizeRun({
           runtime,
-          dataDir: config.dataDir,
+          stateDir: resolveStateDir(config),
           runAt,
           sessionKey,
           triggerReason: opts?.reason,
@@ -771,7 +778,7 @@ export async function runOnce(
         };
         return await finalizeRun({
           runtime,
-          dataDir: config.dataDir,
+          stateDir: resolveStateDir(config),
           runAt,
           sessionKey,
           triggerReason: opts?.reason,
@@ -795,7 +802,7 @@ export async function runOnce(
         const result: HeartbeatRunResult = { status: "skipped", reason: "readiness-failed" };
         return await finalizeRun({
           runtime,
-          dataDir: config.dataDir,
+          stateDir: resolveStateDir(config),
           runAt,
           sessionKey,
           triggerReason: opts?.reason,
@@ -818,7 +825,7 @@ export async function runOnce(
         };
         return await finalizeRun({
           runtime,
-          dataDir: config.dataDir,
+          stateDir: resolveStateDir(config),
           runAt,
           sessionKey,
           triggerReason: opts?.reason,
@@ -856,7 +863,7 @@ export async function runOnce(
 
       return await finalizeRun({
         runtime,
-        dataDir: config.dataDir,
+        stateDir: resolveStateDir(config),
         runAt,
         sessionKey,
         triggerReason: opts?.reason,
@@ -880,7 +887,7 @@ export async function runOnce(
     const result: HeartbeatRunResult = { status: "failed", reason };
     return await finalizeRun({
       runtime,
-      dataDir: config.dataDir,
+      stateDir: resolveStateDir(config),
       runAt,
       sessionKey,
       triggerReason: opts?.reason,

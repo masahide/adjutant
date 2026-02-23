@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { homedir } from "node:os";
 import { resolve } from "node:path";
 import {
   ensurePiCacheRetention,
@@ -52,11 +53,11 @@ describe("runtime-config-loader", () => {
     } as NodeJS.ProcessEnv;
 
     const config = loadAssistantGatewayRuntimeConfig(env);
-    const expectedStateDir = resolve("data-x", "_assistant");
+    const expectedStateDir = resolve(homedir(), ".adjutant");
     assert.equal(config.app.assistant.port, 3200);
     assert.equal(config.app.assistant.host, "0.0.0.0");
     assert.equal(config.app.assistant.dataDir, "data-x");
-    assert.equal(config.app.assistant.workspaceDir, "workspace-x");
+    assert.equal(config.app.assistant.workspaceDir, resolve("workspace-x"));
     assert.equal(config.app.assistant.timezone, "UTC");
     assert.equal(config.app.assistant.model, "gpt-5-mini");
     assert.equal(config.app.sessionStorage.stateDir, expectedStateDir);
@@ -67,7 +68,7 @@ describe("runtime-config-loader", () => {
     );
     assert.equal(
       config.app.sessionStorage.sessionEntriesPath,
-      resolve(expectedStateDir, "agents", "main", "sessions.json")
+      resolve(expectedStateDir, "agents", "main", "sessions", "sessions.json")
     );
     assert.equal(config.app.markdownSummaryBatch.enabled, false);
     assert.equal(config.app.markdownSummaryBatch.intervalMs, 3_600_000);
@@ -118,10 +119,21 @@ describe("runtime-config-loader", () => {
     assert.equal(config.app.sessionStorage.agentId, "ops");
     assert.equal(config.app.sessionStorage.transcriptsDir, "/tmp/custom/sessions");
     assert.equal(config.app.sessionStorage.sessionEntriesPath, "/tmp/custom/sessions.json");
+    assert.equal(config.app.assistant.workspaceDir, "/tmp/adjutant-state/workspace");
     assert.equal(config.app.markdownSummaryBatch.enabled, true);
     assert.equal(config.app.markdownSummaryBatch.intervalMs, 60000);
     assert.equal(config.app.markdownSummaryBatch.messages, 20);
     assert.equal(config.app.markdownSummaryBatch.maxSessions, 300);
+  });
+
+  it("assistant 設定の workspace/timeline/idempotency 既定値は state 配下を使う", () => {
+    const config = loadAssistantGatewayRuntimeConfig({
+      ADJUTANT_STATE_DIR: "/tmp/adjutant-state",
+    } as NodeJS.ProcessEnv);
+
+    assert.equal(config.app.assistant.workspaceDir, "/tmp/adjutant-state/workspace");
+    assert.equal(config.app.assistant.timelinePath, "/tmp/adjutant-state/timeline.jsonl");
+    assert.equal(config.app.idempotency.storePath, "/tmp/adjutant-state/idempotency.jsonl");
   });
 
   it("assistant 設定は sandbox env override を反映する", () => {

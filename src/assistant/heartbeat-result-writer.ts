@@ -1,11 +1,11 @@
 import type { HeartbeatEventPayload, HeartbeatRunRecord, HeartbeatRunResult } from "./types.js";
 
-type AppendRunRecordFn = (dataDir: string, record: HeartbeatRunRecord) => Promise<void>;
+type AppendRunRecordFn = (stateDir: string, record: HeartbeatRunRecord) => Promise<void>;
 type EmitHeartbeatEventFn = (payload: HeartbeatEventPayload) => void;
 type NowFn = () => Date;
 
 export type FinalizeHeartbeatRunOptions = {
-  dataDir: string;
+  stateDir: string;
   runAt: Date;
   sessionKey: string;
   triggerReason?: string;
@@ -60,7 +60,7 @@ export class HeartbeatResultWriter {
       preview: options.record?.preview,
     });
     try {
-      await this.deps.appendRunRecord(options.dataDir, record);
+      await this.deps.appendRunRecord(options.stateDir, record);
     } catch (error) {
       this.deps.onWarn?.("failed to append run record", {
         reason: error instanceof Error ? error.message : String(error),

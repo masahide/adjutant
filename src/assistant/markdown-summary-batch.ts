@@ -2,7 +2,6 @@ import { appendFile, mkdir, readFile, rename, stat, unlink, writeFile } from "no
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { listJsonlFiles } from "../io/jsonl-recovery.js";
 import { formatDateKeyInTimezone } from "./memory-paths.js";
-import { resolveLegacyWorkspaceSessionsDir } from "./session-paths.js";
 
 export const SUMMARY_BATCH_WATERMARK_SCHEMA_V1 = "adjutant.summary.batch.watermark.v1";
 
@@ -17,14 +16,8 @@ type ParsedSummaryLine = SummaryLine & {
   endOffset: number;
 };
 
-type SessionSource = {
-  id: "state" | "legacy";
-  dir: string;
-};
-
 type SessionFileCandidate = {
   filePath: string;
-  source: SessionSource;
   watermarkKey: string;
 };
 
@@ -47,7 +40,6 @@ export type MarkdownSummaryBatchRunOptions = {
   watermarkPath: string;
   messages?: number;
   maxSessions?: number;
-  legacySessionTranscriptsDir?: string;
   now?: Date;
   onWarn?: (message: string, meta?: Record<string, unknown>) => void;
 };
@@ -70,7 +62,6 @@ export type MarkdownSummaryBatchService = {
         | "watermarkPath"
         | "messages"
         | "maxSessions"
-        | "legacySessionTranscriptsDir"
         | "now"
       >
     >
@@ -374,12 +365,12 @@ function normalizeRelativePath(input: string): string {
   return input.replaceAll("\\", "/");
 }
 
-function createWatermarkKey(source: SessionSource, filePath: string): string {
-  const rel = relative(resolve(source.dir), resolve(filePath));
+function createWatermarkKey(filePath: string, sessionsDir: string): string {
+  const rel = relative(resolve(sessionsDir), resolve(filePath));
   if (!rel || rel.startsWith("..")) {
-    return `${source.id}:${basename(filePath)}`;
+    return `state:${basename(filePath)}`;
   }
-  return `${source.id}:${normalizeRelativePath(rel)}`;
+  return `state:${normalizeRelativePath(rel)}`;
 }
 
 function resolveWatermarkState(
@@ -388,20 +379,10 @@ function resolveWatermarkState(
 ): {
   key: string;
   state?: { lastProcessedOffset: number; lastProcessedTs?: string };
-  legacyAbsoluteKey?: string;
 } {
   const current = watermark.sessions[candidate.watermarkKey];
   if (current) {
     return { key: candidate.watermarkKey, state: current };
-  }
-  const legacyAbsoluteKey = resolve(candidate.filePath);
-  const legacy = watermark.sessions[legacyAbsoluteKey];
-  if (legacy) {
-    return {
-      key: candidate.watermarkKey,
-      state: legacy,
-      legacyAbsoluteKey,
-    };
   }
   return { key: candidate.watermarkKey };
 }
@@ -464,34 +445,23 @@ export async function runMarkdownSummaryBatch(
     });
   }
 
-  const sourceDirs: SessionSource[] = [{ id: "state", dir: options.sessionTranscriptsDir }];
-  const legacyDir =
-    options.legacySessionTranscriptsDir?.trim() ||
-    resolveLegacyWorkspaceSessionsDir(options.workspaceDir);
-  if (legacyDir !== options.sessionTranscriptsDir) {
-    sourceDirs.push({ id: "legacy", dir: legacyDir });
-  }
-
   const candidatesByPath = new Map<string, SessionFileCandidate>();
-  for (const source of sourceDirs) {
-    try {
-      for (const filePath of await listJsonlFiles(source.dir)) {
-        const absolutePath = resolve(filePath);
-        if (candidatesByPath.has(absolutePath)) {
-          continue;
-        }
-        candidatesByPath.set(absolutePath, {
-          filePath: absolutePath,
-          source,
-          watermarkKey: createWatermarkKey(source, absolutePath),
-        });
+  try {
+    for (const filePath of await listJsonlFiles(options.sessionTranscriptsDir)) {
+      const absolutePath = resolve(filePath);
+      if (candidatesByPath.has(absolutePath)) {
+        continue;
       }
-    } catch (error) {
-      warn("markdown-summary-list-jsonl-failed", {
-        dir: source.dir,
-        reason: error instanceof Error ? error.message : String(error),
+      candidatesByPath.set(absolutePath, {
+        filePath: absolutePath,
+        watermarkKey: createWatermarkKey(absolutePath, options.sessionTranscriptsDir),
       });
     }
+  } catch (error) {
+    warn("markdown-summary-list-jsonl-failed", {
+      dir: options.sessionTranscriptsDir,
+      reason: error instanceof Error ? error.message : String(error),
+    });
   }
   const sessionFiles = Array.from(candidatesByPath.values())
     .sort((left, right) => {
@@ -551,9 +521,6 @@ export async function runMarkdownSummaryBatch(
         lastProcessedOffset: fileSize,
         lastProcessedTs: nowIso,
       };
-      if (stateInfo.legacyAbsoluteKey) {
-        delete nextWatermark.sessions[stateInfo.legacyAbsoluteKey];
-      }
       continue;
     }
 
@@ -594,17 +561,11 @@ export async function runMarkdownSummaryBatch(
         lastProcessedOffset: fileSize,
         lastProcessedTs: nowIso,
       };
-      if (stateInfo.legacyAbsoluteKey) {
-        delete nextWatermark.sessions[stateInfo.legacyAbsoluteKey];
-      }
       continue;
     }
 
     const sessionKey = parsedSessionKey || basename(filePath, ".jsonl");
-    const sourcePath = toSourcePathLabel(
-      filePath,
-      sourceDirs.map((source) => source.dir)
-    );
+    const sourcePath = toSourcePathLabel(filePath, [options.sessionTranscriptsDir]);
     let progressOffset = fromOffset;
     let progressTs = state?.lastProcessedTs ?? nowIso;
     let failed = false;
@@ -677,9 +638,6 @@ export async function runMarkdownSummaryBatch(
         lastProcessedOffset: progressOffset,
         lastProcessedTs: progressOffset > fromOffset ? progressTs : nowIso,
       };
-      if (stateInfo.legacyAbsoluteKey) {
-        delete nextWatermark.sessions[stateInfo.legacyAbsoluteKey];
-      }
       continue;
     }
 
@@ -687,9 +645,6 @@ export async function runMarkdownSummaryBatch(
       lastProcessedOffset: fileSize,
       lastProcessedTs: progressTs,
     };
-    if (stateInfo.legacyAbsoluteKey) {
-      delete nextWatermark.sessions[stateInfo.legacyAbsoluteKey];
-    }
   }
 
   try {

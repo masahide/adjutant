@@ -11,13 +11,13 @@ describe("heartbeat-result-writer", () => {
       emitHeartbeatEvent: (payload) => {
         emitted.push(payload as unknown as Record<string, unknown>);
       },
-      appendRunRecord: async (_dataDir, record) => {
+      appendRunRecord: async (_stateDir, record) => {
         records.push(record as unknown as Record<string, unknown>);
       },
     });
 
     const result = await writer.finalize({
-      dataDir: "/tmp/data",
+      stateDir: "/tmp/state",
       runAt: new Date("2026-02-21T00:00:00.000Z"),
       sessionKey: "main",
       triggerReason: "timer",

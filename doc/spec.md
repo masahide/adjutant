@@ -32,10 +32,10 @@ Adjutant は Slack Desktop の CDP イベントを収集し、`NormalizedEvent` 
 - Debug UI (SSE) (`DebugUiServer`)
 - Slack 名称キャッシュ (`SlackNameCacheRepository`)
 - Assistant UI 本体（`pnpm run assistant` / `src/ui/*`）
-- Assistant 用検索インデックス（SQLite + sqlite-vec, `memory/index/main.sqlite`）
+- Assistant 用検索インデックス（SQLite + sqlite-vec, `<stateDir>/memory/<agentId>.sqlite`）
 - Proactive routing pipeline v1.5（rule triage / attention window / batch classifier / global concurrency queue）
-- Timeline v1.5 (`memory/timeline.jsonl`) と sessionKey 必須化
-- Pending Flusher + Watermark store (`memory/watermarks.json`)
+- Timeline v1.5 (`<stateDir>/timeline.jsonl`) と sessionKey 必須化
+- Pending Flusher + Watermark store (`<stateDir>/watermarks.json`)
 - Agent 終端レコード（`assistant_final` / `assistant_aborted` / `assistant_error`）
 - bash ツールの Docker サンドボックス実行（`ADJUTANT_SANDBOX_MODE=non-main|all`）
 - 初回実行リチュアル（workspace bootstrap / BOOTSTRAP context 注入）
@@ -45,7 +45,7 @@ Adjutant は Slack Desktop の CDP イベントを収集し、`NormalizedEvent` 
 ### 2.2 未実装
 
 - GitHub / git-local の収集
-- `POLICY_ROUTING.json` の実ルーティング適用（priority/quiet-hours/cooldown の反映）
+- `POLICY_ROUTING.json` の実ルーティング適用（将来実装: priority/quiet-hours/cooldown の反映）
 - 通知キューの永続化（現状はインメモリ）
 - 実行中ランへの steer / action 承認 / run 状態追跡 API
 - session transcript の `memory_search` 索引統合
@@ -269,50 +269,49 @@ flowchart LR
 
 ### 8.2 Assistant / Proactive
 
-| 変数                                          | 既定値                                    | 用途                                            |
-| --------------------------------------------- | ----------------------------------------- | ----------------------------------------------- |
-| `ADJUTANT_ROUTING_IDLE_MS`                    | `1000`                                    | channel attention-window idle                   |
-| `ADJUTANT_ROUTING_MAX_WAIT_MS`                | `30000`                                   | channel attention-window max wait               |
-| `ADJUTANT_ROUTING_DM_IDLE_MS`                 | `200`                                     | DM attention-window idle                        |
-| `ADJUTANT_ROUTING_DM_MAX_WAIT_MS`             | `1000`                                    | DM attention-window max wait                    |
-| `ADJUTANT_ROUTING_CONFIDENCE_THRESHOLD`       | `0.7`                                     | batch classifier confidence 閾値                |
-| `ADJUTANT_ROUTE_LLM_ENABLED`                  | `false`                                   | secondary classifier（Route LLM）有効化         |
-| `ADJUTANT_ROUTE_LLM_MODEL`                    | `gpt-5-mini`                              | Route LLM モデル                                |
-| `ADJUTANT_ROUTE_LLM_TIMEOUT_MS`               | `1000`                                    | Route LLM / batch classifier timeout            |
-| `ADJUTANT_ROUTE_LLM_MAX_CONCURRENT`           | `1`                                       | Route LLM 同時実行上限                          |
-| `ADJUTANT_GLOBAL_MAX_CONCURRENT`              | `3`                                       | global queue 基本同時実行上限                   |
-| `ADJUTANT_GLOBAL_DM_BURST_SLOT`               | `1`                                       | DM burst slot                                   |
-| `ADJUTANT_GLOBAL_MAX_RUNNING_DM`              | `3`                                       | DM 同時実行上限                                 |
-| `ADJUTANT_GLOBAL_STARVATION_MS`               | `120000`                                  | starvation 昇格閾値                             |
-| `ADJUTANT_FLUSHER_INTERVAL_MS`                | `300000`                                  | Pending Flusher 周期                            |
-| `ADJUTANT_FLUSHER_STALE_MS`                   | `900000`                                  | stale open post 判定閾値                        |
-| `ADJUTANT_POLICY_ROUTING_PATH`                | `memory/POLICY_ROUTING.json`              | routing policy ファイルパス（ローダー用）       |
-| `ADJUTANT_COMPACTION_ENABLED`                 | `true`                                    | overflow 時 compaction 優先                     |
-| `ADJUTANT_MEMORY_FLUSH_ENABLED`               | `true`                                    | pre-compaction flush 有効化                     |
-| `ADJUTANT_COMPACTION_RESERVE_TOKENS_FLOOR`    | `20000`                                   | flush 閾値計算の reserve                        |
-| `ADJUTANT_MEMORY_FLUSH_SOFT_THRESHOLD_TOKENS` | `4000`                                    | flush 閾値計算の soft threshold                 |
-| `ADJUTANT_MEMORY_FLUSH_PROMPT`                | 組み込み既定文                            | flush turn の user prompt                       |
-| `ADJUTANT_MEMORY_FLUSH_SYSTEM_PROMPT`         | 組み込み既定文                            | flush turn の system prompt                     |
-| `ADJUTANT_MEMORY_SEARCH_ENABLED`              | `true`                                    | memory_search/memory_get 有効化                 |
-| `ADJUTANT_MEMORY_SEARCH_DB_PATH`              | `<workspaceDir>/memory/index/main.sqlite` | メモリ検索インデックス DB                       |
-| `ADJUTANT_MEMORY_SEARCH_MODEL`                | `text-embedding-3-small`                  | 埋め込みモデル                                  |
-| `ADJUTANT_MEMORY_SEARCH_MAX_RESULTS`          | `5`                                       | 検索結果上限                                    |
-| `ADJUTANT_MEMORY_SEARCH_MIN_SCORE`            | `0`                                       | 最低スコア                                      |
-| `ADJUTANT_MEMORY_SEARCH_VECTOR_ENABLED`       | `true`                                    | vector 検索有効化                               |
-| `ADJUTANT_MEMORY_SEARCH_SQLITE_VEC_PATH`      | `""`                                      | sqlite-vec 拡張パス                             |
-| `ADJUTANT_MEMORY_SEARCH_CHUNK_CHARS`          | `1600`                                    | chunk 文字数                                    |
-| `ADJUTANT_MEMORY_SEARCH_CHUNK_OVERLAP_CHARS`  | `320`                                     | chunk overlap                                   |
-| `ADJUTANT_MEMORY_SEARCH_SNIPPET_MAX_CHARS`    | `700`                                     | snippet 文字数上限                              |
-| `ADJUTANT_MEMORY_SEARCH_CANDIDATE_MULTIPLIER` | `3`                                       | 候補拡張倍率                                    |
-| `ADJUTANT_MEMORY_SEARCH_VECTOR_WEIGHT`        | `0.7`                                     | hybrid score の vector 重み                     |
-| `ADJUTANT_MEMORY_SEARCH_TEXT_WEIGHT`          | `0.3`                                     | hybrid score の text 重み                       |
-| `ADJUTANT_SANDBOX_MODE`                       | `off`                                     | bash sandbox mode（`off` / `non-main` / `all`） |
-| `ADJUTANT_SANDBOX_IMAGE`                      | `adjutant-sandbox:trixie-slim`            | sandbox Docker image                            |
-| `ADJUTANT_SANDBOX_CONTAINER_PREFIX`           | `adjutant-sandbox`                        | sandbox container 名の prefix                   |
-| `ADJUTANT_SANDBOX_WORKDIR`                    | `/workspace`                              | コンテナ内作業ディレクトリ                      |
-| `ADJUTANT_SANDBOX_NETWORK`                    | 未設定（bridge）                          | Docker network（例: `none`）                    |
-| `ADJUTANT_SANDBOX_MEMORY`                     | 未設定                                    | Docker memory limit（例: `1g`）                 |
-| `ADJUTANT_SANDBOX_PIDS_LIMIT`                 | `256`                                     | Docker pids limit                               |
+| 変数                                          | 既定値                               | 用途                                            |
+| --------------------------------------------- | ------------------------------------ | ----------------------------------------------- |
+| `ADJUTANT_ROUTING_IDLE_MS`                    | `1000`                               | channel attention-window idle                   |
+| `ADJUTANT_ROUTING_MAX_WAIT_MS`                | `30000`                              | channel attention-window max wait               |
+| `ADJUTANT_ROUTING_DM_IDLE_MS`                 | `200`                                | DM attention-window idle                        |
+| `ADJUTANT_ROUTING_DM_MAX_WAIT_MS`             | `1000`                               | DM attention-window max wait                    |
+| `ADJUTANT_ROUTING_CONFIDENCE_THRESHOLD`       | `0.7`                                | batch classifier confidence 閾値                |
+| `ADJUTANT_ROUTE_LLM_ENABLED`                  | `false`                              | secondary classifier（Route LLM）有効化         |
+| `ADJUTANT_ROUTE_LLM_MODEL`                    | `gpt-5-mini`                         | Route LLM モデル                                |
+| `ADJUTANT_ROUTE_LLM_TIMEOUT_MS`               | `1000`                               | Route LLM / batch classifier timeout            |
+| `ADJUTANT_ROUTE_LLM_MAX_CONCURRENT`           | `1`                                  | Route LLM 同時実行上限                          |
+| `ADJUTANT_GLOBAL_MAX_CONCURRENT`              | `3`                                  | global queue 基本同時実行上限                   |
+| `ADJUTANT_GLOBAL_DM_BURST_SLOT`               | `1`                                  | DM burst slot                                   |
+| `ADJUTANT_GLOBAL_MAX_RUNNING_DM`              | `3`                                  | DM 同時実行上限                                 |
+| `ADJUTANT_GLOBAL_STARVATION_MS`               | `120000`                             | starvation 昇格閾値                             |
+| `ADJUTANT_FLUSHER_INTERVAL_MS`                | `300000`                             | Pending Flusher 周期                            |
+| `ADJUTANT_FLUSHER_STALE_MS`                   | `900000`                             | stale open post 判定閾値                        |
+| `ADJUTANT_COMPACTION_ENABLED`                 | `true`                               | overflow 時 compaction 優先                     |
+| `ADJUTANT_MEMORY_FLUSH_ENABLED`               | `true`                               | pre-compaction flush 有効化                     |
+| `ADJUTANT_COMPACTION_RESERVE_TOKENS_FLOOR`    | `20000`                              | flush 閾値計算の reserve                        |
+| `ADJUTANT_MEMORY_FLUSH_SOFT_THRESHOLD_TOKENS` | `4000`                               | flush 閾値計算の soft threshold                 |
+| `ADJUTANT_MEMORY_FLUSH_PROMPT`                | 組み込み既定文                       | flush turn の user prompt                       |
+| `ADJUTANT_MEMORY_FLUSH_SYSTEM_PROMPT`         | 組み込み既定文                       | flush turn の system prompt                     |
+| `ADJUTANT_MEMORY_SEARCH_ENABLED`              | `true`                               | memory_search/memory_get 有効化                 |
+| `ADJUTANT_MEMORY_SEARCH_DB_PATH`              | `<stateDir>/memory/<agentId>.sqlite` | メモリ検索インデックス DB                       |
+| `ADJUTANT_MEMORY_SEARCH_MODEL`                | `text-embedding-3-small`             | 埋め込みモデル                                  |
+| `ADJUTANT_MEMORY_SEARCH_MAX_RESULTS`          | `5`                                  | 検索結果上限                                    |
+| `ADJUTANT_MEMORY_SEARCH_MIN_SCORE`            | `0`                                  | 最低スコア                                      |
+| `ADJUTANT_MEMORY_SEARCH_VECTOR_ENABLED`       | `true`                               | vector 検索有効化                               |
+| `ADJUTANT_MEMORY_SEARCH_SQLITE_VEC_PATH`      | `""`                                 | sqlite-vec 拡張パス                             |
+| `ADJUTANT_MEMORY_SEARCH_CHUNK_CHARS`          | `1600`                               | chunk 文字数                                    |
+| `ADJUTANT_MEMORY_SEARCH_CHUNK_OVERLAP_CHARS`  | `320`                                | chunk overlap                                   |
+| `ADJUTANT_MEMORY_SEARCH_SNIPPET_MAX_CHARS`    | `700`                                | snippet 文字数上限                              |
+| `ADJUTANT_MEMORY_SEARCH_CANDIDATE_MULTIPLIER` | `3`                                  | 候補拡張倍率                                    |
+| `ADJUTANT_MEMORY_SEARCH_VECTOR_WEIGHT`        | `0.7`                                | hybrid score の vector 重み                     |
+| `ADJUTANT_MEMORY_SEARCH_TEXT_WEIGHT`          | `0.3`                                | hybrid score の text 重み                       |
+| `ADJUTANT_SANDBOX_MODE`                       | `off`                                | bash sandbox mode（`off` / `non-main` / `all`） |
+| `ADJUTANT_SANDBOX_IMAGE`                      | `adjutant-sandbox:trixie-slim`       | sandbox Docker image                            |
+| `ADJUTANT_SANDBOX_CONTAINER_PREFIX`           | `adjutant-sandbox`                   | sandbox container 名の prefix                   |
+| `ADJUTANT_SANDBOX_WORKDIR`                    | `/workspace`                         | コンテナ内作業ディレクトリ                      |
+| `ADJUTANT_SANDBOX_NETWORK`                    | 未設定（bridge）                     | Docker network（例: `none`）                    |
+| `ADJUTANT_SANDBOX_MEMORY`                     | 未設定                               | Docker memory limit（例: `1g`）                 |
+| `ADJUTANT_SANDBOX_PIDS_LIMIT`                 | `256`                                | Docker pids limit                               |
 
 ## 9. 実行コマンド
 
@@ -327,7 +326,7 @@ flowchart LR
 - CDP 依存のため Slack クライアント実装変更の影響を受けやすい。
 - `uid` 去重はプロセス内のみで、再起動をまたぐ厳密な重複排除は未実装。
 - 永続層はファイル保存（現行は JSONL）中心で、検索は補助インデックスに依存する。
-- `POLICY_ROUTING.json` のローダーは実装済みだが、現時点では routing pipeline 本体への適用は未接続。
+- `POLICY_ROUTING.json` は将来実装予定（現行ランタイムでは未使用）。
 
 ## 11. ロードマップ（設計メモ）
 
@@ -365,15 +364,14 @@ flowchart LR
 ### 13.1 統合ランタイム
 
 - `src/assistant/main.ts` が統合エントリポイントで、API / Vite UI / channel manager / heartbeat / pending flusher を起動する。
-- 起動時に `timeline.jsonl`、`idempotency.jsonl`、`<stateDir>/agents/<agentId>/sessions/*.jsonl`、移行互換として `memory/sessions/*.jsonl`、`DATA_DIR` 配下 JSONL を `recoverJsonlFiles` で復旧する。
-- proactive 経路は dual-write で `memory/timeline.jsonl` と `<stateDir>/agents/<agentId>/sessions/<sessionKey>.jsonl` の両方へ追記する。
+- 起動時に `<stateDir>/timeline.jsonl`、`<stateDir>/idempotency.jsonl`、`<stateDir>/agents/<agentId>/sessions/*.jsonl`、`DATA_DIR` 配下 JSONL を `recoverJsonlFiles` で復旧する。
+- proactive 経路は dual-write で `<stateDir>/timeline.jsonl` と `<stateDir>/agents/<agentId>/sessions/<sessionKey>.jsonl` の両方へ追記する。
 - `ADJUTANT_MARKDOWN_SUMMARY_BATCH_ENABLED=1` の場合、要約バッチが定期実行される。
-  - 入力: `<stateDir>/agents/<agentId>/sessions/*.jsonl`（互換として `memory/sessions/*.jsonl` も読取）
+  - 入力: `<stateDir>/agents/<agentId>/sessions/*.jsonl`
   - 抽出: `user/assistant` のみ、`/` で始まる command 行を除外、filter 後 slice（既定 15）
   - 出力: `memory/YYYY-MM-DD.md` へ append
   - checkpoint: `<stateDir>/agents/<agentId>/summary-batch-watermark.json`
-  - checkpoint `sessions` のキーは絶対パスではなく相対安定キー（`state:<relpath>` / `legacy:<relpath>`）を使う
-  - 旧 checkpoint（絶対パスキー）は読取互換で受理し、次回保存で相対安定キーへ移行する
+  - checkpoint `sessions` のキーは絶対パスではなく相対安定キー（`state:<relpath>`）を使う
   - `maxSessions` 上限時は `lastProcessedTs` が古いもの（未処理含む）を優先し、固定ファイル飢餓を防ぐ
   - transcript が truncate/rotate で縮小した場合は `previousOffset > fileSize` を検知して offset を 0 に戻し再走査する
   - 日付グループ追記が途中で失敗した場合は、成功済みグループ分の offset まで watermark を前進させ重複追記を抑止する
@@ -408,7 +406,7 @@ flowchart LR
 - `onTerminalRecord` は `status != pending-timeline` かつ `timelineOffset` がある場合に `watermarkStore.applyTerminalRecord(sessionKey, actionType, offset)` を呼ぶ。
 - `pending-timeline` または offset 未取得時は watermark を更新せず warning を記録する。
 - `assistant_final` のみ handled 境界として扱い、`aborted/error` では境界を進めない。
-- Pending Flusher は `memory/timeline.jsonl` を byte offset で差分走査し、sessionKey 別に open post を集計する。
+- Pending Flusher は `<stateDir>/timeline.jsonl` を byte offset で差分走査し、sessionKey 別に open post を集計する。
 - stale 判定は `loggedAt` と `ADJUTANT_FLUSHER_STALE_MS`（既定 900000ms）で行う。
 - 別人返信（oldest actor と異なる actor）を検出した session は抑制して起動しない。
 - tick 後は `watermarks.scan.lastGoodOffset` に `lastScannedOffset` を揃えて保存し、prune を実行する。
@@ -445,7 +443,7 @@ flowchart LR
 
 - `memory_search` / `memory_get` は `memoryScope=main` のセッションでのみ custom tool として登録する。
 - source of truth はローカル Markdown（`MEMORY.md` と `memory/**/*.md`）。
-- index DB の既定値は `<workspaceDir>/memory/index/main.sqlite`。
+- index DB の既定値は `<stateDir>/memory/<agentId>.sqlite`。
 - 検索は FTS5(BM25) と sqlite-vec のハイブリッドスコアで返す。
 - 埋め込み取得失敗時は BM25 のみで継続し、`fallback` を返す。
 - `memory_get` は allowlist（`MEMORY.md`, `memory/*.md`）+ workspace 内 + symlink 拒否で path を検証する。

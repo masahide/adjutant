@@ -142,7 +142,7 @@ describe("markdown-summary-batch", () => {
     }
   });
 
-  it("state 配下にファイルがなくても legacy workspace/memory/sessions を読める", async () => {
+  it("legacy workspace/memory/sessions は参照せず state 配下のみを処理する", async () => {
     const root = await mkdtemp(`${tmpdir()}/adjutant-summary-batch-`);
     try {
       const workspaceDir = join(root, "workspace");
@@ -167,14 +167,10 @@ describe("markdown-summary-batch", () => {
         workspaceDir,
         timezone: "UTC",
         sessionTranscriptsDir: stateSessionsDir,
-        legacySessionTranscriptsDir: legacySessionsDir,
         watermarkPath,
       });
-      assert.equal(result.writtenEntries, 1);
-
-      const daily = await readFile(join(workspaceDir, "memory", "2026-02-21.md"), "utf8");
-      assert.equal(daily.includes("assistant: legacy message"), true);
-      assert.equal(daily.includes("legacy-main"), true);
+      assert.equal(result.writtenEntries, 0);
+      await assert.rejects(readFile(join(workspaceDir, "memory", "2026-02-21.md"), "utf8"));
     } finally {
       await rm(root, { recursive: true, force: true });
     }
