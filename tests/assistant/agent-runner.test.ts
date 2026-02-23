@@ -589,6 +589,118 @@ describe("AgentRunner", () => {
     }
   });
 
+  it("isHeartbeat=true では sendCustomMessage で heartbeat メッセージを送信する", async () => {
+    const prompts: string[] = [];
+    const customMessages: Array<{
+      message: {
+        customType: string;
+        content: string | Array<{ type: string; text?: string }>;
+        display: boolean;
+        details?: unknown;
+      };
+      options?: { triggerTurn?: boolean };
+    }> = [];
+
+    setAgentRunnerRuntimeForTest({
+      ...inMemorySessionStoreRuntime(),
+      nowMs: () => 1000,
+      acquireLock: async () => () => undefined,
+      openSessionManager: () => ({}),
+      createSession: async () => ({
+        session: {
+          subscribe: () => () => undefined,
+          prompt: async (text) => {
+            prompts.push(text);
+          },
+          sendCustomMessage: async (message, options) => {
+            customMessages.push({ message, options });
+          },
+          dispose: () => undefined,
+        },
+      }),
+    });
+
+    await runAgent({
+      runId: "run-heartbeat-custom-message",
+      prompt: "heartbeat payload",
+      sessionKey: "thread:C1",
+      isHeartbeat: true,
+    });
+
+    assert.equal(prompts.length, 0);
+    assert.equal(customMessages.length, 1);
+    assert.equal(customMessages[0]?.message.customType, "adjutant:heartbeat");
+    assert.equal(customMessages[0]?.message.display, false);
+    assert.equal(customMessages[0]?.message.content, "heartbeat payload");
+    assert.deepEqual(customMessages[0]?.message.details, {
+      runId: "run-heartbeat-custom-message",
+    });
+    assert.equal(customMessages[0]?.options?.triggerTurn, true);
+  });
+
+  it("isHeartbeat=false では従来どおり prompt を使用する", async () => {
+    const prompts: string[] = [];
+    const customMessages: unknown[] = [];
+
+    setAgentRunnerRuntimeForTest({
+      ...inMemorySessionStoreRuntime(),
+      nowMs: () => 1000,
+      acquireLock: async () => () => undefined,
+      openSessionManager: () => ({}),
+      createSession: async () => ({
+        session: {
+          subscribe: () => () => undefined,
+          prompt: async (text) => {
+            prompts.push(text);
+          },
+          sendCustomMessage: async (message) => {
+            customMessages.push(message);
+          },
+          dispose: () => undefined,
+        },
+      }),
+    });
+
+    await runAgent({
+      runId: "run-chat-prompt",
+      prompt: "hello",
+      sessionKey: "thread:C1",
+      isHeartbeat: false,
+    });
+
+    assert.deepEqual(prompts, ["hello"]);
+    assert.equal(customMessages.length, 0);
+  });
+
+  it("sendCustomMessage がない heartbeat セッションは prompt にフォールバックする", async () => {
+    const prompts: string[] = [];
+
+    setAgentRunnerRuntimeForTest({
+      ...inMemorySessionStoreRuntime(),
+      nowMs: () => 1000,
+      acquireLock: async () => () => undefined,
+      openSessionManager: () => ({}),
+      createSession: async () => ({
+        session: {
+          subscribe: () => () => undefined,
+          prompt: async (text) => {
+            prompts.push(text);
+          },
+          dispose: () => undefined,
+        },
+      }),
+    });
+
+    await runAgent({
+      runId: "run-heartbeat-fallback-prompt",
+      prompt: "fallback heartbeat",
+      sessionKey: "thread:C1",
+      isHeartbeat: true,
+    });
+
+    assert.deepEqual(prompts, ["fallback heartbeat"]);
+  });
+
   it("一時エラー時は 2.5 秒待機して 1 回再試行する", async () => {
     let calls = 0;
     const waits: number[] = [];
@@ -623,6 +735,48 @@ describe("AgentRunner", () => {
 
     assert.equal(result.runId, "run-retry-transient");
     assert.equal(calls, 2);
+    assert.deepEqual(waits, [2500]);
+  });
+
+  it("heartbeat の sendCustomMessage でも一時エラー時は 2.5 秒待機して 1 回再試行する", async () => {
+    let sendCalls = 0;
+    let promptCalls = 0;
+    const waits: number[] = [];
+
+    setAgentRunnerRuntimeForTest({
+      ...inMemorySessionStoreRuntime(),
+      nowMs: () => 1000 + sendCalls,
+      wait: async (ms) => {
+        waits.push(ms);
+      },
+      acquireLock: async () => () => undefined,
+      openSessionManager: () => ({}),
+      createSession: async () => ({
+        session: {
+          subscribe: () => () => undefined,
+          prompt: async () => {
+            promptCalls += 1;
+          },
+          sendCustomMessage: async () => {
+            sendCalls += 1;
+            if (sendCalls === 1) {
+              throw new Error("temporary timeout");
+            }
+          },
+          dispose: () => undefined,
+        },
+      }),
+    });
+
+    await runAgent({
+      runId: "run-retry-transient-heartbeat",
+      prompt: "heartbeat",
+      sessionKey: "thread:C1",
+      isHeartbeat: true,
+    });
+
+    assert.equal(sendCalls, 2);
+    assert.equal(promptCalls, 0);
     assert.deepEqual(waits, [2500]);
   });
 

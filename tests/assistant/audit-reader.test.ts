@@ -161,7 +161,7 @@ describe("audit-reader", () => {
     }
   });
 
-  it("run.start(origin=system) と tool.end 件数を集計できる", async () => {
+  it("tool.end 件数と message.bind の runId を集計できる", async () => {
     const dir = await mkdtemp(`${tmpdir()}/adjutant-audit-reader-`);
     try {
       const path = join(dir, "agent-audit.ndjson");
@@ -188,8 +188,6 @@ describe("audit-reader", () => {
       );
 
       const metadata = await readAuditRunMetadata({ auditLogPath: path });
-      assert.equal(metadata.heartbeatRunIds.has("run-hb-1"), true);
-      assert.equal(metadata.heartbeatRunIds.has("run-user-2"), false);
       assert.equal(metadata.toolEndCountByRunId.get("run-user-1"), 2);
       assert.equal(metadata.messageRunIdByMessageId.get("msg-assistant-1"), "run-user-1");
     } finally {

@@ -20,6 +20,18 @@ import {
 export type AgentSessionLike = {
   subscribe: (listener: (event: unknown) => void) => () => void;
   prompt: (text: string) => Promise<void>;
+  sendCustomMessage?: <T = unknown>(
+    message: {
+      customType: string;
+      content: string | Array<{ type: string; text?: string }>;
+      display: boolean;
+      details?: T;
+    },
+    options?: {
+      triggerTurn?: boolean;
+      deliverAs?: "steer" | "followUp" | "nextTurn";
+    }
+  ) => Promise<void>;
   getContextUsage?: () => ContextUsage | undefined;
   compact?: (customInstructions?: string) => Promise<unknown>;
   dispose: () => void;

@@ -14,7 +14,6 @@ export type TranscriptReadOptions = {
   limit?: number;
   sessionEntriesPath?: string;
   auditLogPath?: string;
-  heartbeatPromptMarker?: string;
 };
 
 export type HistoryMessage = {
@@ -401,13 +400,6 @@ function extractMessageId(
   return undefined;
 }
 
-function isHeartbeatPrompt(text: string | undefined, marker: string): boolean {
-  if (!text) {
-    return false;
-  }
-  return text.trimStart().startsWith(marker);
-}
-
 function toHistoryContent(
   message: Record<string, unknown>,
   fallbackText: string
@@ -439,16 +431,13 @@ export async function loadMessages(opts: TranscriptReadOptions): Promise<History
     return [];
   }
 
-  const heartbeatPromptMarker = opts.heartbeatPromptMarker?.trim() || "# HEARTBEAT";
   const auditLogPath = opts.auditLogPath ?? resolveAgentAuditLogPath();
 
-  let heartbeatRunIds = new Set<string>();
   let toolEndCountByRunId = new Map<string, number>();
   let messageRunIdByMessageId = new Map<string, string>();
   let terminalRunRanges: TerminalRunRange[] = [];
   try {
     const metadata = await readAuditRunMetadata({ auditLogPath });
-    heartbeatRunIds = metadata.heartbeatRunIds;
     toolEndCountByRunId = metadata.toolEndCountByRunId;
     messageRunIdByMessageId = metadata.messageRunIdByMessageId;
   } catch (error) {
@@ -472,6 +461,12 @@ export async function loadMessages(opts: TranscriptReadOptions): Promise<History
   let heartbeatTurnActive = false;
 
   for (const parsed of resolved.lines) {
+    const lineRecord = parsed as Record<string, unknown>;
+    if (lineRecord.type === "custom_message" && lineRecord.customType === "adjutant:heartbeat") {
+      heartbeatTurnActive = true;
+      continue;
+    }
+
     if (!parsed.message || typeof parsed.message !== "object") {
       continue;
     }
@@ -495,17 +490,12 @@ export async function loadMessages(opts: TranscriptReadOptions): Promise<History
     const runId =
       runIdFromPayload ??
       (role === "assistant" ? matchRunIdByTerminalTimestamp(timestamp) : undefined);
-    const matchedHeartbeatRun = runId ? heartbeatRunIds.has(runId) : false;
 
     if (role === "user") {
       if (heartbeatTurnActive) {
         heartbeatTurnActive = false;
       }
-      if (matchedHeartbeatRun || isHeartbeatPrompt(text, heartbeatPromptMarker)) {
-        heartbeatTurnActive = true;
-        continue;
-      }
-    } else if (matchedHeartbeatRun || heartbeatTurnActive) {
+    } else if (heartbeatTurnActive) {
       heartbeatTurnActive = false;
       continue;
     }

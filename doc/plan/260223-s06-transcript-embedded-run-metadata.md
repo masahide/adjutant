@@ -264,7 +264,13 @@ curl http://localhost:3100/api/chat/runs/msg-123/audit
   "origin": "user",
   "runEnded": true,
   "tools": [
-    { "toolName": "bash", "status": "ok", "durationMs": 1200, "args": {"command":"ls"}, "resultSummary": "..." }
+    {
+      "toolName": "bash",
+      "status": "ok",
+      "durationMs": 1200,
+      "args": { "command": "ls" },
+      "resultSummary": "..."
+    }
   ]
 }
 ```

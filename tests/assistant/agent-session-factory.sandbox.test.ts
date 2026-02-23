@@ -110,6 +110,7 @@ describe("agent-session-factory sandbox bash", () => {
         memoryScope: "spoke",
         isHeartbeat: true,
       });
+      assert.equal(typeof session.sendCustomMessage, "function");
       const reportTool = getTool(session, "report_heartbeat_status");
       const result = (await reportTool.execute("tool-call-heartbeat", {
         status: "no_action_needed",

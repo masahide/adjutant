@@ -144,7 +144,7 @@ describe("TranscriptReader", () => {
     }
   });
 
-  it("audit ログの origin=system runId を使って heartbeat ターンを除外し toolCount を付与する", async () => {
+  it("custom_message(customType=adjutant:heartbeat) と直後の assistant 応答を除外し toolCount を付与する", async () => {
     const tempDir = await mkdtemp(`${tmpdir()}/adjutant-transcript-`);
     const snapshot = snapshotEnv();
     try {
@@ -180,10 +180,12 @@ describe("TranscriptReader", () => {
           }),
           JSON.stringify({
             timestamp: "2026-02-23T10:01:00.000Z",
-            message: {
-              role: "user",
+            type: "custom_message",
+            customType: "adjutant:heartbeat",
+            content: "# HEARTBEAT\ncheck",
+            display: false,
+            details: {
               runId: "run-hb-1",
-              content: [{ type: "text", text: "# HEARTBEAT\ncheck" }],
             },
           }),
           JSON.stringify({
@@ -195,11 +197,11 @@ describe("TranscriptReader", () => {
             },
           }),
           JSON.stringify({
-            timestamp: "2026-02-23T10:01:02.000Z",
+            timestamp: "2026-02-23T10:02:00.000Z",
             message: {
-              role: "system",
-              runId: "run-system",
-              content: [{ type: "text", text: "internal note" }],
+              role: "user",
+              runId: "run-user-2",
+              content: [{ type: "text", text: "後続メッセージ" }],
             },
           }),
         ].join("\n"),
@@ -209,7 +211,6 @@ describe("TranscriptReader", () => {
       await writeFile(
         auditPath,
         [
-          JSON.stringify({ type: "run.start", runId: "run-hb-1", origin: "system" }),
           JSON.stringify({
             type: "tool.end",
             runId: "run-user-1",
@@ -230,9 +231,10 @@ describe("TranscriptReader", () => {
       process.env.ADJUTANT_AGENT_AUDIT_LOG_PATH = auditPath;
 
       const messages = await loadMessages({ sessionKey: "main" });
-      assert.equal(messages.length, 2);
+      assert.equal(messages.length, 3);
       assert.equal(messages[0]?.role, "user");
       assert.equal(messages[1]?.role, "assistant");
+      assert.equal(messages[2]?.role, "user");
       assert.equal(messages[1]?.runId, "run-user-1");
       assert.equal(messages[1]?.toolCount, 2);
     } finally {
@@ -439,7 +441,7 @@ describe("TranscriptReader", () => {
     }
   });
 
-  it("audit ログが使えない場合は # HEARTBEAT マーカーでベストエフォート除外する", async () => {
+  it("audit ログがなくても custom_message heartbeat ターンを除外する", async () => {
     const tempDir = await mkdtemp(`${tmpdir()}/adjutant-transcript-`);
     const snapshot = snapshotEnv();
     try {
@@ -471,10 +473,10 @@ describe("TranscriptReader", () => {
           }),
           JSON.stringify({
             timestamp: "2026-02-23T10:01:00.000Z",
-            message: {
-              role: "user",
-              content: [{ type: "text", text: "# HEARTBEAT\nscheduled run" }],
-            },
+            type: "custom_message",
+            customType: "adjutant:heartbeat",
+            content: "# HEARTBEAT\nscheduled run",
+            display: false,
           }),
           JSON.stringify({
             timestamp: "2026-02-23T10:01:01.000Z",

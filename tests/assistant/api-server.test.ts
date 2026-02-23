@@ -298,11 +298,11 @@ describe("ApiServer", () => {
             },
           }),
           JSON.stringify({
-            message: {
-              role: "user",
-              runId: "run-hb",
-              content: [{ type: "text", text: "# HEARTBEAT\nping" }],
-            },
+            type: "custom_message",
+            customType: "adjutant:heartbeat",
+            content: "# HEARTBEAT\nping",
+            display: false,
+            details: { runId: "run-hb" },
           }),
           JSON.stringify({
             message: {
@@ -324,7 +324,6 @@ describe("ApiServer", () => {
       await writeFile(
         auditPath,
         [
-          JSON.stringify({ type: "run.start", runId: "run-hb", origin: "system" }),
           JSON.stringify({ type: "tool.end", runId: "run-user-1", toolName: "bash", status: "ok" }),
           JSON.stringify({
             type: "tool.end",

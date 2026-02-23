@@ -109,7 +109,7 @@ export type AgentSessionLike = {
     options?: {
       triggerTurn?: boolean;
       deliverAs?: "steer" | "followUp" | "nextTurn";
-    },
+    }
   ) => Promise<void>;
   getContextUsage?: () => ContextUsage | undefined;
   compact?: (customInstructions?: string) => Promise<unknown>;
@@ -151,7 +151,7 @@ export type AgentSessionLike = {
 await session.sendCustomMessage(
   {
     customType: "adjutant:heartbeat",
-    content: prompt,  // buildAgentPrompt の結果
+    content: prompt, // buildAgentPrompt の結果
     display: false,
     details: { runId: context.runId },
   },
@@ -274,59 +274,59 @@ graph LR
 
 ### Phase 1: 設計と準備
 
-- [ ] 要件と仕様の確定（本計画書）
-- [ ] インターフェース契約の確定（AgentSessionLike 拡張仕様）
-- [ ] Mermaid 図の作成（本計画書に含む）
+- [x] 要件と仕様の確定（本計画書）
+- [x] インターフェース契約の確定（AgentSessionLike 拡張仕様）
+- [x] Mermaid 図の作成（本計画書に含む）
 
 ### Phase 2: AgentSessionLike の拡張
 
-- [ ] Test: `AgentSessionLike` に `sendCustomMessage` が optional で型定義されることの確認テスト (Red)
-- [ ] Impl: `agent-session-factory.ts` — `AgentSessionLike` 型に `sendCustomMessage` を追加 (Green)
-- [ ] Impl: `agent-session-factory.ts` — `createAgentSessionFromSdk` で SDK session から `sendCustomMessage` を公開
-- [ ] Refactor: 型定義の整理
+- [x] Test: `AgentSessionLike` に `sendCustomMessage` が optional で型定義されることの確認テスト (Red)
+- [x] Impl: `agent-session-factory.ts` — `AgentSessionLike` 型に `sendCustomMessage` を追加 (Green)
+- [x] Impl: `agent-session-factory.ts` — `createAgentSessionFromSdk` で SDK session から `sendCustomMessage` を公開
+- [x] Refactor: 型定義の整理
 
 ### Phase 3: agent-runner の heartbeat 分岐
 
-- [ ] Test: `promptWithRetry` が `isHeartbeat: true` 時に `sendCustomMessage` を呼び、`prompt` を呼ばないことの検証テスト (Red)
-- [ ] Test: `promptWithRetry` が `isHeartbeat: false` 時に `prompt` を呼び、`sendCustomMessage` を呼ばないことの検証テスト (Red)
-- [ ] Test: `sendCustomMessage` が undefined の場合に `prompt` にフォールバックするテスト (Red)
-- [ ] Test: `sendCustomMessage` が transient エラーをスローした場合のリトライテスト (Red)
-- [ ] Impl: `agent-runner.ts` — `promptWithRetry` に heartbeat 分岐を追加 (Green)
-- [ ] Refactor: 共通リトライロジックの整理
+- [x] Test: `promptWithRetry` が `isHeartbeat: true` 時に `sendCustomMessage` を呼び、`prompt` を呼ばないことの検証テスト (Red)
+- [x] Test: `promptWithRetry` が `isHeartbeat: false` 時に `prompt` を呼び、`sendCustomMessage` を呼ばないことの検証テスト (Red)
+- [x] Test: `sendCustomMessage` が undefined の場合に `prompt` にフォールバックするテスト (Red)
+- [x] Test: `sendCustomMessage` が transient エラーをスローした場合のリトライテスト (Red)
+- [x] Impl: `agent-runner.ts` — `promptWithRetry` に heartbeat 分岐を追加 (Green)
+- [x] Refactor: 共通リトライロジックの整理
 
 ### Phase 4: transcript-reader の custom_message フィルタ
 
-- [ ] Test: `custom_message` (customType=`adjutant:heartbeat`) エントリが `loadMessages` から除外されるテスト (Red)
-- [ ] Test: `custom_message` 直後の assistant メッセージも除外されるテスト (Red)
-- [ ] Test: 通常メッセージはフィルタされないことの確認テスト (Red)
-- [ ] Impl: `transcript-reader.ts` — `loadMessages` ループに `custom_message` 判定を追加 (Green)
-- [ ] Impl: `isHeartbeatPrompt` 関数と `heartbeatPromptMarker` オプションの削除
-- [ ] Impl: `audit-reader.ts` — `heartbeatRunIds` の収集と transcript-reader での参照を削除
-- [ ] Impl: `TranscriptReadOptions` から `heartbeatPromptMarker` フィールドを削除
-- [ ] Refactor: 不要になったインポートやヘルパーの削除
+- [x] Test: `custom_message` (customType=`adjutant:heartbeat`) エントリが `loadMessages` から除外されるテスト (Red)
+- [x] Test: `custom_message` 直後の assistant メッセージも除外されるテスト (Red)
+- [x] Test: 通常メッセージはフィルタされないことの確認テスト (Red)
+- [x] Impl: `transcript-reader.ts` — `loadMessages` ループに `custom_message` 判定を追加 (Green)
+- [x] Impl: `isHeartbeatPrompt` 関数と `heartbeatPromptMarker` オプションの削除
+- [x] Impl: `audit-reader.ts` — `heartbeatRunIds` の収集と transcript-reader での参照を削除
+- [x] Impl: `TranscriptReadOptions` から `heartbeatPromptMarker` フィールドを削除
+- [x] Refactor: 不要になったインポートやヘルパーの削除
 
 ### Phase 5: 統合と検証
 
-- [ ] 全体テストの実行 (`pnpm run check`)
-- [ ] typecheck パスの確認
-- [ ] lint / format パスの確認
-- [ ] 既存テストの破損がないことの確認
+- [x] 全体テストの実行 (`pnpm run check`)
+- [x] typecheck パスの確認
+- [x] lint / format パスの確認
+- [x] 既存テストの破損がないことの確認
 
 ## 8. 完了の定義 Definition of Done
 
 ### 8.1 機能 DoD Functional DoD
 
-- [ ] 受け入れ条件 1-5 がすべて満たされていること
-- [ ] 既知の制約が明文化され、想定通りであること
-- [ ] heartbeat 送信時に `sendCustomMessage` が使用されることが単体テストで検証済み
+- [x] 受け入れ条件 1-5 がすべて満たされていること
+- [x] 既知の制約が明文化され、想定通りであること
+- [x] heartbeat 送信時に `sendCustomMessage` が使用されることが単体テストで検証済み
 
 ### 8.2 品質 DoD Quality DoD
 
-- [ ] 全てのテストがパスしていること (`pnpm run test`)
-- [ ] 型チェックが通ること (`pnpm run typecheck`)
-- [ ] Linter / Formatter のエラーがないこと (`pnpm run lint`, `pnpm run format`)
-- [ ] 不要なデバッグコードが削除されていること
-- [ ] 主要な変更点が本計画書のタスクチェックリストに反映されていること
+- [x] 全てのテストがパスしていること (`pnpm run test`)
+- [x] 型チェックが通ること (`pnpm run typecheck`)
+- [x] Linter / Formatter のエラーがないこと (`pnpm run lint`, `pnpm run format`)
+- [x] 不要なデバッグコードが削除されていること
+- [x] 主要な変更点が本計画書のタスクチェックリストに反映されていること
 
 ## 9. 懸念事項と未確定事項 Concerns and Questions
 

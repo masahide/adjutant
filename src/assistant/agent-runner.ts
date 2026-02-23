@@ -1,7 +1,7 @@
 import { SessionManager } from "@mariozechner/pi-coding-agent";
 import { constants as fsConstants } from "node:fs";
 import { access, rename } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { auditRunEnd, auditRunStart, type AgentAuditScope } from "./agent-audit.js";
 import { appendDailyMemory, updateLongTermMemory } from "./memory-writer.js";
 import { readMemoryFiles } from "./memory-reader.js";
@@ -118,6 +118,7 @@ type AgentRunnerRuntime = {
 };
 
 const lockTails = new Map<string, Promise<void>>();
+const HEARTBEAT_CUSTOM_MESSAGE_TYPE = "adjutant:heartbeat";
 
 let runtimeOverride: Partial<AgentRunnerRuntime> | null = null;
 
@@ -303,6 +304,8 @@ function shrinkPrompt(prompt: string): string {
 async function promptWithRetry(params: {
   session: SessionLike;
   prompt: string;
+  runId: string;
+  isHeartbeat: boolean;
   runtime: AgentRunnerRuntime;
   compactionEnabled: boolean;
   onCompactionCompleted?: () => void;
@@ -313,7 +316,19 @@ async function promptWithRetry(params: {
 
   for (;;) {
     try {
-      await params.session.prompt(prompt);
+      if (params.isHeartbeat && typeof params.session.sendCustomMessage === "function") {
+        await params.session.sendCustomMessage(
+          {
+            customType: HEARTBEAT_CUSTOM_MESSAGE_TYPE,
+            content: prompt,
+            display: false,
+            details: { runId: params.runId },
+          },
+          { triggerTurn: true }
+        );
+      } else {
+        await params.session.prompt(prompt);
+      }
       return;
     } catch (error) {
       const category = classifyError(error);
@@ -526,6 +541,8 @@ async function runAgentInternal(opts: AgentRunOptions): Promise<AgentRunResult> 
     await promptWithRetry({
       session: created.session,
       prompt,
+      runId: context.runId,
+      isHeartbeat: context.isHeartbeat,
       runtime,
       compactionEnabled: compactionSettings.compactionEnabled,
       onCompactionCompleted: () => {

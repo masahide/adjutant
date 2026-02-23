@@ -25,7 +25,6 @@ export type RunAuditResponse = {
 };
 
 export type AuditRunMetadata = {
-  heartbeatRunIds: Set<string>;
   toolEndCountByRunId: Map<string, number>;
   messageRunIdByMessageId: Map<string, string>;
 };
@@ -415,13 +414,11 @@ export async function readAuditRunMetadata(opts?: {
   const raw = await readAuditFileText(auditLogPath);
   if (!raw) {
     return {
-      heartbeatRunIds: new Set<string>(),
       toolEndCountByRunId: new Map<string, number>(),
       messageRunIdByMessageId: new Map<string, string>(),
     };
   }
 
-  const heartbeatRunIds = new Set<string>();
   const toolEndCountByRunId = new Map<string, number>();
   const messageRunIdByMessageId = new Map<string, string>();
 
@@ -434,10 +431,6 @@ export async function readAuditRunMetadata(opts?: {
     if (!parsed) {
       continue;
     }
-    if (parsed.type === "run.start" && parsed.origin === "system") {
-      heartbeatRunIds.add(parsed.runId);
-      continue;
-    }
     if (parsed.type === "message.bind") {
       messageRunIdByMessageId.set(parsed.messageId, parsed.runId);
       continue;
@@ -448,7 +441,7 @@ export async function readAuditRunMetadata(opts?: {
     }
   }
 
-  return { heartbeatRunIds, toolEndCountByRunId, messageRunIdByMessageId };
+  return { toolEndCountByRunId, messageRunIdByMessageId };
 }
 
 export function resetAuditReaderCacheForTest(): void {
