@@ -26,6 +26,7 @@ function inMemorySessionStoreRuntime() {
     loadSessionEntryStore: async () => ({ path: "/tmp/none", store }),
     saveSessionEntryStore: async () => "/tmp/none",
     repairSessionData: async () => false,
+    appendRunIndex: async () => undefined,
   };
 }
 
@@ -111,6 +112,185 @@ describe("AgentRunner", () => {
       "dispose",
       "unlock",
     ]);
+  });
+
+  it("prompt 前に run-context、prompt 後に run-summary を appendCustomEntry する", async () => {
+    const appended: Array<{ customType: string; data: unknown }> = [];
+    let listener: ((event: unknown) => void) | undefined;
+    let nowTick = 1000;
+    const callOrder: string[] = [];
+
+    setAgentRunnerRuntimeForTest({
+      ...inMemorySessionStoreRuntime(),
+      nowMs: () => {
+        nowTick += 100;
+        return nowTick;
+      },
+      acquireLock: async () => () => undefined,
+      openSessionManager: () => ({}),
+      createSession: async () => ({
+        session: {
+          subscribe: (cb) => {
+            listener = cb;
+            return () => undefined;
+          },
+          prompt: async () => {
+            callOrder.push("prompt");
+            listener?.({
+              type: "tool_execution_start",
+              toolName: "bash",
+              toolCallId: "tc-1",
+              args: { command: "echo hi", apiKey: "secret" },
+            });
+            listener?.({
+              type: "tool_execution_end",
+              toolName: "bash",
+              toolCallId: "tc-1",
+              result: { token: "secret-token", ok: true },
+            });
+            listener?.({
+              type: "message_end",
+              message: { id: "msg-assistant-1", role: "assistant" },
+            });
+          },
+          appendCustomEntry: (customType, data) => {
+            callOrder.push(customType);
+            appended.push({ customType, data });
+            return `${customType}-id`;
+          },
+          dispose: () => undefined,
+        },
+      }),
+    });
+
+    const result = await runAgent({
+      runId: "run-custom-entry-order",
+      prompt: "hello",
+      sessionKey: "main",
+    });
+
+    assert.equal(result.runId, "run-custom-entry-order");
+    assert.deepEqual(callOrder, ["adjutant:run-context", "prompt", "adjutant:run-summary"]);
+    assert.equal(appended.length, 2);
+    assert.equal(appended[0]?.customType, "adjutant:run-context");
+    assert.deepEqual(appended[0]?.data, {
+      runId: "run-custom-entry-order",
+      origin: "system",
+      sessionKey: "main",
+    });
+
+    assert.equal(appended[1]?.customType, "adjutant:run-summary");
+    const summary = appended[1]?.data as {
+      runId?: string;
+      assistantMessageId?: string;
+      toolCount?: number;
+      tools?: Array<{
+        toolName?: string;
+        toolCallId?: string;
+        args?: { apiKey?: string };
+        resultSummary?: { token?: string; ok?: boolean };
+        endedAt?: string;
+        error?: string;
+      }>;
+    };
+    assert.equal(summary.runId, "run-custom-entry-order");
+    assert.equal(summary.assistantMessageId, "msg-assistant-1");
+    assert.equal(summary.toolCount, 1);
+    assert.equal(summary.tools?.[0]?.toolName, "bash");
+    assert.equal(summary.tools?.[0]?.toolCallId, "tc-1");
+    assert.equal(summary.tools?.[0]?.args?.apiKey, "***");
+    assert.equal(summary.tools?.[0]?.resultSummary?.token, "***");
+    assert.equal(typeof summary.tools?.[0]?.endedAt, "string");
+    assert.equal(summary.tools?.[0]?.error, undefined);
+  });
+
+  it("appendCustomEntry が未定義でもエラーにならない", async () => {
+    setAgentRunnerRuntimeForTest({
+      ...inMemorySessionStoreRuntime(),
+      nowMs: () => 1000,
+      acquireLock: async () => () => undefined,
+      openSessionManager: () => ({}),
+      createSession: async () => ({
+        session: {
+          subscribe: () => () => undefined,
+          prompt: async () => undefined,
+          dispose: () => undefined,
+        },
+      }),
+    });
+
+    const result = await runAgent({
+      runId: "run-no-custom-entry",
+      prompt: "hello",
+      sessionKey: "main",
+    });
+    assert.equal(result.runId, "run-no-custom-entry");
+  });
+
+  it("run 開始時に run-index へ runId/sessionKey を追記する", async () => {
+    const appended: Array<{ runId: string; sessionKey: string; ts: string }> = [];
+    setAgentRunnerRuntimeForTest({
+      ...inMemorySessionStoreRuntime(),
+      nowMs: () => 1000,
+      appendRunIndex: async (input) => {
+        appended.push(input);
+      },
+      acquireLock: async () => () => undefined,
+      openSessionManager: () => ({}),
+      createSession: async () => ({
+        session: {
+          subscribe: () => () => undefined,
+          prompt: async () => undefined,
+          dispose: () => undefined,
+        },
+      }),
+    });
+
+    await runAgent({
+      runId: "run-index-append",
+      prompt: "hello",
+      sessionKey: "main",
+    });
+
+    assert.equal(appended.length, 1);
+    assert.equal(appended[0]?.runId, "run-index-append");
+    assert.equal(appended[0]?.sessionKey, "main");
+    assert.equal(typeof appended[0]?.ts, "string");
+  });
+
+  it("appendCustomEntry が例外を投げても run は継続する", async () => {
+    let listener: ((event: unknown) => void) | undefined;
+    setAgentRunnerRuntimeForTest({
+      ...inMemorySessionStoreRuntime(),
+      nowMs: () => 1000,
+      acquireLock: async () => () => undefined,
+      openSessionManager: () => ({}),
+      createSession: async () => ({
+        session: {
+          subscribe: (cb) => {
+            listener = cb;
+            return () => undefined;
+          },
+          prompt: async () => {
+            listener?.({
+              type: "message_end",
+              message: { id: "msg-assistant-throw", role: "assistant" },
+            });
+          },
+          appendCustomEntry: () => {
+            throw new Error("append failed");
+          },
+          dispose: () => undefined,
+        },
+      }),
+    });
+
+    const result = await runAgent({
+      runId: "run-custom-entry-throw",
+      prompt: "hello",
+      sessionKey: "main",
+    });
+    assert.equal(result.runId, "run-custom-entry-throw");
   });
 
   it("onTextDelta / onToolCall コールバックへイベントを転送する", async () => {

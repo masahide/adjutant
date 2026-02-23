@@ -456,92 +456,92 @@ graph TB
 
 ### Phase 1: 設計と準備
 
-- [ ] 要件と仕様の確定（本計画書）
-- [ ] s05 の完了確認（heartbeat sendCustomMessage 移行）
-- [ ] インターフェース契約の確定（adjutant:run-context / adjutant:run-summary スキーマ）
-- [ ] Mermaid 図の作成（本計画書に含む）
+- [x] 要件と仕様の確定（本計画書）
+- [x] s05 の完了確認（heartbeat sendCustomMessage 移行）
+- [x] インターフェース契約の確定（adjutant:run-context / adjutant:run-summary スキーマ）
+- [x] Mermaid 図の作成（本計画書に含む）
 
 ### Phase 2: AgentSessionLike の拡張
 
-- [ ] Test: `AgentSessionLike` に `appendCustomEntry` が optional で型定義されることの確認
-- [ ] Test: `appendCustomEntry` が `sessionManager` に bind 済みで this 依存エラーにならないことの確認
-- [ ] Impl: `agent-session-factory.ts` — `AgentSessionLike` 型に `appendCustomEntry` を追加
-- [ ] Impl: `agent-session-factory.ts` — `createAgentSessionFromSdk` で `session.sessionManager.appendCustomEntry` をバインドして公開
-- [ ] Refactor: 型定義の整理
+- [x] Test: `AgentSessionLike` に `appendCustomEntry` が optional で型定義されることの確認
+- [x] Test: `appendCustomEntry` が `sessionManager` に bind 済みで this 依存エラーにならないことの確認
+- [x] Impl: `agent-session-factory.ts` — `AgentSessionLike` 型に `appendCustomEntry` を追加
+- [x] Impl: `agent-session-factory.ts` — `createAgentSessionFromSdk` で `session.sessionManager.appendCustomEntry` をバインドして公開
+- [x] Refactor: 型定義の整理
 
 ### Phase 3: agent-runner での run メタデータ書き込み
 
-- [ ] Test: `runAgentInternal` が promptWithRetry 前に `appendCustomEntry("adjutant:run-context", ...)` を呼ぶテスト (Red)
-- [ ] Test: `runAgentInternal` が promptWithRetry 後に `appendCustomEntry("adjutant:run-summary", ...)` を呼ぶテスト (Red)
-- [ ] Test: `runAgentInternal` の run-summary に `assistantMessageId` が含まれるテスト (Red)
-- [ ] Test: `appendCustomEntry` が undefined の場合にエラーにならないテスト (Red)
-- [ ] Test: `appendCustomEntry` が例外をスローした場合に run が正常完了するテスト (Red)
-- [ ] Test: run-summary の tools 詳細が agent-event-subscriber の収集データと一致するテスト (Red)
-- [ ] Test: run-summary の `tools[].endedAt` が設定されるテスト (Red)
-- [ ] Test: `message_end(role=assistant)` 後に `subscribed.lastAssistantMessageId` が設定されるテスト (Red)
-- [ ] Impl: `agent-event-subscriber.ts` — `lastAssistantMessageId` フィールドを追加し、assistant の `message_end` で更新
-- [ ] Impl: `agent-event-subscriber.ts` — toolCalls の型を詳細版へ拡張（toolCallId/status/durationMs/args/resultSummary/startedAt/endedAt）
-- [ ] Impl: `agent-runner.ts` — run-summary の tools は subscriber 詳細データをそのまま使用
-- [ ] Impl: sanitize/truncate は `agent-audit.ts` 共通ロジックを再利用（重複実装しない）
-- [ ] Impl: `agent-runner.ts` — promptWithRetry 前後での appendCustomEntry 呼び出し追加 (Green)
-- [ ] Impl: `agent-runner.ts` — `auditRunEnd` 後に `flushAgentAuditLogger()` を await (Green)
-- [ ] Refactor: エラーハンドリングの整理
+- [x] Test: `runAgentInternal` が promptWithRetry 前に `appendCustomEntry("adjutant:run-context", ...)` を呼ぶテスト (Red)
+- [x] Test: `runAgentInternal` が promptWithRetry 後に `appendCustomEntry("adjutant:run-summary", ...)` を呼ぶテスト (Red)
+- [x] Test: `runAgentInternal` の run-summary に `assistantMessageId` が含まれるテスト (Red)
+- [x] Test: `appendCustomEntry` が undefined の場合にエラーにならないテスト (Red)
+- [x] Test: `appendCustomEntry` が例外をスローした場合に run が正常完了するテスト (Red)
+- [x] Test: run-summary の tools 詳細が agent-event-subscriber の収集データと一致するテスト (Red)
+- [x] Test: run-summary の `tools[].endedAt` が設定されるテスト (Red)
+- [x] Test: `message_end(role=assistant)` 後に `subscribed.lastAssistantMessageId` が設定されるテスト (Red)
+- [x] Impl: `agent-event-subscriber.ts` — `lastAssistantMessageId` フィールドを追加し、assistant の `message_end` で更新
+- [x] Impl: `agent-event-subscriber.ts` — toolCalls の型を詳細版へ拡張（toolCallId/status/durationMs/args/resultSummary/startedAt/endedAt）
+- [x] Impl: `agent-runner.ts` — run-summary の tools は subscriber 詳細データをそのまま使用
+- [x] Impl: sanitize/truncate は `agent-audit.ts` 共通ロジックを再利用（重複実装しない）
+- [x] Impl: `agent-runner.ts` — promptWithRetry 前後での appendCustomEntry 呼び出し追加 (Green)
+- [x] Impl: `agent-runner.ts` — `auditRunEnd` 後に `flushAgentAuditLogger()` を await (Green)
+- [x] Refactor: エラーハンドリングの整理
 
 ### Phase 4: transcript-reader の custom エントリ解析
 
-- [ ] Test: `custom[adjutant:run-context]` → 後続 assistant の runId 解決テスト (Red)
-- [ ] Test: `custom[adjutant:run-summary]` の `assistantMessageId` → 対応 assistant の toolCount 解決テスト (Red)
-- [ ] Test: `assistantMessageId` が不正/欠落時は toolCount を付与しないテスト (Red)
-- [ ] Test: `assistantMessageId` 欠落時は runId + 直近 assistant フォールバックが適用されるテスト (Red)
-- [ ] Test: 複数 run 連続でそれぞれ正しく紐付くテスト (Red)
-- [ ] Test: `custom` エントリなし（旧トランスクリプト）でエラーにならないテスト (Red)
-- [ ] Test: audit ログなしで runId / toolCount が正しく解決されるテスト (Red)
-- [ ] Impl: `transcript-reader.ts` — `assistant` メッセージを `messageId` で index 化し、run-summary を `assistantMessageId` で直接適用 (Green)
-- [ ] Impl: `transcript-reader.ts` — `readAuditRunMetadata` 呼び出しの削除
-- [ ] Impl: `transcript-reader.ts` — `readTerminalRunRanges` 呼び出しの削除
-- [ ] Refactor: 不要なインポートとヘルパーの削除
+- [x] Test: `custom[adjutant:run-context]` → 後続 assistant の runId 解決テスト (Red)
+- [x] Test: `custom[adjutant:run-summary]` の `assistantMessageId` → 対応 assistant の toolCount 解決テスト (Red)
+- [x] Test: `assistantMessageId` が不正/欠落時は toolCount を付与しないテスト (Red)
+- [x] Test: `assistantMessageId` 欠落時は runId + 直近 assistant フォールバックが適用されるテスト (Red)
+- [x] Test: 複数 run 連続でそれぞれ正しく紐付くテスト (Red)
+- [x] Test: `custom` エントリなし（旧トランスクリプト）でエラーにならないテスト (Red)
+- [x] Test: audit ログなしで runId / toolCount が正しく解決されるテスト (Red)
+- [x] Impl: `transcript-reader.ts` — `assistant` メッセージを `messageId` で index 化し、run-summary を `assistantMessageId` で直接適用 (Green)
+- [x] Impl: `transcript-reader.ts` — `readAuditRunMetadata` 呼び出しの削除
+- [x] Impl: `transcript-reader.ts` — `readTerminalRunRanges` 呼び出しの削除
+- [x] Refactor: 不要なインポートとヘルパーの削除
 
 ### Phase 5: audit-reader のクリーンアップ
 
-- [ ] Test: `readAuditRunMetadata` が export から削除されていることの確認
-- [ ] Impl: `audit-reader.ts` — `readAuditRunMetadata` / `AuditRunMetadata` の削除
-- [ ] Impl: `audit-reader.ts` — `readAuditRunMetadata` でのみ使用されていた内部ヘルパーの削除
-- [ ] Refactor: テストファイルから `readAuditRunMetadata` 関連テストの削除
+- [x] Test: `readAuditRunMetadata` が export から削除されていることの確認
+- [x] Impl: `audit-reader.ts` — `readAuditRunMetadata` / `AuditRunMetadata` の削除
+- [x] Impl: `audit-reader.ts` — `readAuditRunMetadata` でのみ使用されていた内部ヘルパーの削除
+- [x] Refactor: テストファイルから `readAuditRunMetadata` 関連テストの削除
 
 ### Phase 6: API サーバーのトランスクリプト優先読み込み
 
-- [ ] Test: `/api/chat/runs/:runId/audit` が run-index で sessionKey を解決し、対象 transcript から run-summary を返すテスト (Red)
-- [ ] Test: run-index に runId がない場合は audit ログにフォールバックするテスト (Red)
-- [ ] Test: run-summary がない場合は audit ログにフォールバックするテスト (Red)
-- [ ] Impl: `run-index-repository.ts`（新規）— `appendRunIndex(runId, sessionKey, ts)` / `resolveSessionKeyByRunId(runId)` の追加
-- [ ] Impl: `agent-runner.ts` — run 開始時に run-index へ追記
-- [ ] Impl: `api-server.ts` — run-index -> transcript -> audit の順で解決 (Green)
-- [ ] Refactor: レスポンス形式の一貫性確認
+- [x] Test: `/api/chat/runs/:runId/audit` が run-index で sessionKey を解決し、対象 transcript から run-summary を返すテスト (Red)
+- [x] Test: run-index に runId がない場合は audit ログにフォールバックするテスト (Red)
+- [x] Test: run-summary がない場合は audit ログにフォールバックするテスト (Red)
+- [x] Impl: `run-index-repository.ts`（新規）— `appendRunIndex(runId, sessionKey, ts)` / `resolveSessionKeyByRunId(runId)` の追加
+- [x] Impl: `agent-runner.ts` — run 開始時に run-index へ追記
+- [x] Impl: `api-server.ts` — run-index -> transcript -> audit の順で解決 (Green)
+- [x] Refactor: レスポンス形式の一貫性確認
 
 ### Phase 7: 統合と検証
 
-- [ ] 全体テストの実行 (`pnpm run check`)
-- [ ] typecheck パスの確認
-- [ ] lint / format パスの確認
-- [ ] 既存テストの破損がないことの確認
-- [ ] ToolsBadge → AuditDetailTab の E2E 動作確認（手動）
+- [x] 全体テストの実行 (`pnpm run check`)
+- [x] typecheck パスの確認
+- [x] lint / format パスの確認
+- [x] 既存テストの破損がないことの確認
+- [x] ToolsBadge → AuditDetailTab の E2E 動作確認（手動）
 
 ## 8. 完了の定義 Definition of Done
 
 ### 8.1 機能 DoD Functional DoD
 
-- [ ] 受け入れ条件 1-9 がすべて満たされていること
-- [ ] 既知の制約が明文化され、想定通りであること
-- [ ] `loadMessages` が audit ログを読み込まないことがテストで検証済み
-- [ ] ToolsBadge とツール詳細パネルが正常に表示されること（手動確認）
+- [x] 受け入れ条件 1-9 がすべて満たされていること
+- [x] 既知の制約が明文化され、想定通りであること
+- [x] `loadMessages` が audit ログを読み込まないことがテストで検証済み
+- [] ToolsBadge とツール詳細パネルが正常に表示されること（手動確認）
 
 ### 8.2 品質 DoD Quality DoD
 
-- [ ] 全てのテストがパスしていること (`pnpm run test`)
-- [ ] 型チェックが通ること (`pnpm run typecheck`)
-- [ ] Linter / Formatter のエラーがないこと (`pnpm run lint`, `pnpm run format`)
-- [ ] 不要なデバッグコードが削除されていること
-- [ ] 主要な変更点が本計画書のタスクチェックリストに反映されていること
+- [x] 全てのテストがパスしていること (`pnpm run test`)
+- [x] 型チェックが通ること (`pnpm run typecheck`)
+- [x] Linter / Formatter のエラーがないこと (`pnpm run lint`, `pnpm run format`)
+- [x] 不要なデバッグコードが削除されていること
+- [x] 主要な変更点が本計画書のタスクチェックリストに反映されていること
 
 ## 9. 懸念事項と未確定事項 Concerns and Questions
 

@@ -67,6 +67,10 @@ describe("agent-event-subscriber", () => {
     assert.equal(subscription.output.text, "Hello World");
     assert.deepEqual(memoryWrites, ["daily:note-1"]);
     assert.deepEqual(subscription.toolCalls, [{ name: "memory_write", result: { ok: true } }]);
+    assert.equal(subscription.toolDetails.length, 1);
+    assert.equal(subscription.toolDetails[0]?.toolName, "memory_write");
+    assert.equal(subscription.toolDetails[0]?.status, "ok");
+    assert.equal(typeof subscription.toolDetails[0]?.endedAt, "string");
   });
 
   it("tool.start/tool.end を監査ログへ出力する", async () => {
@@ -185,6 +189,7 @@ describe("agent-event-subscriber", () => {
       assert.equal(events[0]?.sessionKey, "main");
       assert.equal(events[0]?.messageId, "msg-assistant-1");
       assert.equal(events[0]?.role, "assistant");
+      assert.equal(subscription.lastAssistantMessageId, "msg-assistant-1");
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }

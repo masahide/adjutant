@@ -98,6 +98,11 @@ function ToolAccordion({ tool }: { tool: AuditToolSummary }) {
         ? "text-red-400"
         : "text-muted-foreground";
 
+  const displayError =
+    typeof tool.error === "string" && tool.error.trim() && tool.error.trim() !== "[[undefined]]"
+      ? tool.error
+      : null;
+
   return (
     <div className="border-b border-border">
       <button
@@ -130,9 +135,9 @@ function ToolAccordion({ tool }: { tool: AuditToolSummary }) {
           )}
           {tool.args != null && <ArgsBlock value={tool.args} />}
           {tool.resultSummary != null && <ResultBlock value={tool.resultSummary} />}
-          {tool.error && (
+          {displayError && (
             <div className="text-destructive">
-              <span className="font-medium">error:</span> {tool.error}
+              <span className="font-medium">error:</span> {displayError}
             </div>
           )}
           {tool.truncated && (

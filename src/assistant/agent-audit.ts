@@ -88,7 +88,7 @@ type AgentAuditLoggerOptions = {
   onWarn: (message: string, meta?: Record<string, unknown>) => void;
 };
 
-type SanitizedField = {
+export type SanitizedAuditField = {
   value: unknown;
   truncated: boolean;
 };
@@ -111,36 +111,8 @@ class AgentAuditLogger {
     return this.now().toISOString();
   }
 
-  sanitizeField(value: unknown): SanitizedField {
-    const redacted = redactValue(value, new WeakSet<object>());
-    const serialized = safeStringify(redacted);
-    if (serialized === null) {
-      return { value: "[[unserializable]]", truncated: false };
-    }
-    if (serialized.length <= this.maxFieldChars) {
-      return { value: redacted, truncated: false };
-    }
-    const preview = toTruncatedPreview(serialized, this.maxFieldChars);
-    if (typeof redacted === "string") {
-      return {
-        value: toTruncatedPreview(redacted, this.maxFieldChars),
-        truncated: true,
-      };
-    }
-    if (redacted !== null && typeof redacted === "object") {
-      return {
-        value: {
-          _truncated: true,
-          originalType: Array.isArray(redacted) ? "array" : "object",
-          preview,
-        },
-        truncated: true,
-      };
-    }
-    return {
-      value: preview,
-      truncated: true,
-    };
+  sanitizeField(value: unknown): SanitizedAuditField {
+    return sanitizeAuditFieldWithLimit(value, this.maxFieldChars);
   }
 
   appendSafe(event: AgentAuditEvent): void {
@@ -219,6 +191,13 @@ export async function flushAgentAuditLogger(): Promise<void> {
 
 export async function flushAgentAuditLoggerForTest(): Promise<void> {
   await flushAgentAuditLogger();
+}
+
+export function sanitizeAgentAuditField(
+  value: unknown,
+  options?: { maxFieldChars?: number }
+): SanitizedAuditField {
+  return sanitizeAuditFieldWithLimit(value, options?.maxFieldChars ?? 4000);
 }
 
 function withTs<T extends { ts: string }>(builder: (ts: string) => T): T | null {
@@ -444,6 +423,39 @@ function sanitizeErrorMessage(
     return serialized;
   }
   return undefined;
+}
+
+function sanitizeAuditFieldWithLimit(value: unknown, maxFieldChars: number): SanitizedAuditField {
+  const limit = Math.max(1, Math.floor(maxFieldChars));
+  const redacted = redactValue(value, new WeakSet<object>());
+  const serialized = safeStringify(redacted);
+  if (serialized === null) {
+    return { value: "[[unserializable]]", truncated: false };
+  }
+  if (serialized.length <= limit) {
+    return { value: redacted, truncated: false };
+  }
+  const preview = toTruncatedPreview(serialized, limit);
+  if (typeof redacted === "string") {
+    return {
+      value: toTruncatedPreview(redacted, limit),
+      truncated: true,
+    };
+  }
+  if (redacted !== null && typeof redacted === "object") {
+    return {
+      value: {
+        _truncated: true,
+        originalType: Array.isArray(redacted) ? "array" : "object",
+        preview,
+      },
+      truncated: true,
+    };
+  }
+  return {
+    value: preview,
+    truncated: true,
+  };
 }
 
 function redactValue(value: unknown, seen: WeakSet<object>): unknown {

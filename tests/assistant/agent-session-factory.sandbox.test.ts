@@ -133,4 +133,25 @@ describe("agent-session-factory sandbox bash", () => {
       await rm(workspaceDir, { recursive: true, force: true });
     }
   });
+
+  it("appendCustomEntry は this バインド済みで関数として切り出して呼べる", async () => {
+    const workspaceDir = await mkdtemp(join(tmpdir(), "adjutant-session-custom-entry-"));
+    configureSandbox(null);
+    try {
+      const session = await createTestSession({
+        workspaceDir,
+        memoryScope: "spoke",
+        isHeartbeat: false,
+      });
+      assert.equal(typeof session.appendCustomEntry, "function");
+      const appendEntry = session.appendCustomEntry;
+      assert.equal(typeof appendEntry, "function");
+      const entryId = appendEntry!("adjutant:test", { ok: true });
+      assert.equal(typeof entryId, "string");
+      assert.equal(entryId.length > 0, true);
+      session.dispose();
+    } finally {
+      await rm(workspaceDir, { recursive: true, force: true });
+    }
+  });
 });

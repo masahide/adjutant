@@ -7,6 +7,8 @@ import * as StreamEventBridge from "./stream-event-bridge.js";
 import { loadMessages } from "./index.js";
 import { ApiError, isApiError, type ApiErrorCode } from "./errors.js";
 import { readRunAudit, resolveAgentAuditLogPath } from "./audit-reader.js";
+import { resolveSessionKeyByRunId } from "./run-index-repository.js";
+import { readRunSummaryFromTranscript } from "./transcript-reader.js";
 import { resolveAdjutantStateDir } from "./session-paths.js";
 
 export type HeartbeatProvider = {
@@ -23,6 +25,7 @@ export type ApiServerConfig = {
   sessionEntriesPath?: string;
   agentAuditLogPath?: string;
   heartbeatRunsPath?: string;
+  runIndexPath?: string;
 };
 
 const DEFAULT_CONFIG: ApiServerConfig = {
@@ -558,6 +561,21 @@ async function handleGetRunAudit(
   }
 
   try {
+    const sessionKey = await resolveSessionKeyByRunId(normalizedRunId, {
+      path: cfg.runIndexPath,
+    });
+    if (sessionKey) {
+      const summary = await readRunSummaryFromTranscript({
+        sessionKey,
+        runId: normalizedRunId,
+        sessionEntriesPath: cfg.sessionEntriesPath,
+      });
+      if (summary) {
+        sendJson(res, 200, summary);
+        return;
+      }
+    }
+
     const response = await readRunAudit(normalizedRunId, {
       auditLogPath: resolveAuditLogPath(cfg),
     });

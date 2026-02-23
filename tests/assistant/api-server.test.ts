@@ -1,6 +1,6 @@
 import { describe, it, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApiServer } from "../../src/assistant/api-server.js";
@@ -41,6 +41,7 @@ async function setupServer(
     sessionEntriesPath?: string;
     agentAuditLogPath?: string;
     heartbeatRunsPath?: string;
+    runIndexPath?: string;
   }
 ) {
   resetChatHandlerTestState();
@@ -272,7 +273,6 @@ describe("ApiServer", () => {
     try {
       const sessionsPath = join(dir, "sessions.json");
       const transcriptPath = join(dir, "main.jsonl");
-      const auditPath = join(dir, "agent-audit.ndjson");
       await writeFile(
         sessionsPath,
         JSON.stringify({
@@ -293,8 +293,22 @@ describe("ApiServer", () => {
           JSON.stringify({
             message: {
               role: "assistant",
+              id: "msg-assistant-user-1",
               runId: "run-user-1",
               content: [{ type: "text", text: "通常応答" }],
+            },
+          }),
+          JSON.stringify({
+            type: "custom",
+            customType: "adjutant:run-summary",
+            data: {
+              runId: "run-user-1",
+              assistantMessageId: "msg-assistant-user-1",
+              toolCount: 2,
+              tools: [
+                { toolName: "bash", endedAt: "2026-02-23T10:00:00.100Z" },
+                { toolName: "read_file", endedAt: "2026-02-23T10:00:00.200Z" },
+              ],
             },
           }),
           JSON.stringify({
@@ -321,23 +335,8 @@ describe("ApiServer", () => {
         ].join("\n"),
         "utf8"
       );
-      await writeFile(
-        auditPath,
-        [
-          JSON.stringify({ type: "tool.end", runId: "run-user-1", toolName: "bash", status: "ok" }),
-          JSON.stringify({
-            type: "tool.end",
-            runId: "run-user-1",
-            toolName: "read_file",
-            status: "ok",
-          }),
-        ].join("\n"),
-        "utf8"
-      );
-
       await setupServer(undefined, {
         sessionEntriesPath: sessionsPath,
-        agentAuditLogPath: auditPath,
       });
       const res = await fetch(url("/api/chat/history?sessionKey=main"));
       assert.equal(res.status, 200);
@@ -412,6 +411,198 @@ describe("ApiServer", () => {
       assert.equal(body.tools[0]?.toolCallId, "tc-1");
       assert.equal(body.tools[0]?.status, "ok");
       assert.equal(body.tools[0]?.durationMs, 44);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("GET /api/chat/runs/:runId/audit は run-index 経由で transcript の run-summary を優先する", async () => {
+    const dir = await mkdtemp(`${tmpdir()}/adjutant-api-server-`);
+    try {
+      const sessionsPath = join(dir, "sessions.json");
+      const transcriptPath = join(dir, "session-run-summary.jsonl");
+      const runIndexPath = join(dir, "index", "run-index.ndjson");
+      await mkdir(join(dir, "index"), { recursive: true });
+
+      await writeFile(
+        sessionsPath,
+        JSON.stringify({
+          main: { sessionId: "session-run-summary", sessionFile: transcriptPath },
+        }),
+        "utf8"
+      );
+      await writeFile(
+        transcriptPath,
+        [
+          JSON.stringify({
+            type: "custom",
+            customType: "adjutant:run-summary",
+            data: {
+              runId: "run-summary-1",
+              origin: "user",
+              toolCount: 1,
+              tools: [
+                {
+                  toolName: "bash",
+                  toolCallId: "tc-1",
+                  status: "ok",
+                  durationMs: 12,
+                  endedAt: "2026-02-23T10:00:00.012Z",
+                },
+              ],
+            },
+          }),
+        ].join("\n"),
+        "utf8"
+      );
+      await writeFile(
+        runIndexPath,
+        JSON.stringify({
+          runId: "run-summary-1",
+          sessionKey: "main",
+          ts: "2026-02-23T10:00:00.000Z",
+        }),
+        "utf8"
+      );
+
+      await setupServer(undefined, {
+        sessionEntriesPath: sessionsPath,
+        runIndexPath,
+      });
+      const res = await fetch(url("/api/chat/runs/run-summary-1/audit"));
+      assert.equal(res.status, 200);
+      const body = (await res.json()) as {
+        runId: string;
+        runEnded: boolean;
+        origin?: string;
+        tools: Array<{ toolName?: string; endedAt?: string }>;
+      };
+      assert.equal(body.runId, "run-summary-1");
+      assert.equal(body.runEnded, true);
+      assert.equal(body.origin, "user");
+      assert.equal(body.tools.length, 1);
+      assert.equal(body.tools[0]?.toolName, "bash");
+      assert.equal(body.tools[0]?.endedAt, "2026-02-23T10:00:00.012Z");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("GET /api/chat/runs/:runId/audit は run-index に runId がない場合 audit ログへフォールバックする", async () => {
+    const dir = await mkdtemp(`${tmpdir()}/adjutant-api-server-`);
+    try {
+      const runIndexPath = join(dir, "index", "run-index.ndjson");
+      const auditPath = join(dir, "agent-audit.ndjson");
+      await mkdir(join(dir, "index"), { recursive: true });
+      await writeFile(
+        runIndexPath,
+        JSON.stringify({
+          runId: "run-other",
+          sessionKey: "main",
+          ts: "2026-02-23T10:00:00.000Z",
+        }),
+        "utf8"
+      );
+      await writeFile(
+        auditPath,
+        [
+          JSON.stringify({ type: "run.start", runId: "run-fallback-1", origin: "pipeline" }),
+          JSON.stringify({
+            type: "tool.end",
+            runId: "run-fallback-1",
+            toolName: "read_file",
+            status: "ok",
+            endedAt: "2026-02-23T10:00:01.000Z",
+          }),
+          JSON.stringify({ type: "run.end", runId: "run-fallback-1", status: "ok" }),
+        ].join("\n"),
+        "utf8"
+      );
+
+      await setupServer(undefined, {
+        runIndexPath,
+        agentAuditLogPath: auditPath,
+      });
+      const res = await fetch(url("/api/chat/runs/run-fallback-1/audit"));
+      assert.equal(res.status, 200);
+      const body = (await res.json()) as {
+        runId: string;
+        origin?: string;
+        runEnded: boolean;
+        tools: Array<{ toolName?: string }>;
+      };
+      assert.equal(body.runId, "run-fallback-1");
+      assert.equal(body.origin, "pipeline");
+      assert.equal(body.runEnded, true);
+      assert.equal(body.tools[0]?.toolName, "read_file");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("GET /api/chat/runs/:runId/audit は run-summary がない場合 audit ログへフォールバックする", async () => {
+    const dir = await mkdtemp(`${tmpdir()}/adjutant-api-server-`);
+    try {
+      const sessionsPath = join(dir, "sessions.json");
+      const transcriptPath = join(dir, "session-no-summary.jsonl");
+      const runIndexPath = join(dir, "index", "run-index.ndjson");
+      const auditPath = join(dir, "agent-audit.ndjson");
+      await mkdir(join(dir, "index"), { recursive: true });
+
+      await writeFile(
+        sessionsPath,
+        JSON.stringify({
+          main: { sessionId: "session-no-summary", sessionFile: transcriptPath },
+        }),
+        "utf8"
+      );
+      await writeFile(
+        transcriptPath,
+        JSON.stringify({
+          timestamp: "2026-02-23T10:00:00.000Z",
+          message: { role: "assistant", content: [{ type: "text", text: "hello" }] },
+        }),
+        "utf8"
+      );
+      await writeFile(
+        runIndexPath,
+        JSON.stringify({
+          runId: "run-fallback-2",
+          sessionKey: "main",
+          ts: "2026-02-23T10:00:00.000Z",
+        }),
+        "utf8"
+      );
+      await writeFile(
+        auditPath,
+        [
+          JSON.stringify({ type: "run.start", runId: "run-fallback-2", origin: "user" }),
+          JSON.stringify({
+            type: "tool.end",
+            runId: "run-fallback-2",
+            toolName: "bash",
+            status: "ok",
+          }),
+          JSON.stringify({ type: "run.end", runId: "run-fallback-2", status: "ok" }),
+        ].join("\n"),
+        "utf8"
+      );
+
+      await setupServer(undefined, {
+        sessionEntriesPath: sessionsPath,
+        runIndexPath,
+        agentAuditLogPath: auditPath,
+      });
+      const res = await fetch(url("/api/chat/runs/run-fallback-2/audit"));
+      assert.equal(res.status, 200);
+      const body = (await res.json()) as {
+        runId: string;
+        runEnded: boolean;
+        tools: Array<{ toolName?: string }>;
+      };
+      assert.equal(body.runId, "run-fallback-2");
+      assert.equal(body.runEnded, true);
+      assert.equal(body.tools[0]?.toolName, "bash");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

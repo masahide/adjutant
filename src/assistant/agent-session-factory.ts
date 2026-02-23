@@ -20,6 +20,7 @@ import {
 export type AgentSessionLike = {
   subscribe: (listener: (event: unknown) => void) => () => void;
   prompt: (text: string) => Promise<void>;
+  appendCustomEntry?: (customType: string, data?: unknown) => string;
   sendCustomMessage?: <T = unknown>(
     message: {
       customType: string;
@@ -245,8 +246,18 @@ export async function createAgentSessionFromSdk(
     customTools,
   });
 
+  const session = created.session as AgentSessionLike & {
+    sessionManager?: {
+      appendCustomEntry?: (customType: string, data?: unknown) => string;
+    };
+  };
+  const appendCustomEntry = session.sessionManager?.appendCustomEntry;
+  if (typeof appendCustomEntry === "function") {
+    session.appendCustomEntry = appendCustomEntry.bind(session.sessionManager);
+  }
+
   return {
-    session: created.session as AgentSessionLike,
+    session,
   };
 }
 

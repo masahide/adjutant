@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import {
-  readAuditRunMetadata,
   readRunAudit,
   resetAuditReaderCacheForTest,
   setAuditReaderNowMsForTest,
@@ -156,40 +155,6 @@ describe("audit-reader", () => {
         response.tools.map((tool) => tool.endedAt),
         ["2026-02-23T10:10:00.300Z", "2026-02-23T10:10:00.200Z"]
       );
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("tool.end 件数と message.bind の runId を集計できる", async () => {
-    const dir = await mkdtemp(`${tmpdir()}/adjutant-audit-reader-`);
-    try {
-      const path = join(dir, "agent-audit.ndjson");
-      await writeFile(
-        path,
-        [
-          JSON.stringify({ type: "run.start", runId: "run-hb-1", origin: "system" }),
-          JSON.stringify({
-            type: "message.bind",
-            runId: "run-user-1",
-            messageId: "msg-assistant-1",
-            role: "assistant",
-          }),
-          JSON.stringify({ type: "tool.end", runId: "run-user-1", toolName: "bash", status: "ok" }),
-          JSON.stringify({
-            type: "tool.end",
-            runId: "run-user-1",
-            toolName: "read_file",
-            status: "ok",
-          }),
-          JSON.stringify({ type: "run.start", runId: "run-user-2", origin: "user" }),
-        ].join("\n"),
-        "utf8"
-      );
-
-      const metadata = await readAuditRunMetadata({ auditLogPath: path });
-      assert.equal(metadata.toolEndCountByRunId.get("run-user-1"), 2);
-      assert.equal(metadata.messageRunIdByMessageId.get("msg-assistant-1"), "run-user-1");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

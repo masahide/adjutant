@@ -6,6 +6,7 @@ import {
   auditRunEnd,
   auditRunStart,
   flushAgentAuditLogger,
+  sanitizeAgentAuditField,
   type AgentAuditScope,
 } from "./agent-audit.js";
 import { appendDailyMemory, updateLongTermMemory } from "./memory-writer.js";
@@ -48,6 +49,7 @@ import {
   type SessionStoreState,
   toSessionStoreLockKey,
 } from "./session-persistence.js";
+import { appendRunIndex } from "./run-index-repository.js";
 
 export type AgentRunOptions = {
   runId: string;
@@ -85,6 +87,19 @@ export type AgentRunResult = {
   modelId?: string;
 };
 
+type RunSummaryTool = {
+  toolName: string;
+  toolCallId?: string;
+  status?: "ok" | "error";
+  durationMs?: number;
+  startedAt?: string;
+  endedAt: string;
+  args?: unknown;
+  resultSummary?: unknown;
+  truncated?: boolean;
+  error?: string;
+};
+
 type SessionLike = AgentSessionLike;
 
 type AgentRunnerRuntime = {
@@ -120,6 +135,7 @@ type AgentRunnerRuntime = {
   repairSessionData: (sessionKey: string, sessionEntriesPath?: string) => Promise<boolean>;
   ensureWorkspaceBootstrapFiles: typeof ensureWorkspaceBootstrapFiles;
   loadWorkspaceBootstrapFiles: typeof loadWorkspaceBootstrapFiles;
+  appendRunIndex: (input: { runId: string; sessionKey: string; ts: string }) => Promise<void>;
 };
 
 const lockTails = new Map<string, Promise<void>>();
@@ -248,6 +264,9 @@ const defaultRuntime: AgentRunnerRuntime = {
   },
   ensureWorkspaceBootstrapFiles,
   loadWorkspaceBootstrapFiles,
+  appendRunIndex: async (input) => {
+    await appendRunIndex(input.runId, input.sessionKey, input.ts);
+  },
 };
 
 function getRuntime(): AgentRunnerRuntime {
@@ -304,6 +323,70 @@ function shrinkPrompt(prompt: string): string {
   }
   const keep = Math.floor(prompt.length * 0.7);
   return `[context trimmed]\n${prompt.slice(prompt.length - keep)}`;
+}
+
+function appendCustomEntrySafely(
+  session: SessionLike,
+  customType: string,
+  data: unknown,
+  context: { runId: string; sessionKey: string }
+): void {
+  if (typeof session.appendCustomEntry !== "function") {
+    return;
+  }
+  try {
+    session.appendCustomEntry(customType, data);
+  } catch (error) {
+    console.warn("[AgentRunner] appendCustomEntry failed", {
+      runId: context.runId,
+      sessionKey: context.sessionKey,
+      customType,
+      reason: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+function buildRunSummaryTools(
+  toolDetails: Array<{
+    toolName: string;
+    toolCallId?: string;
+    status?: "ok" | "error";
+    durationMs?: number;
+    startedAt?: string;
+    endedAt: string;
+    args?: unknown;
+    resultSummary?: unknown;
+    error?: string;
+  }>
+): RunSummaryTool[] {
+  return toolDetails.map((tool) => {
+    const argsField = sanitizeAgentAuditField(tool.args);
+    const resultField = sanitizeAgentAuditField(tool.resultSummary);
+    const errorField =
+      tool.error !== undefined
+        ? sanitizeAgentAuditField(tool.error)
+        : { value: undefined, truncated: false };
+    const normalizedError =
+      tool.error !== undefined && typeof errorField.value === "string" && errorField.value.trim()
+        ? errorField.value
+        : undefined;
+    const truncated =
+      argsField.truncated ||
+      resultField.truncated ||
+      (tool.error !== undefined && errorField.truncated);
+    return {
+      toolName: tool.toolName,
+      ...(tool.toolCallId ? { toolCallId: tool.toolCallId } : {}),
+      ...(tool.status ? { status: tool.status } : {}),
+      ...(typeof tool.durationMs === "number" ? { durationMs: tool.durationMs } : {}),
+      ...(tool.startedAt ? { startedAt: tool.startedAt } : {}),
+      endedAt: tool.endedAt,
+      ...(tool.args !== undefined ? { args: argsField.value } : {}),
+      ...(tool.resultSummary !== undefined ? { resultSummary: resultField.value } : {}),
+      ...(normalizedError ? { error: normalizedError } : {}),
+      ...(truncated ? { truncated: true } : {}),
+    };
+  });
 }
 
 async function promptWithRetry(params: {
@@ -440,6 +523,8 @@ async function runAgentInternal(opts: AgentRunOptions): Promise<AgentRunResult> 
   let unsubscribe: (() => void) | undefined;
   let output = "";
   let toolCalls: Array<{ name: string; result: unknown }> = [];
+  let toolDetails: RunSummaryTool[] = [];
+  let assistantMessageId: string | undefined;
   let sessionMetadata: { sessionId?: string; sessionFile?: string; modelId?: string } | null = null;
   let previousUpdatedAt: string | null = null;
   let sessionStoreState: SessionStoreState | null = null;
@@ -453,6 +538,20 @@ async function runAgentInternal(opts: AgentRunOptions): Promise<AgentRunResult> 
   let isSilentTurn = false;
 
   try {
+    try {
+      await runtime.appendRunIndex({
+        runId: context.runId,
+        sessionKey: context.sessionKey,
+        ts: new Date(startedAtMs).toISOString(),
+      });
+    } catch (error) {
+      console.warn("[AgentRunner] run-index append failed", {
+        runId: context.runId,
+        sessionKey: context.sessionKey,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
+
     if (context.model && !runtime.isModelAvailable(context.model)) {
       throw new Error(`model unavailable: ${context.model}`);
     }
@@ -526,6 +625,16 @@ async function runAgentInternal(opts: AgentRunOptions): Promise<AgentRunResult> 
       onToolCall: opts.onToolCall,
     });
     unsubscribe = subscribed.unsubscribe;
+    appendCustomEntrySafely(
+      created.session,
+      "adjutant:run-context",
+      {
+        runId: context.runId,
+        origin: context.origin,
+        sessionKey: context.sessionKey,
+      },
+      context
+    );
 
     memoryFlushMetadata = await runPreCompactionMemoryFlush({
       session: created.session,
@@ -562,7 +671,23 @@ async function runAgentInternal(opts: AgentRunOptions): Promise<AgentRunResult> 
     const durationMs = Math.max(0, runtime.nowMs() - startedAtMs);
     output = subscribed.output.text;
     toolCalls = subscribed.toolCalls;
+    toolDetails = buildRunSummaryTools(subscribed.toolDetails);
+    assistantMessageId = subscribed.lastAssistantMessageId;
     sessionMetadata = resolveSessionMetadataFromPersistence(created.session);
+    appendCustomEntrySafely(
+      created.session,
+      "adjutant:run-summary",
+      {
+        runId: context.runId,
+        ...(assistantMessageId ? { assistantMessageId } : {}),
+        origin: context.origin,
+        durationMs,
+        modelId: sessionMetadata?.modelId ?? context.model,
+        toolCount: toolDetails.length,
+        tools: toolDetails,
+      },
+      context
+    );
 
     if (sessionStoreState && sessionMetadata) {
       await persistSessionStoreFromPersistence({

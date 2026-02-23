@@ -24,11 +24,6 @@ export type RunAuditResponse = {
   tools: AuditToolSummary[];
 };
 
-export type AuditRunMetadata = {
-  toolEndCountByRunId: Map<string, number>;
-  messageRunIdByMessageId: Map<string, string>;
-};
-
 type AuditToolEvent = {
   type: "tool.start" | "tool.end";
   runId: string;
@@ -405,43 +400,6 @@ export async function readRunAudit(
     writeCachedRunAudit(cacheKey, result, nowMs);
   }
   return result;
-}
-
-export async function readAuditRunMetadata(opts?: {
-  auditLogPath?: string;
-}): Promise<AuditRunMetadata> {
-  const auditLogPath = resolve(opts?.auditLogPath ?? resolveAgentAuditLogPath());
-  const raw = await readAuditFileText(auditLogPath);
-  if (!raw) {
-    return {
-      toolEndCountByRunId: new Map<string, number>(),
-      messageRunIdByMessageId: new Map<string, string>(),
-    };
-  }
-
-  const toolEndCountByRunId = new Map<string, number>();
-  const messageRunIdByMessageId = new Map<string, string>();
-
-  const lines = raw.split(/\r?\n/);
-  for (const [index, line] of lines.entries()) {
-    if (!line.trim()) {
-      continue;
-    }
-    const parsed = parseAuditLine(line, index + 1);
-    if (!parsed) {
-      continue;
-    }
-    if (parsed.type === "message.bind") {
-      messageRunIdByMessageId.set(parsed.messageId, parsed.runId);
-      continue;
-    }
-    if (parsed.type === "tool.end") {
-      const count = toolEndCountByRunId.get(parsed.runId) ?? 0;
-      toolEndCountByRunId.set(parsed.runId, count + 1);
-    }
-  }
-
-  return { toolEndCountByRunId, messageRunIdByMessageId };
 }
 
 export function resetAuditReaderCacheForTest(): void {

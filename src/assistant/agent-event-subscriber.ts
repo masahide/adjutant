@@ -44,10 +44,26 @@ export type AgentEventSubscriberOptions = {
   onToolCall?: (name: string, params: unknown) => void;
 };
 
+export type AgentEventToolCall = { name: string; result: unknown };
+
+export type AgentEventToolDetail = {
+  toolName: string;
+  toolCallId?: string;
+  status?: "ok" | "error";
+  durationMs?: number;
+  startedAt?: string;
+  endedAt: string;
+  args?: unknown;
+  resultSummary?: unknown;
+  error?: string;
+};
+
 export type AgentEventSubscription = {
   unsubscribe: () => void;
   output: { text: string };
-  toolCalls: Array<{ name: string; result: unknown }>;
+  toolCalls: AgentEventToolCall[];
+  toolDetails: AgentEventToolDetail[];
+  lastAssistantMessageId?: string;
   memoryWriteTasks: Promise<void>[];
   waitForSettledMemoryWrites: () => Promise<void>;
 };
@@ -183,14 +199,51 @@ function parseMemoryWriteArgs(
   return { scope: "daily", content };
 }
 
+type ToolStartSnapshot = {
+  toolName: string;
+  toolCallId?: string;
+  args?: unknown;
+  startedAtMs: number;
+};
+
+function pushToolStart(
+  snapshots: Map<string, ToolStartSnapshot[]>,
+  key: string,
+  snapshot: ToolStartSnapshot
+): void {
+  const queue = snapshots.get(key);
+  if (queue) {
+    queue.push(snapshot);
+    return;
+  }
+  snapshots.set(key, [snapshot]);
+}
+
+function shiftToolStart(
+  snapshots: Map<string, ToolStartSnapshot[]>,
+  key: string
+): ToolStartSnapshot | undefined {
+  const queue = snapshots.get(key);
+  if (!queue || queue.length === 0) {
+    return undefined;
+  }
+  const next = queue.shift();
+  if (queue.length === 0) {
+    snapshots.delete(key);
+  }
+  return next;
+}
+
 export function createAgentEventSubscriber(
   options: AgentEventSubscriberOptions
 ): AgentEventSubscription {
   const output = { text: "" };
-  const toolCalls: Array<{ name: string; result: unknown }> = [];
+  const toolCalls: AgentEventToolCall[] = [];
+  const toolDetails: AgentEventToolDetail[] = [];
   const memoryWriteTasks: Promise<void>[] = [];
-  const toolStartAtMs = new Map<string, number[]>();
+  const toolStarts = new Map<string, ToolStartSnapshot[]>();
   let settledMemoryTaskCount = 0;
+  let lastAssistantMessageId: string | undefined;
 
   const unsubscribe = options.session.subscribe((event) => {
     options.compactionTracker.onEvent(event);
@@ -202,6 +255,9 @@ export function createAgentEventSubscriber(
         messageId: messageBinding.messageId,
         role: messageBinding.role,
       });
+      if (messageBinding.role === "assistant") {
+        lastAssistantMessageId = messageBinding.messageId;
+      }
     }
 
     const delta = tryGetTextDelta(event);
@@ -212,11 +268,14 @@ export function createAgentEventSubscriber(
 
     const toolCall = tryGetToolCall(event);
     if (toolCall) {
-      const startedAt = Date.now();
+      const startedAtMs = Date.now();
       const toolKey = toolCall.toolCallId ?? toolCall.name;
-      const starts = toolStartAtMs.get(toolKey) ?? [];
-      starts.push(startedAt);
-      toolStartAtMs.set(toolKey, starts);
+      pushToolStart(toolStarts, toolKey, {
+        toolName: toolCall.name,
+        toolCallId: toolCall.toolCallId,
+        args: toolCall.args,
+        startedAtMs,
+      });
       auditToolStart({
         scope: options.auditScope,
         toolName: toolCall.name,
@@ -258,21 +317,34 @@ export function createAgentEventSubscriber(
     if (!toolResult) {
       return;
     }
-    const endedAt = Date.now();
+    const endedAtMs = Date.now();
+    const endedAt = new Date(endedAtMs).toISOString();
     const toolKey = toolResult.toolCallId ?? toolResult.name;
-    const starts = toolStartAtMs.get(toolKey);
-    const startedAt = starts?.shift();
-    if (starts && starts.length === 0) {
-      toolStartAtMs.delete(toolKey);
+    let started = shiftToolStart(toolStarts, toolKey);
+    if (!started && toolResult.toolCallId) {
+      started = shiftToolStart(toolStarts, toolResult.name);
     }
+    const durationMs =
+      started !== undefined ? Math.max(0, endedAtMs - started.startedAtMs) : undefined;
     auditToolEnd({
       scope: options.auditScope,
       toolName: toolResult.name,
       toolCallId: toolResult.toolCallId,
       resultSummary: toolResult.result,
       status: toolResult.status,
-      durationMs: startedAt !== undefined ? Math.max(0, endedAt - startedAt) : undefined,
+      durationMs,
       error: toolResult.error,
+    });
+    toolDetails.push({
+      toolName: toolResult.name,
+      ...(toolResult.toolCallId ? { toolCallId: toolResult.toolCallId } : {}),
+      status: toolResult.status,
+      ...(durationMs !== undefined ? { durationMs } : {}),
+      ...(started ? { startedAt: new Date(started.startedAtMs).toISOString() } : {}),
+      endedAt,
+      ...(started && started.args !== undefined ? { args: started.args } : {}),
+      ...(toolResult.result !== undefined ? { resultSummary: toolResult.result } : {}),
+      ...(toolResult.error ? { error: toolResult.error } : {}),
     });
     if (toolResult.name === "memory_write" && !options.memoryWriteEnabled) {
       return;
@@ -287,6 +359,10 @@ export function createAgentEventSubscriber(
     unsubscribe,
     output,
     toolCalls,
+    toolDetails,
+    get lastAssistantMessageId() {
+      return lastAssistantMessageId;
+    },
     memoryWriteTasks,
     waitForSettledMemoryWrites: async () => {
       const pending = memoryWriteTasks.slice(settledMemoryTaskCount);

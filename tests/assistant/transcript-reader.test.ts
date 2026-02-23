@@ -150,7 +150,6 @@ describe("TranscriptReader", () => {
     try {
       const sessionsPath = join(tempDir, "sessions.json");
       const transcriptPath = join(tempDir, "session-heartbeat-audit.jsonl");
-      const auditPath = join(tempDir, "agent-audit.ndjson");
 
       await writeFile(
         sessionsPath,
@@ -172,10 +171,24 @@ describe("TranscriptReader", () => {
           }),
           JSON.stringify({
             timestamp: "2026-02-23T10:00:01.000Z",
+            id: "msg-assistant-1",
             message: {
               role: "assistant",
               runId: "run-user-1",
               content: [{ type: "text", text: "通常の応答" }],
+            },
+          }),
+          JSON.stringify({
+            type: "custom",
+            customType: "adjutant:run-summary",
+            data: {
+              runId: "run-user-1",
+              assistantMessageId: "msg-assistant-1",
+              toolCount: 2,
+              tools: [
+                { toolName: "bash", endedAt: "2026-02-23T10:00:00.500Z" },
+                { toolName: "read_file", endedAt: "2026-02-23T10:00:00.800Z" },
+              ],
             },
           }),
           JSON.stringify({
@@ -208,27 +221,8 @@ describe("TranscriptReader", () => {
         "utf8"
       );
 
-      await writeFile(
-        auditPath,
-        [
-          JSON.stringify({
-            type: "tool.end",
-            runId: "run-user-1",
-            toolName: "bash",
-            status: "ok",
-          }),
-          JSON.stringify({
-            type: "tool.end",
-            runId: "run-user-1",
-            toolName: "read_file",
-            status: "ok",
-          }),
-        ].join("\n"),
-        "utf8"
-      );
-
       process.env.ADJUTANT_SESSION_ENTRIES_PATH = sessionsPath;
-      process.env.ADJUTANT_AGENT_AUDIT_LOG_PATH = auditPath;
+      delete process.env.ADJUTANT_AGENT_AUDIT_LOG_PATH;
 
       const messages = await loadMessages({ sessionKey: "main" });
       assert.equal(messages.length, 3);
@@ -243,13 +237,12 @@ describe("TranscriptReader", () => {
     }
   });
 
-  it("audit の message.bind から message.id に runId を復元できる", async () => {
+  it("run-context と run-summary から assistant の runId/toolCount を復元できる", async () => {
     const tempDir = await mkdtemp(`${tmpdir()}/adjutant-transcript-`);
     const snapshot = snapshotEnv();
     try {
       const sessionsPath = join(tempDir, "sessions.json");
       const transcriptPath = join(tempDir, "session-message-bind.jsonl");
-      const auditPath = join(tempDir, "agent-audit.ndjson");
 
       await writeFile(
         sessionsPath,
@@ -270,6 +263,11 @@ describe("TranscriptReader", () => {
             },
           }),
           JSON.stringify({
+            type: "custom",
+            customType: "adjutant:run-context",
+            data: { runId: "run-user-1", origin: "user", sessionKey: "main" },
+          }),
+          JSON.stringify({
             timestamp: "2026-02-23T11:00:01.000Z",
             id: "msg-assistant-1",
             message: {
@@ -277,40 +275,26 @@ describe("TranscriptReader", () => {
               content: [{ type: "text", text: "回答です" }],
             },
           }),
-        ].join("\n"),
-        "utf8"
-      );
-      await writeFile(
-        auditPath,
-        [
           JSON.stringify({
-            type: "message.bind",
-            runId: "run-user-1",
-            messageId: "msg-user-1",
-            role: "user",
-          }),
-          JSON.stringify({
-            type: "message.bind",
-            runId: "run-user-1",
-            messageId: "msg-assistant-1",
-            role: "assistant",
-          }),
-          JSON.stringify({
-            type: "tool.end",
-            runId: "run-user-1",
-            toolName: "read_file",
-            status: "ok",
+            type: "custom",
+            customType: "adjutant:run-summary",
+            data: {
+              runId: "run-user-1",
+              assistantMessageId: "msg-assistant-1",
+              toolCount: 1,
+              tools: [{ toolName: "read_file", endedAt: "2026-02-23T11:00:01.000Z" }],
+            },
           }),
         ].join("\n"),
         "utf8"
       );
 
       process.env.ADJUTANT_SESSION_ENTRIES_PATH = sessionsPath;
-      process.env.ADJUTANT_AGENT_AUDIT_LOG_PATH = auditPath;
+      delete process.env.ADJUTANT_AGENT_AUDIT_LOG_PATH;
 
       const messages = await loadMessages({ sessionKey: "main" });
       assert.equal(messages.length, 2);
-      assert.equal(messages[0]?.runId, "run-user-1");
+      assert.equal(messages[0]?.runId, undefined);
       assert.equal(messages[1]?.runId, "run-user-1");
       assert.equal(messages[1]?.toolCount, 1);
     } finally {
@@ -319,19 +303,74 @@ describe("TranscriptReader", () => {
     }
   });
 
-  it("main.jsonl の assistant action 記録から timestamp ベースで runId を復元できる", async () => {
+  it("run-summary の assistantMessageId が不正な場合は toolCount を付与しない", async () => {
     const tempDir = await mkdtemp(`${tmpdir()}/adjutant-transcript-`);
     const snapshot = snapshotEnv();
     try {
       const sessionsPath = join(tempDir, "sessions.json");
-      const transcriptPath = join(tempDir, "session-terminal-fallback.jsonl");
-      const terminalPath = join(tempDir, "main.jsonl");
-      const auditPath = join(tempDir, "agent-audit.ndjson");
+      const transcriptPath = join(tempDir, "session-invalid-assistant-id.jsonl");
 
       await writeFile(
         sessionsPath,
         JSON.stringify({
-          main: { sessionId: "session-terminal-fallback", sessionFile: transcriptPath },
+          main: { sessionId: "session-invalid-assistant-id", sessionFile: transcriptPath },
+        }),
+        "utf8"
+      );
+      await writeFile(
+        transcriptPath,
+        [
+          JSON.stringify({
+            type: "custom",
+            customType: "adjutant:run-context",
+            data: { runId: "run-invalid", origin: "user", sessionKey: "main" },
+          }),
+          JSON.stringify({
+            id: "msg-assistant-actual",
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: "応答" }],
+            },
+          }),
+          JSON.stringify({
+            type: "custom",
+            customType: "adjutant:run-summary",
+            data: {
+              runId: "run-invalid",
+              assistantMessageId: "msg-assistant-missing",
+              toolCount: 2,
+              tools: [
+                { toolName: "bash", endedAt: "2026-02-23T12:10:00.100Z" },
+                { toolName: "read_file", endedAt: "2026-02-23T12:10:00.200Z" },
+              ],
+            },
+          }),
+        ].join("\n"),
+        "utf8"
+      );
+
+      process.env.ADJUTANT_SESSION_ENTRIES_PATH = sessionsPath;
+      const messages = await loadMessages({ sessionKey: "main" });
+      assert.equal(messages.length, 1);
+      assert.equal(messages[0]?.runId, "run-invalid");
+      assert.equal(messages[0]?.toolCount, undefined);
+    } finally {
+      restoreEnv(snapshot);
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("assistantMessageId 欠落時は runId + 直近 assistant フォールバックで toolCount を適用する", async () => {
+    const tempDir = await mkdtemp(`${tmpdir()}/adjutant-transcript-`);
+    const snapshot = snapshotEnv();
+    try {
+      const sessionsPath = join(tempDir, "sessions.json");
+      const transcriptPath = join(tempDir, "session-summary-fallback.jsonl");
+
+      await writeFile(
+        sessionsPath,
+        JSON.stringify({
+          main: { sessionId: "session-summary-fallback", sessionFile: transcriptPath },
         }),
         "utf8"
       );
@@ -344,9 +383,23 @@ describe("TranscriptReader", () => {
             message: { role: "user", content: [{ type: "text", text: "質問1" }] },
           }),
           JSON.stringify({
+            type: "custom",
+            customType: "adjutant:run-context",
+            data: { runId: "run-main-1", origin: "user", sessionKey: "main" },
+          }),
+          JSON.stringify({
             timestamp: "2026-02-23T12:00:03.000Z",
             id: "msg-assistant-1",
             message: { role: "assistant", content: [{ type: "text", text: "回答1" }] },
+          }),
+          JSON.stringify({
+            type: "custom",
+            customType: "adjutant:run-summary",
+            data: {
+              runId: "run-main-1",
+              toolCount: 1,
+              tools: [{ toolName: "read_file", endedAt: "2026-02-23T12:00:03.100Z" }],
+            },
           }),
           JSON.stringify({
             timestamp: "2026-02-23T12:01:00.000Z",
@@ -354,79 +407,33 @@ describe("TranscriptReader", () => {
             message: { role: "user", content: [{ type: "text", text: "質問2" }] },
           }),
           JSON.stringify({
+            type: "custom",
+            customType: "adjutant:run-context",
+            data: { runId: "run-main-2", origin: "user", sessionKey: "main" },
+          }),
+          JSON.stringify({
             timestamp: "2026-02-23T12:01:04.000Z",
             id: "msg-assistant-2",
             message: { role: "assistant", content: [{ type: "text", text: "回答2" }] },
           }),
-        ].join("\n"),
-        "utf8"
-      );
-      await writeFile(
-        terminalPath,
-        [
           JSON.stringify({
-            schema: "adjutant.timeline.record.v1.5",
-            recordType: "action",
-            role: "assistant",
-            actionType: "assistant_final",
-            sessionKey: "other",
-            runId: "run-other",
-            ts: "2026-02-23T12:00:03.500Z",
-            loggedAt: "2026-02-23T12:00:03.500Z",
-            durationMs: 4000,
-          }),
-          JSON.stringify({
-            schema: "adjutant.timeline.record.v1.5",
-            recordType: "action",
-            role: "assistant",
-            actionType: "assistant_final",
-            sessionKey: "main",
-            runId: "run-main-1",
-            ts: "2026-02-23T12:00:05.000Z",
-            loggedAt: "2026-02-23T12:00:05.000Z",
-            durationMs: 5000,
-          }),
-          JSON.stringify({
-            schema: "adjutant.timeline.record.v1.5",
-            recordType: "action",
-            role: "assistant",
-            actionType: "assistant_final",
-            sessionKey: "main",
-            runId: "run-main-2",
-            ts: "2026-02-23T12:01:06.000Z",
-            loggedAt: "2026-02-23T12:01:06.000Z",
-            durationMs: 6000,
-          }),
-        ].join("\n"),
-        "utf8"
-      );
-      await writeFile(
-        auditPath,
-        [
-          JSON.stringify({
-            type: "tool.end",
-            runId: "run-main-1",
-            toolName: "read_file",
-            status: "ok",
-          }),
-          JSON.stringify({
-            type: "tool.end",
-            runId: "run-main-2",
-            toolName: "bash",
-            status: "ok",
-          }),
-          JSON.stringify({
-            type: "tool.end",
-            runId: "run-main-2",
-            toolName: "read_file",
-            status: "ok",
+            type: "custom",
+            customType: "adjutant:run-summary",
+            data: {
+              runId: "run-main-2",
+              toolCount: 2,
+              tools: [
+                { toolName: "bash", endedAt: "2026-02-23T12:01:04.200Z" },
+                { toolName: "read_file", endedAt: "2026-02-23T12:01:04.500Z" },
+              ],
+            },
           }),
         ].join("\n"),
         "utf8"
       );
 
       process.env.ADJUTANT_SESSION_ENTRIES_PATH = sessionsPath;
-      process.env.ADJUTANT_AGENT_AUDIT_LOG_PATH = auditPath;
+      delete process.env.ADJUTANT_AGENT_AUDIT_LOG_PATH;
 
       const messages = await loadMessages({ sessionKey: "main" });
       assert.equal(messages.length, 4);

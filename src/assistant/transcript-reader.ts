@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
-import { readAuditRunMetadata, resolveAgentAuditLogPath } from "./audit-reader.js";
+import type { AuditOrigin, AuditToolSummary, RunAuditResponse } from "./audit-reader.js";
 import {
   getSessionEntry,
   readSessionEntryStore,
@@ -30,11 +30,40 @@ type ResolvedTranscript = {
   lines: PiTranscriptLine[];
 };
 
-type TerminalRunRange = {
+type ParsedRunContext = {
   runId: string;
-  startMs: number;
-  endMs: number;
 };
+
+type ParsedRunSummary = {
+  runId: string;
+  assistantMessageId?: string;
+  toolCount?: number;
+  tools: AuditToolSummary[];
+  origin?: AuditOrigin;
+};
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function takeString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function takeNonNegativeInt(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return undefined;
+  }
+  const normalized = Math.floor(value);
+  return normalized >= 0 ? normalized : undefined;
+}
 
 function extractTimestamp(line: PiTranscriptLine, message: Record<string, unknown>): number {
   if (typeof line.timestamp === "string") {
@@ -189,169 +218,6 @@ async function resolveTranscript(
   };
 }
 
-function parseMsFromUnknown(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value;
-  }
-  if (typeof value === "string") {
-    const parsed = Date.parse(value);
-    if (Number.isFinite(parsed)) {
-      return parsed;
-    }
-  }
-  return null;
-}
-
-function resolveTerminalActionCandidates(sessionEntriesPath: string): string[] {
-  const sessionsDir = dirname(sessionEntriesPath);
-  const candidates = new Set<string>();
-  candidates.add(join(sessionsDir, "main.jsonl"));
-
-  const transcriptDir = process.env.ADJUTANT_TRANSCRIPTS_DIR?.trim();
-  if (transcriptDir) {
-    candidates.add(join(transcriptDir, "main.jsonl"));
-  }
-  return Array.from(candidates);
-}
-
-async function readTerminalRunRanges(params: {
-  sessionEntriesPath: string;
-  sessionKey: string;
-}): Promise<TerminalRunRange[]> {
-  const raw = await readFirstExistingTranscriptFile(
-    resolveTerminalActionCandidates(params.sessionEntriesPath)
-  );
-  if (!raw) {
-    return [];
-  }
-
-  const runRanges = new Map<string, TerminalRunRange>();
-  const lines = raw.split(/\r?\n/);
-  for (const [index, line] of lines.entries()) {
-    if (!line.trim()) {
-      continue;
-    }
-    let parsed: Record<string, unknown>;
-    try {
-      parsed = JSON.parse(line) as Record<string, unknown>;
-    } catch {
-      warnMalformedLine(index + 1);
-      continue;
-    }
-
-    if (parsed.recordType !== "action") {
-      continue;
-    }
-
-    const actionType = typeof parsed.actionType === "string" ? parsed.actionType : "";
-    if (
-      actionType !== "assistant_final" &&
-      actionType !== "assistant_aborted" &&
-      actionType !== "assistant_error"
-    ) {
-      continue;
-    }
-
-    const role = typeof parsed.role === "string" ? parsed.role : "";
-    if (role !== "assistant") {
-      continue;
-    }
-
-    const recordSessionKey = typeof parsed.sessionKey === "string" ? parsed.sessionKey.trim() : "";
-    if (recordSessionKey && recordSessionKey !== params.sessionKey) {
-      continue;
-    }
-
-    const runId = typeof parsed.runId === "string" ? parsed.runId.trim() : "";
-    if (!runId) {
-      continue;
-    }
-
-    const endMs = parseMsFromUnknown(parsed.ts);
-    if (endMs === null) {
-      continue;
-    }
-
-    const durationMsRaw = parsed.durationMs;
-    const durationMs =
-      typeof durationMsRaw === "number" && Number.isFinite(durationMsRaw) && durationMsRaw >= 0
-        ? Math.floor(durationMsRaw)
-        : null;
-    const startMs = durationMs !== null ? Math.max(0, endMs - durationMs) : endMs;
-
-    const existing = runRanges.get(runId);
-    if (!existing) {
-      runRanges.set(runId, { runId, startMs, endMs });
-      continue;
-    }
-    runRanges.set(runId, {
-      runId,
-      startMs: Math.min(existing.startMs, startMs),
-      endMs: Math.max(existing.endMs, endMs),
-    });
-  }
-
-  return Array.from(runRanges.values()).sort((left, right) => {
-    if (left.endMs !== right.endMs) {
-      return left.endMs - right.endMs;
-    }
-    if (left.startMs !== right.startMs) {
-      return left.startMs - right.startMs;
-    }
-    return left.runId.localeCompare(right.runId);
-  });
-}
-
-function createTerminalRunIdMatcher(
-  ranges: TerminalRunRange[]
-): (timestamp: number) => string | undefined {
-  if (ranges.length === 0) {
-    return () => undefined;
-  }
-  const assigned = new Set<string>();
-  const rangeSlackMs = 2500;
-  const nearestSlackMs = 15000;
-
-  return (timestamp) => {
-    let matched: TerminalRunRange | null = null;
-    let bestScore = Number.POSITIVE_INFINITY;
-
-    for (const range of ranges) {
-      if (assigned.has(range.runId)) {
-        continue;
-      }
-      if (timestamp < range.startMs - rangeSlackMs || timestamp > range.endMs + rangeSlackMs) {
-        continue;
-      }
-      const score = Math.abs(range.endMs - timestamp);
-      if (score < bestScore) {
-        bestScore = score;
-        matched = range;
-      }
-    }
-
-    if (!matched) {
-      for (const range of ranges) {
-        if (assigned.has(range.runId)) {
-          continue;
-        }
-        const score = Math.abs(range.endMs - timestamp);
-        if (score > nearestSlackMs || score >= bestScore) {
-          continue;
-        }
-        bestScore = score;
-        matched = range;
-      }
-    }
-
-    if (!matched) {
-      return undefined;
-    }
-    assigned.add(matched.runId);
-    return matched.runId;
-  };
-}
-
 function extractRunId(
   line: PiTranscriptLine,
   message: Record<string, unknown>
@@ -425,45 +291,158 @@ function toHistoryContent(
   return fallbackText;
 }
 
+function parseRunContextCustom(line: PiTranscriptLine): ParsedRunContext | null {
+  const record = line as Record<string, unknown>;
+  if (record.type !== "custom" || record.customType !== "adjutant:run-context") {
+    return null;
+  }
+  const data = asRecord(record.data);
+  if (!data) {
+    return null;
+  }
+  const runId = takeString(data.runId);
+  if (!runId) {
+    return null;
+  }
+  return { runId };
+}
+
+function parseRunSummaryTools(value: unknown): AuditToolSummary[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const normalized: AuditToolSummary[] = [];
+  for (const raw of value) {
+    const record = asRecord(raw);
+    if (!record) {
+      continue;
+    }
+    const toolName = takeString(record.toolName);
+    if (!toolName) {
+      continue;
+    }
+    const status = record.status === "ok" || record.status === "error" ? record.status : undefined;
+    normalized.push({
+      toolName,
+      toolCallId: takeString(record.toolCallId),
+      args: record.args,
+      resultSummary: record.resultSummary,
+      status,
+      durationMs: takeNonNegativeInt(record.durationMs),
+      truncated: typeof record.truncated === "boolean" ? record.truncated : undefined,
+      error: takeString(record.error),
+      startedAt: takeString(record.startedAt),
+      endedAt: takeString(record.endedAt),
+    });
+  }
+  return normalized;
+}
+
+function countCompletedTools(tools: AuditToolSummary[]): number {
+  let count = 0;
+  for (const tool of tools) {
+    if (typeof tool.endedAt === "string" && tool.endedAt.trim()) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+function parseRunSummaryCustom(line: PiTranscriptLine): ParsedRunSummary | null {
+  const record = line as Record<string, unknown>;
+  if (record.type !== "custom" || record.customType !== "adjutant:run-summary") {
+    return null;
+  }
+  const data = asRecord(record.data);
+  if (!data) {
+    return null;
+  }
+  const runId = takeString(data.runId);
+  if (!runId) {
+    return null;
+  }
+  const tools = parseRunSummaryTools(data.tools);
+  const toolCount = takeNonNegativeInt(data.toolCount) ?? countCompletedTools(tools);
+  const origin = data.origin;
+  return {
+    runId,
+    assistantMessageId: takeString(data.assistantMessageId),
+    ...(toolCount !== undefined ? { toolCount } : {}),
+    tools,
+    origin: origin === "user" || origin === "pipeline" || origin === "system" ? origin : undefined,
+  };
+}
+
+function assignToolCount(messages: HistoryMessage[], index: number, toolCount: number): void {
+  const message = messages[index];
+  if (!message || message.role !== "assistant") {
+    return;
+  }
+  message.toolCount = toolCount;
+}
+
 export async function loadMessages(opts: TranscriptReadOptions): Promise<HistoryMessage[]> {
   const resolved = await resolveTranscript(opts.sessionKey, opts.sessionEntriesPath);
   if (!resolved) {
     return [];
   }
 
-  const auditLogPath = opts.auditLogPath ?? resolveAgentAuditLogPath();
-
-  let toolEndCountByRunId = new Map<string, number>();
-  let messageRunIdByMessageId = new Map<string, string>();
-  let terminalRunRanges: TerminalRunRange[] = [];
-  try {
-    const metadata = await readAuditRunMetadata({ auditLogPath });
-    toolEndCountByRunId = metadata.toolEndCountByRunId;
-    messageRunIdByMessageId = metadata.messageRunIdByMessageId;
-  } catch (error) {
-    console.warn("[TranscriptReader] failed to read audit metadata:", {
-      reason: error instanceof Error ? error.message : String(error),
-    });
-  }
-  try {
-    terminalRunRanges = await readTerminalRunRanges({
-      sessionEntriesPath: resolved.sessionEntriesPath,
-      sessionKey: opts.sessionKey,
-    });
-  } catch (error) {
-    console.warn("[TranscriptReader] failed to read terminal action metadata:", {
-      reason: error instanceof Error ? error.message : String(error),
-    });
-  }
-  const matchRunIdByTerminalTimestamp = createTerminalRunIdMatcher(terminalRunRanges);
-
   const projected: HistoryMessage[] = [];
+  const assistantIndexByMessageId = new Map<string, number>();
+  const latestAssistantIndexByRunId = new Map<string, number>();
+  const pendingToolCountByAssistantId = new Map<string, { toolCount: number; runId: string }>();
+  const pendingToolCountByRunId = new Map<string, number>();
   let heartbeatTurnActive = false;
+  let pendingRunIdFromContext: string | undefined;
 
   for (const parsed of resolved.lines) {
     const lineRecord = parsed as Record<string, unknown>;
     if (lineRecord.type === "custom_message" && lineRecord.customType === "adjutant:heartbeat") {
       heartbeatTurnActive = true;
+      continue;
+    }
+
+    const runContext = parseRunContextCustom(parsed);
+    if (runContext) {
+      pendingRunIdFromContext = runContext.runId;
+      continue;
+    }
+
+    const runSummary = parseRunSummaryCustom(parsed);
+    if (runSummary) {
+      if (runSummary.assistantMessageId) {
+        const assistantIndex = assistantIndexByMessageId.get(runSummary.assistantMessageId);
+        if (assistantIndex !== undefined) {
+          assignToolCount(
+            projected,
+            assistantIndex,
+            runSummary.toolCount ?? runSummary.tools.length
+          );
+          const assistant = projected[assistantIndex];
+          if (assistant && !assistant.runId) {
+            assistant.runId = runSummary.runId;
+          }
+        } else {
+          pendingToolCountByAssistantId.set(runSummary.assistantMessageId, {
+            toolCount: runSummary.toolCount ?? runSummary.tools.length,
+            runId: runSummary.runId,
+          });
+        }
+      } else {
+        const assistantIndex = latestAssistantIndexByRunId.get(runSummary.runId);
+        if (assistantIndex !== undefined) {
+          assignToolCount(
+            projected,
+            assistantIndex,
+            runSummary.toolCount ?? runSummary.tools.length
+          );
+        } else {
+          pendingToolCountByRunId.set(
+            runSummary.runId,
+            runSummary.toolCount ?? runSummary.tools.length
+          );
+        }
+      }
       continue;
     }
 
@@ -482,15 +461,6 @@ export async function loadMessages(opts: TranscriptReadOptions): Promise<History
       continue;
     }
 
-    const timestamp = extractTimestamp(parsed, message);
-    const messageId = extractMessageId(parsed, message);
-    const runIdFromPayload =
-      extractRunId(parsed, message) ??
-      (messageId ? messageRunIdByMessageId.get(messageId) : undefined);
-    const runId =
-      runIdFromPayload ??
-      (role === "assistant" ? matchRunIdByTerminalTimestamp(timestamp) : undefined);
-
     if (role === "user") {
       if (heartbeatTurnActive) {
         heartbeatTurnActive = false;
@@ -500,21 +470,46 @@ export async function loadMessages(opts: TranscriptReadOptions): Promise<History
       continue;
     }
 
+    const timestamp = extractTimestamp(parsed, message);
+    const messageId = extractMessageId(parsed, message);
+    const runIdFromPayload = extractRunId(parsed, message);
+    const runId =
+      runIdFromPayload ??
+      (role === "assistant" && pendingRunIdFromContext ? pendingRunIdFromContext : undefined);
+    if (role === "assistant" && pendingRunIdFromContext) {
+      pendingRunIdFromContext = undefined;
+    }
+
     const historyMessage: HistoryMessage = {
       role,
       content: toHistoryContent(message, text),
       timestamp,
       ...(runId ? { runId } : {}),
     };
+    projected.push(historyMessage);
+    const messageIndex = projected.length - 1;
 
-    if (role === "assistant" && runId) {
-      const toolCount = toolEndCountByRunId.get(runId);
-      if (typeof toolCount === "number") {
-        historyMessage.toolCount = toolCount;
+    if (role === "assistant") {
+      if (messageId) {
+        assistantIndexByMessageId.set(messageId, messageIndex);
+        const pendingById = pendingToolCountByAssistantId.get(messageId);
+        if (pendingById) {
+          assignToolCount(projected, messageIndex, pendingById.toolCount);
+          if (!projected[messageIndex]?.runId) {
+            projected[messageIndex]!.runId = pendingById.runId;
+          }
+          pendingToolCountByAssistantId.delete(messageId);
+        }
+      }
+      if (runId) {
+        latestAssistantIndexByRunId.set(runId, messageIndex);
+        const pendingByRunId = pendingToolCountByRunId.get(runId);
+        if (pendingByRunId !== undefined) {
+          assignToolCount(projected, messageIndex, pendingByRunId);
+          pendingToolCountByRunId.delete(runId);
+        }
       }
     }
-
-    projected.push(historyMessage);
   }
 
   const limit = normalizeLimit(opts.limit);
@@ -525,6 +520,39 @@ export async function loadMessages(opts: TranscriptReadOptions): Promise<History
     return [];
   }
   return projected.slice(-limit);
+}
+
+export async function readRunSummaryFromTranscript(opts: {
+  sessionKey: string;
+  runId: string;
+  sessionEntriesPath?: string;
+}): Promise<RunAuditResponse | null> {
+  const normalizedRunId = opts.runId.trim();
+  if (!normalizedRunId) {
+    return null;
+  }
+  const resolved = await resolveTranscript(opts.sessionKey, opts.sessionEntriesPath);
+  if (!resolved) {
+    return null;
+  }
+
+  let latest: ParsedRunSummary | null = null;
+  for (const line of resolved.lines) {
+    const summary = parseRunSummaryCustom(line);
+    if (!summary || summary.runId !== normalizedRunId) {
+      continue;
+    }
+    latest = summary;
+  }
+  if (!latest) {
+    return null;
+  }
+  return {
+    runId: normalizedRunId,
+    ...(latest.origin ? { origin: latest.origin } : {}),
+    runEnded: true,
+    tools: latest.tools,
+  };
 }
 
 export async function loadRecentSessionEvents(
