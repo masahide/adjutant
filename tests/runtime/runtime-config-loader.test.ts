@@ -82,6 +82,7 @@ describe("runtime-config-loader", () => {
     assert.equal(config.app.markdownSummaryBatch.maxSessions, 200);
     assert.equal(config.app.sandbox.mode, "off");
     assert.equal(config.app.sandbox.docker.image, "adjutant-sandbox:trixie-slim");
+    assert.equal(config.app.sandbox.docker.autoBuildImage, true);
     assert.equal(config.app.sandbox.docker.containerPrefix, "adjutant-sandbox");
     assert.equal(config.app.sandbox.docker.workdir, "/workspace");
     assert.equal(config.app.routeLlm.enabled, true);
@@ -153,6 +154,7 @@ describe("runtime-config-loader", () => {
     const config = loadAssistantGatewayRuntimeConfig({
       ADJUTANT_SANDBOX_MODE: "all",
       ADJUTANT_SANDBOX_IMAGE: "sandbox:test",
+      ADJUTANT_SANDBOX_AUTO_BUILD_IMAGE: "0",
       ADJUTANT_SANDBOX_CONTAINER_PREFIX: "sandbox-runner",
       ADJUTANT_SANDBOX_WORKDIR: "/work",
       ADJUTANT_SANDBOX_NETWORK: "none",
@@ -162,6 +164,7 @@ describe("runtime-config-loader", () => {
 
     assert.equal(config.app.sandbox.mode, "all");
     assert.equal(config.app.sandbox.docker.image, "sandbox:test");
+    assert.equal(config.app.sandbox.docker.autoBuildImage, false);
     assert.equal(config.app.sandbox.docker.containerPrefix, "sandbox-runner");
     assert.equal(config.app.sandbox.docker.workdir, "/work");
     assert.equal(config.app.sandbox.docker.network, "none");

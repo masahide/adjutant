@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, describe, it, mock } from "node:test";
 import {
   buildSandboxCreateArgs,
+  checkDockerAvailability,
   destroySandboxContainer,
   ensureDockerImage,
   ensureSandboxContainer,
@@ -24,6 +25,7 @@ function inspectContainerOutput(params: { running: boolean; owner: string }): st
 
 const defaultDockerConfig: SandboxDockerConfig = {
   image: "adjutant-sandbox:trixie-slim",
+  autoBuildImage: true,
   containerPrefix: "adjutant-sandbox",
   workdir: "/workspace",
   readOnlyRoot: true,
@@ -153,15 +155,77 @@ describe("sandbox docker", () => {
     assert.equal(ng, false);
   });
 
-  it("ensureDockerImage は存在時のみ通し、不在時はエラー", async () => {
-    await ensureDockerImage("exists:image", {
-      runner: async () => ({ code: 0, stdout: "[]", stderr: "" }),
+  it("checkDockerAvailability は失敗理由を返す", async () => {
+    const byExitCode = await checkDockerAvailability({
+      runner: async () => ({
+        code: 1,
+        stdout: "",
+        stderr: "Cannot connect to the Docker daemon",
+      }),
     });
+    assert.equal(byExitCode.available, false);
+    assert.equal(byExitCode.reason?.includes("Cannot connect"), true);
+
+    const byException = await checkDockerAvailability({
+      runner: async () => {
+        throw new Error("docker command not found");
+      },
+    });
+    assert.equal(byException.available, false);
+    assert.equal(byException.reason?.includes("not found"), true);
+  });
+
+  it("ensureDockerImage は存在時は build せず、不在時は自動 build する", async () => {
+    const calls: string[][] = [];
+    const runner = mock.fn(async (args: string[]) => {
+      calls.push(args);
+      if (args[0] === "image" && args[1] === "inspect") {
+        if (args[2] === "exists:image") {
+          return { code: 0, stdout: "[]", stderr: "" };
+        }
+        return { code: 1, stdout: "", stderr: "No such image" };
+      }
+      if (args[0] === "build") {
+        return { code: 0, stdout: "built", stderr: "" };
+      }
+      return { code: 0, stdout: "", stderr: "" };
+    });
+
+    await ensureDockerImage("exists:image", { runner });
+    await ensureDockerImage("missing:image", {
+      runner,
+      autoBuild: true,
+      buildContextDir: "/tmp/adjutant",
+    });
+
+    assert.equal(
+      calls.some((args) => args[0] === "build" && args.includes("missing:image")),
+      true
+    );
+  });
+
+  it("ensureDockerImage は autoBuild=false のとき不在でエラーにする", async () => {
     await assert.rejects(
       ensureDockerImage("missing:image", {
         runner: async () => ({ code: 1, stdout: "", stderr: "No such image" }),
+        autoBuild: false,
       }),
       /pnpm sandbox:build/
+    );
+  });
+
+  it("ensureDockerImage は自動 build 失敗時に理由を含めてエラーにする", async () => {
+    await assert.rejects(
+      ensureDockerImage("missing:image", {
+        runner: async (args) => {
+          if (args[0] === "image") {
+            return { code: 1, stdout: "", stderr: "No such image" };
+          }
+          return { code: 1, stdout: "", stderr: "buildx failed" };
+        },
+        autoBuild: true,
+      }),
+      /auto-build failed: buildx failed/
     );
   });
 

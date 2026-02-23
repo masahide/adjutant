@@ -36,10 +36,10 @@ import { createProactiveMetrics } from "../proactive/metrics.js";
 import { listJsonlFiles, recoverJsonlFiles } from "../io/jsonl-recovery.js";
 import { loadAssistantGatewayRuntimeConfig } from "../runtime/runtime-config-loader.js";
 import {
+  checkDockerAvailability,
   destroySandboxContainer,
   ensureDockerImage,
   ensureSandboxContainer,
-  isDockerAvailable,
 } from "../sandbox/docker.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -112,13 +112,16 @@ let activeSandboxContainer: { containerName: string; ownerNonce: string } | null
 if (SANDBOX_CONFIG.mode === "off") {
   configureSandbox(null);
 } else {
-  const available = await isDockerAvailable();
-  if (!available) {
+  const availability = await checkDockerAvailability();
+  if (!availability.available) {
     throw new Error(
-      "sandbox mode requires Docker daemon. Set ADJUTANT_SANDBOX_MODE=off to disable sandbox."
+      `sandbox mode requires Docker daemon. Start Docker Desktop and retry. ${availability.reason ? `reason: ${availability.reason}` : ""} Set ADJUTANT_SANDBOX_MODE=off to disable sandbox.`
     );
   }
-  await ensureDockerImage(SANDBOX_CONFIG.docker.image);
+  await ensureDockerImage(SANDBOX_CONFIG.docker.image, {
+    autoBuild: SANDBOX_CONFIG.docker.autoBuildImage,
+    buildContextDir: process.cwd(),
+  });
   const ownerNonce = randomUUID().slice(0, 6);
   const containerName = await ensureSandboxContainer({
     cfg: SANDBOX_CONFIG.docker,

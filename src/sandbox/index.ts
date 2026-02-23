@@ -4,10 +4,12 @@ export { createPathMapper, type PathMapper } from "./path-mapper.js";
 export {
   buildSandboxContainerName,
   buildSandboxCreateArgs,
+  checkDockerAvailability,
   createDockerCommandRunner,
   destroySandboxContainer,
   ensureDockerImage,
   ensureSandboxContainer,
+  type DockerAvailability,
   isDockerAvailable,
   type DockerCommandResult,
   type DockerCommandRunner,

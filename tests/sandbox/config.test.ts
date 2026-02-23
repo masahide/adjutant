@@ -7,6 +7,7 @@ describe("sandbox config", () => {
     const config = resolveSandboxConfig({} as NodeJS.ProcessEnv);
     assert.equal(config.mode, "off");
     assert.equal(config.docker.image, "adjutant-sandbox:trixie-slim");
+    assert.equal(config.docker.autoBuildImage, true);
     assert.equal(config.docker.containerPrefix, "adjutant-sandbox");
     assert.equal(config.docker.workdir, "/workspace");
     assert.equal(config.docker.readOnlyRoot, true);
@@ -21,6 +22,7 @@ describe("sandbox config", () => {
     const config = resolveSandboxConfig({
       ADJUTANT_SANDBOX_MODE: "all",
       ADJUTANT_SANDBOX_IMAGE: "sandbox:test",
+      ADJUTANT_SANDBOX_AUTO_BUILD_IMAGE: "false",
       ADJUTANT_SANDBOX_CONTAINER_PREFIX: "sbx",
       ADJUTANT_SANDBOX_WORKDIR: "/work",
       ADJUTANT_SANDBOX_NETWORK: "none",
@@ -29,6 +31,7 @@ describe("sandbox config", () => {
     } as NodeJS.ProcessEnv);
     assert.equal(config.mode, "all");
     assert.equal(config.docker.image, "sandbox:test");
+    assert.equal(config.docker.autoBuildImage, false);
     assert.equal(config.docker.containerPrefix, "sbx");
     assert.equal(config.docker.workdir, "/work");
     assert.equal(config.docker.network, "none");

@@ -1,4 +1,4 @@
-import { parsePositiveIntEnv, parseStringEnv } from "../runtime/env-parsers.js";
+import { parseBooleanEnv, parsePositiveIntEnv, parseStringEnv } from "../runtime/env-parsers.js";
 import type { SandboxConfig, SandboxMode } from "./types.js";
 
 const DEFAULT_SANDBOX_IMAGE = "adjutant-sandbox:trixie-slim";
@@ -25,6 +25,7 @@ export function resolveSandboxConfig(env: NodeJS.ProcessEnv = process.env): Sand
     mode: parseSandboxMode(env.ADJUTANT_SANDBOX_MODE),
     docker: {
       image: parseStringEnv(env.ADJUTANT_SANDBOX_IMAGE, DEFAULT_SANDBOX_IMAGE),
+      autoBuildImage: parseBooleanEnv(env.ADJUTANT_SANDBOX_AUTO_BUILD_IMAGE, true),
       containerPrefix: parseStringEnv(
         env.ADJUTANT_SANDBOX_CONTAINER_PREFIX,
         DEFAULT_SANDBOX_CONTAINER_PREFIX

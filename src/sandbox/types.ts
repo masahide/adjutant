@@ -2,6 +2,7 @@ export type SandboxMode = "off" | "non-main" | "all";
 
 export type SandboxDockerConfig = {
   image: string;
+  autoBuildImage: boolean;
   containerPrefix: string;
   workdir: string;
   readOnlyRoot: boolean;

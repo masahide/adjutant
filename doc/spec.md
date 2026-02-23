@@ -312,6 +312,7 @@ flowchart LR
 | `ADJUTANT_MEMORY_SEARCH_TEXT_WEIGHT`          | `0.3`                                 | hybrid score の text 重み                       |
 | `ADJUTANT_SANDBOX_MODE`                       | `off`                                 | bash sandbox mode（`off` / `non-main` / `all`） |
 | `ADJUTANT_SANDBOX_IMAGE`                      | `adjutant-sandbox:trixie-slim`        | sandbox Docker image                            |
+| `ADJUTANT_SANDBOX_AUTO_BUILD_IMAGE`           | `true`                                | 未存在時に sandbox image を自動 build する      |
 | `ADJUTANT_SANDBOX_CONTAINER_PREFIX`           | `adjutant-sandbox`                    | sandbox container 名の prefix                   |
 | `ADJUTANT_SANDBOX_WORKDIR`                    | `/workspace`                          | コンテナ内作業ディレクトリ                      |
 | `ADJUTANT_SANDBOX_NETWORK`                    | 未設定（bridge）                      | Docker network（例: `none`）                    |
@@ -464,7 +465,7 @@ flowchart LR
 - `ADJUTANT_SANDBOX_MODE=all` では heartbeat を除く全セッションの bash 実行をコンテナ化。
 - 起動時 (`src/assistant/main.ts`) は以下順で fail-safe 初期化する。
   1. Docker daemon 可用性確認（不可なら起動中断）
-  2. sandbox image 存在確認（未ビルドなら `pnpm sandbox:build` を促して起動中断）
+  2. sandbox image 存在確認（未存在時は `ADJUTANT_SANDBOX_AUTO_BUILD_IMAGE=true` なら自動 build）
   3. owner nonce 付きコンテナ確保（`{prefix}-{nonce}`）
   4. `configureSandbox()` でセッションファクトリへ注入
 - コンテナ生成時は `adjutant.sandbox.owner=<nonce>` を付与し、shutdown 時は owner 一致時のみ `docker rm -f` を実行する（他プロセスのコンテナは破壊しない）。

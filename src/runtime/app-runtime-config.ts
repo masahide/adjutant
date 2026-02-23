@@ -63,6 +63,7 @@ export type SandboxRuntimeConfig = {
   mode: "off" | "non-main" | "all";
   docker: {
     image: string;
+    autoBuildImage: boolean;
     containerPrefix: string;
     workdir: string;
     readOnlyRoot: boolean;

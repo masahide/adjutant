@@ -25,6 +25,11 @@ export type DockerCommandRunner = (
   options?: { allowFailure?: boolean }
 ) => Promise<DockerCommandResult>;
 
+export type DockerAvailability = {
+  available: boolean;
+  reason?: string;
+};
+
 type DockerInspectPayload = Array<{
   Config?: {
     Labels?: Record<string, string>;
@@ -173,29 +178,62 @@ export function buildSandboxCreateArgs(params: {
 export async function isDockerAvailable(params?: {
   runner?: DockerCommandRunner;
 }): Promise<boolean> {
+  const status = await checkDockerAvailability(params);
+  return status.available;
+}
+
+export async function checkDockerAvailability(params?: {
+  runner?: DockerCommandRunner;
+}): Promise<DockerAvailability> {
   const runner = params?.runner ?? defaultRunner();
   try {
     const result = await runner(["version", "--format", "{{.Server.Version}}"], {
       allowFailure: true,
     });
-    return result.code === 0;
-  } catch {
-    return false;
+    if (result.code === 0) {
+      return { available: true };
+    }
+    const reason = result.stderr.trim() || result.stdout.trim() || "docker daemon unavailable";
+    return { available: false, reason };
+  } catch (error) {
+    return {
+      available: false,
+      reason: error instanceof Error ? error.message : String(error),
+    };
   }
 }
 
 export async function ensureDockerImage(
   image: string,
-  params?: { runner?: DockerCommandRunner }
+  params?: {
+    runner?: DockerCommandRunner;
+    autoBuild?: boolean;
+    buildContextDir?: string;
+    dockerfilePath?: string;
+  }
 ): Promise<void> {
   const runner = params?.runner ?? defaultRunner();
+  const autoBuild = params?.autoBuild ?? true;
   const result = await runner(["image", "inspect", image], {
     allowFailure: true,
   });
   if (result.code === 0) {
     return;
   }
-  throw new Error(`sandbox image not found: ${image}. Run "pnpm sandbox:build" first.`);
+  if (!autoBuild) {
+    throw new Error(`sandbox image not found: ${image}. Run "pnpm sandbox:build" first.`);
+  }
+
+  const contextDir = resolve(params?.buildContextDir ?? process.cwd());
+  const dockerfilePath = resolve(contextDir, params?.dockerfilePath ?? "Dockerfile.sandbox");
+  const buildResult = await runner(["build", "-f", dockerfilePath, "-t", image, contextDir], {
+    allowFailure: true,
+  });
+  if (buildResult.code === 0) {
+    return;
+  }
+  const reason = buildResult.stderr.trim() || buildResult.stdout.trim() || "docker build failed";
+  throw new Error(`sandbox image not found: ${image}. auto-build failed: ${reason}`);
 }
 
 export async function ensureSandboxContainer(params: {

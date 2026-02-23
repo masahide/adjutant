@@ -1,8 +1,8 @@
 import {
   AuthStorage,
+  createBashTool,
   type ContextUsage,
   createAgentSession,
-  createCodingTools,
   ModelRegistry,
   readOnlyTools,
   SettingsManager,
@@ -170,21 +170,19 @@ export async function createAgentSessionFromSdk(
     customTools.push(createMemoryWriteToolDefinition());
   }
   const currentSandbox = activeSandbox;
-  let sandboxedTools: ReturnType<typeof createCodingTools> | undefined;
-  if (
-    currentSandbox &&
-    !params.isHeartbeat &&
-    shouldSandbox(currentSandbox.mode, params.memoryScope)
-  ) {
-    sandboxedTools = createCodingTools(params.workspaceDir, {
-      bash: {
-        operations: createDockerBashOperations({
-          containerName: currentSandbox.containerName,
-          hostWorkspaceDir: currentSandbox.hostWorkspaceDir,
-          containerWorkdir: currentSandbox.workdir,
-        }),
-      },
+  if (currentSandbox && !params.isHeartbeat && shouldSandbox(currentSandbox.mode, params.memoryScope)) {
+    // NOTE:
+    // createAgentSession(options.tools) currently keeps only active tool names and rebuilds
+    // base tools internally, so custom bash operations passed via createCodingTools are lost.
+    // Registering a custom tool named "bash" overrides the base bash tool at runtime.
+    const sandboxedBash = createBashTool(params.workspaceDir, {
+      operations: createDockerBashOperations({
+        containerName: currentSandbox.containerName,
+        hostWorkspaceDir: currentSandbox.hostWorkspaceDir,
+        containerWorkdir: currentSandbox.workdir,
+      }),
     });
+    customTools.push(sandboxedBash as unknown as ToolDefinition);
   }
 
   const created = await createAgentSession({
@@ -193,7 +191,7 @@ export async function createAgentSessionFromSdk(
     settingsManager,
     modelRegistry,
     model: resolvedModel.model as never,
-    tools: params.isHeartbeat ? readOnlyTools : sandboxedTools,
+    tools: params.isHeartbeat ? readOnlyTools : undefined,
     customTools,
   });
 
