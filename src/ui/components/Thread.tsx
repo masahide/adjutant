@@ -9,6 +9,7 @@ import {
   DownloadIcon,
   LoaderIcon,
   PencilIcon,
+  PlayIcon,
   RefreshCwIcon,
   SquareIcon,
   ThumbsDownIcon,
@@ -22,6 +23,7 @@ import {
   ErrorPrimitive,
   MessagePrimitive,
   ThreadPrimitive,
+  useMessage,
 } from "@assistant-ui/react";
 
 import { Button } from "./ui/button.js";
@@ -34,6 +36,7 @@ import {
   UserMessageAttachments,
 } from "./assistant-ui/attachment.js";
 import { cn } from "../lib/utils.js";
+import { useSidePanelActions } from "../hooks/SidePanelContext.js";
 
 export function Thread() {
   return (
@@ -209,6 +212,27 @@ function EditComposer() {
   );
 }
 
+function ToolsBadge() {
+  const message = useMessage();
+  const custom = message.metadata?.custom as Record<string, unknown> | undefined;
+  const toolCount = custom?.toolCount;
+  const runId = custom?.runId;
+  const { toggleAudit } = useSidePanelActions();
+
+  if (typeof toolCount !== "number" || toolCount <= 0) return null;
+  if (typeof runId !== "string" || !runId) return null;
+
+  return (
+    <button
+      onClick={() => toggleAudit(runId)}
+      className="mt-1.5 inline-flex items-center gap-1 rounded-full border border-border px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
+    >
+      <PlayIcon className="size-2.5 fill-current" />
+      {toolCount} tools
+    </button>
+  );
+}
+
 function AssistantMessage() {
   return (
     <MessagePrimitive.Root
@@ -234,6 +258,7 @@ function AssistantMessage() {
             <span className="text-sm">Thinking...</span>
           </div>
         </AuiIf>
+        <ToolsBadge />
       </div>
 
       <div className="mt-1 ml-2 flex">

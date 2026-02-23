@@ -1,9 +1,13 @@
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from "node:http";
-import type { HeartbeatEventPayload } from "./types.js";
+import { readFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
+import type { HeartbeatEventPayload, HeartbeatRunRecord } from "./types.js";
 import * as ChatHandler from "./chat-handler.js";
 import * as StreamEventBridge from "./stream-event-bridge.js";
 import { loadMessages } from "./index.js";
 import { ApiError, isApiError, type ApiErrorCode } from "./errors.js";
+import { readRunAudit, resolveAgentAuditLogPath } from "./audit-reader.js";
+import { resolveAdjutantStateDir } from "./session-paths.js";
 
 export type HeartbeatProvider = {
   onHeartbeatEvent: (listener: (evt: HeartbeatEventPayload) => void) => () => void;
@@ -16,6 +20,9 @@ export type ApiServerConfig = {
   host: string;
   corsOrigin: string;
   heartbeatProvider?: HeartbeatProvider;
+  sessionEntriesPath?: string;
+  agentAuditLogPath?: string;
+  heartbeatRunsPath?: string;
 };
 
 const DEFAULT_CONFIG: ApiServerConfig = {
@@ -25,6 +32,16 @@ const DEFAULT_CONFIG: ApiServerConfig = {
 };
 
 const KEEPALIVE_INTERVAL_MS = 15_000;
+const DEFAULT_HEARTBEAT_HISTORY_LIMIT = 20;
+const MAX_HEARTBEAT_HISTORY_LIMIT = 100;
+const HEARTBEAT_RUNS_DEFAULT_RELATIVE_PATH = "heartbeat-runs.jsonl";
+
+type HeartbeatHistoryRecord = {
+  record: HeartbeatRunRecord;
+  runAtMs: number;
+  fileOffset: number;
+  cursor: string;
+};
 
 export function createApiServer(userConfig?: Partial<ApiServerConfig>): {
   start: () => Promise<void>;
@@ -167,6 +184,12 @@ async function handleRequest(
     return handlePostChatAbort(req, res);
   }
 
+  // Keep explicit suffix routes before generic run stream matching.
+  const runAuditMatch = path.match(/^\/api\/chat\/runs\/([^/]+)\/audit$/);
+  if (method === "GET" && runAuditMatch && runAuditMatch[1]) {
+    return handleGetRunAudit(decodeURIComponent(runAuditMatch[1]), res, cfg);
+  }
+
   const streamMatch = path.match(/^\/api\/chat\/runs\/([^/]+)\/stream$/);
   if (method === "GET" && streamMatch && streamMatch[1]) {
     return handleStreamRun(req, decodeURIComponent(streamMatch[1]), res, sseConnections);
@@ -174,7 +197,7 @@ async function handleRequest(
 
   if (method === "GET" && path === "/api/chat/history") {
     const sessionKey = url.searchParams.get("sessionKey");
-    return handleGetChatHistory(sessionKey, res);
+    return handleGetChatHistory(sessionKey, res, cfg);
   }
 
   if (method === "POST" && path === "/api/heartbeat/run") {
@@ -185,6 +208,11 @@ async function handleRequest(
   }
   if (method === "GET" && path === "/api/heartbeat/last") {
     return handleGetHeartbeatLast(res, cfg);
+  }
+  if (method === "GET" && path === "/api/heartbeat/history") {
+    const limit = parseHeartbeatHistoryLimit(url.searchParams.get("limit"));
+    const cursor = parseHeartbeatCursor(url.searchParams.get("cursor"));
+    return handleGetHeartbeatHistory(res, cfg, { limit, cursor });
   }
 
   sendJson(res, 404, { error: "Not Found" });
@@ -265,6 +293,133 @@ function takeOrigin(value: unknown): "user" | "pipeline" | "system" | null {
     return value;
   }
   return null;
+}
+
+function resolveAuditLogPath(cfg: ApiServerConfig): string {
+  if (cfg.agentAuditLogPath?.trim()) {
+    return resolve(cfg.agentAuditLogPath.trim());
+  }
+  return resolveAgentAuditLogPath();
+}
+
+function resolveHeartbeatRunsPath(cfg: ApiServerConfig): string {
+  if (cfg.heartbeatRunsPath?.trim()) {
+    return resolve(cfg.heartbeatRunsPath.trim());
+  }
+  const fromEnv = process.env.ADJUTANT_HEARTBEAT_RUNS_LOG_PATH?.trim();
+  if (fromEnv) {
+    return resolve(fromEnv);
+  }
+  return join(resolveAdjutantStateDir(), HEARTBEAT_RUNS_DEFAULT_RELATIVE_PATH);
+}
+
+function parseHeartbeatHistoryLimit(raw: string | null): number {
+  if (!raw) {
+    return DEFAULT_HEARTBEAT_HISTORY_LIMIT;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_HEARTBEAT_HISTORY_LIMIT;
+  }
+  return Math.min(MAX_HEARTBEAT_HISTORY_LIMIT, Math.max(1, Math.floor(parsed)));
+}
+
+function parseHeartbeatCursor(raw: string | null): string | null {
+  if (!raw) {
+    return null;
+  }
+  const cursor = raw.trim();
+  return cursor.length > 0 ? cursor : null;
+}
+
+function buildHeartbeatCursor(runAt: string, fileOffset: number): string {
+  return `${runAt}:${String(fileOffset)}`;
+}
+
+function parseHeartbeatRunRecord(rawLine: string, lineNo: number): HeartbeatRunRecord | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawLine);
+  } catch {
+    console.warn("[ApiServer] invalid heartbeat history line skipped", {
+      reason: "json-parse-failed",
+      lineNo,
+    });
+    return null;
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    console.warn("[ApiServer] invalid heartbeat history line skipped", {
+      reason: "not-object",
+      lineNo,
+    });
+    return null;
+  }
+
+  const record = parsed as Record<string, unknown>;
+  if (typeof record.runAt !== "string" || !record.runAt.trim()) {
+    console.warn("[ApiServer] invalid heartbeat history line skipped", {
+      reason: "missing-runAt",
+      lineNo,
+    });
+    return null;
+  }
+  if (!record.result || typeof record.result !== "object" || Array.isArray(record.result)) {
+    console.warn("[ApiServer] invalid heartbeat history line skipped", {
+      reason: "missing-result",
+      lineNo,
+    });
+    return null;
+  }
+
+  return record as unknown as HeartbeatRunRecord;
+}
+
+async function loadHeartbeatHistoryRecords(path: string): Promise<HeartbeatHistoryRecord[]> {
+  let raw: Buffer;
+  try {
+    raw = await readFile(path);
+  } catch (error) {
+    const errno = error as NodeJS.ErrnoException;
+    if (errno.code === "ENOENT") {
+      return [];
+    }
+    throw error;
+  }
+
+  const records: HeartbeatHistoryRecord[] = [];
+  let cursor = 0;
+  let lineNo = 1;
+  while (cursor < raw.length) {
+    const newlineIndex = raw.indexOf(0x0a, cursor);
+    const endIndex = newlineIndex === -1 ? raw.length : newlineIndex;
+    const lineBuffer = raw.subarray(cursor, endIndex);
+    const line = lineBuffer.toString("utf8");
+    const trimmed = line.trim();
+    if (trimmed.length > 0) {
+      const record = parseHeartbeatRunRecord(trimmed, lineNo);
+      if (record) {
+        const parsedRunAt = Date.parse(record.runAt);
+        const runAtMs = Number.isFinite(parsedRunAt) ? parsedRunAt : 0;
+        records.push({
+          record,
+          runAtMs,
+          fileOffset: cursor,
+          cursor: buildHeartbeatCursor(record.runAt, cursor),
+        });
+      }
+    }
+    lineNo += 1;
+    cursor = newlineIndex === -1 ? raw.length : newlineIndex + 1;
+  }
+
+  records.sort((a, b) => {
+    if (a.runAtMs !== b.runAtMs) {
+      return b.runAtMs - a.runAtMs;
+    }
+    return b.fileOffset - a.fileOffset;
+  });
+  return records;
 }
 
 function resolveChatRequest(
@@ -369,17 +524,86 @@ function handleStreamRun(
   });
 }
 
-async function handleGetChatHistory(sessionKey: string | null, res: ServerResponse): Promise<void> {
+async function handleGetChatHistory(
+  sessionKey: string | null,
+  res: ServerResponse,
+  cfg: ApiServerConfig
+): Promise<void> {
   if (!sessionKey) {
     sendError(res, 400, "INVALID_REQUEST", "sessionKey is required");
     return;
   }
 
   try {
-    const messages = await loadMessages({ sessionKey });
+    const messages = await loadMessages({
+      sessionKey,
+      sessionEntriesPath: cfg.sessionEntriesPath,
+      auditLogPath: resolveAuditLogPath(cfg),
+    });
     sendJson(res, 200, { sessionKey, sessionId: sessionKey, messages });
   } catch {
     sendJson(res, 200, { sessionKey, sessionId: sessionKey, messages: [] });
+  }
+}
+
+async function handleGetRunAudit(
+  runId: string,
+  res: ServerResponse,
+  cfg: ApiServerConfig
+): Promise<void> {
+  const normalizedRunId = runId.trim();
+  if (!normalizedRunId) {
+    sendError(res, 400, "INVALID_REQUEST", "runId is required");
+    return;
+  }
+
+  try {
+    const response = await readRunAudit(normalizedRunId, {
+      auditLogPath: resolveAuditLogPath(cfg),
+    });
+    sendJson(res, 200, response);
+  } catch (error) {
+    console.warn("[ApiServer] failed to load run audit; returning empty response", {
+      runId: normalizedRunId,
+      reason: error instanceof Error ? error.message : String(error),
+    });
+    sendJson(res, 200, { runId: normalizedRunId, runEnded: false, tools: [] });
+  }
+}
+
+async function handleGetHeartbeatHistory(
+  res: ServerResponse,
+  cfg: ApiServerConfig,
+  opts: { limit: number; cursor: string | null }
+): Promise<void> {
+  try {
+    const records = await loadHeartbeatHistoryRecords(resolveHeartbeatRunsPath(cfg));
+    let startIndex = 0;
+    if (opts.cursor !== null) {
+      const cursorIndex = records.findIndex((entry) => entry.cursor === opts.cursor);
+      if (cursorIndex < 0) {
+        sendError(res, 400, "INVALID_REQUEST", "Invalid cursor");
+        return;
+      }
+      startIndex = cursorIndex + 1;
+    }
+    const page = records.slice(startIndex, startIndex + opts.limit);
+    const hasMore = startIndex + page.length < records.length;
+    const nextCursor = hasMore ? (page[page.length - 1]?.cursor ?? null) : null;
+    sendJson(res, 200, {
+      records: page.map((entry) => entry.record),
+      hasMore,
+      nextCursor,
+    });
+  } catch (error) {
+    console.warn("[ApiServer] failed to load heartbeat history; returning empty response", {
+      reason: error instanceof Error ? error.message : String(error),
+    });
+    sendJson(res, 200, {
+      records: [],
+      hasMore: false,
+      nextCursor: null,
+    });
   }
 }
 

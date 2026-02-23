@@ -19,12 +19,23 @@ export function useAdjutantThread() {
 
   const messages: ThreadMessageLike[] = useMemo(
     () =>
-      state.messages.map((msg, i) => ({
-        id: `msg-${i}-${msg.role}`,
-        role: msg.role,
-        content: msg.content,
-        createdAt: new Date(msg.timestamp),
-      })),
+      state.messages.map((msg, i) => {
+        const custom: Record<string, unknown> = {};
+        if (msg.runId) {
+          custom.runId = msg.runId;
+        }
+        if (typeof msg.toolCount === "number") {
+          custom.toolCount = msg.toolCount;
+        }
+
+        return {
+          id: `msg-${i}-${msg.role}`,
+          role: msg.role,
+          content: msg.content,
+          createdAt: new Date(msg.timestamp),
+          ...(Object.keys(custom).length > 0 ? { metadata: { custom } } : {}),
+        } satisfies ThreadMessageLike;
+      }),
     [state.messages]
   );
 

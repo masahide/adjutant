@@ -1,5 +1,10 @@
 import type { CompactionEventTracker } from "./compaction-runtime.js";
-import { auditToolEnd, auditToolStart, type AgentAuditScope } from "./agent-audit.js";
+import {
+  auditMessageBind,
+  auditToolEnd,
+  auditToolStart,
+  type AgentAuditScope,
+} from "./agent-audit.js";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -125,6 +130,29 @@ function tryGetToolResult(event: unknown): {
   };
 }
 
+function tryGetMessageBinding(
+  event: unknown
+): { messageId: string; role: "user" | "assistant" } | null {
+  const top = asRecord(event);
+  if (!top || top.type !== "message_end") {
+    return null;
+  }
+
+  const message = asRecord(top.message);
+  if (!message) {
+    return null;
+  }
+  const role = message.role;
+  if (role !== "user" && role !== "assistant") {
+    return null;
+  }
+  const messageId = typeof message.id === "string" ? message.id.trim() : "";
+  if (!messageId) {
+    return null;
+  }
+  return { messageId, role };
+}
+
 function parseMemoryWriteArgs(
   args: unknown
 ): { scope: "daily" | "long-term"; content: string } | null {
@@ -166,6 +194,15 @@ export function createAgentEventSubscriber(
 
   const unsubscribe = options.session.subscribe((event) => {
     options.compactionTracker.onEvent(event);
+
+    const messageBinding = tryGetMessageBinding(event);
+    if (messageBinding) {
+      auditMessageBind({
+        scope: options.auditScope,
+        messageId: messageBinding.messageId,
+        role: messageBinding.role,
+      });
+    }
 
     const delta = tryGetTextDelta(event);
     if (delta && !options.isSilentTurn()) {

@@ -170,7 +170,11 @@ export async function createAgentSessionFromSdk(
     customTools.push(createMemoryWriteToolDefinition());
   }
   const currentSandbox = activeSandbox;
-  if (currentSandbox && !params.isHeartbeat && shouldSandbox(currentSandbox.mode, params.memoryScope)) {
+  if (
+    currentSandbox &&
+    !params.isHeartbeat &&
+    shouldSandbox(currentSandbox.mode, params.memoryScope)
+  ) {
     // NOTE:
     // createAgentSession(options.tools) currently keeps only active tool names and rebuilds
     // base tools internally, so custom bash operations passed via createCodingTools are lost.

@@ -21,7 +21,8 @@ type BashToolLike = {
 };
 
 function getBashTool(session: AgentSessionLike): BashToolLike {
-  const tools = (session as AgentSessionLike & { state: { tools: BashToolLike[] } }).state?.tools ?? [];
+  const tools =
+    (session as AgentSessionLike & { state: { tools: BashToolLike[] } }).state?.tools ?? [];
   const bash = tools.find((tool) => tool.name === "bash");
   assert.ok(bash, "bash tool should be available");
   return bash;
@@ -32,7 +33,10 @@ async function createTestSession(params: {
   memoryScope: "main" | "spoke";
   isHeartbeat?: boolean;
 }): Promise<AgentSessionLike> {
-  const sessionManager = SessionManager.create(params.workspaceDir, join(params.workspaceDir, ".sessions"));
+  const sessionManager = SessionManager.create(
+    params.workspaceDir,
+    join(params.workspaceDir, ".sessions")
+  );
   const created = await createAgentSessionFromSdk({
     sessionManager,
     runId: `test-run-${Date.now()}`,
@@ -94,4 +98,3 @@ describe("agent-session-factory sandbox bash", () => {
     }
   });
 });
-

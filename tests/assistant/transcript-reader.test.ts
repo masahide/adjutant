@@ -8,12 +8,14 @@ import { loadMessages, loadRecentSessionEvents } from "../../src/assistant/trans
 type EnvSnapshot = {
   sessionEntriesPath?: string;
   transcriptsDir?: string;
+  agentAuditLogPath?: string;
 };
 
 function snapshotEnv(): EnvSnapshot {
   return {
     sessionEntriesPath: process.env.ADJUTANT_SESSION_ENTRIES_PATH,
     transcriptsDir: process.env.ADJUTANT_TRANSCRIPTS_DIR,
+    agentAuditLogPath: process.env.ADJUTANT_AGENT_AUDIT_LOG_PATH,
   };
 }
 
@@ -28,6 +30,12 @@ function restoreEnv(snapshot: EnvSnapshot): void {
     delete process.env.ADJUTANT_TRANSCRIPTS_DIR;
   } else {
     process.env.ADJUTANT_TRANSCRIPTS_DIR = snapshot.transcriptsDir;
+  }
+
+  if (snapshot.agentAuditLogPath === undefined) {
+    delete process.env.ADJUTANT_AGENT_AUDIT_LOG_PATH;
+  } else {
+    process.env.ADJUTANT_AGENT_AUDIT_LOG_PATH = snapshot.agentAuditLogPath;
   }
 }
 
@@ -76,12 +84,13 @@ describe("TranscriptReader", () => {
 
       process.env.ADJUTANT_SESSION_ENTRIES_PATH = sessionsPath;
       const messages = await loadMessages({ sessionKey: "main" });
-      assert.equal(messages.length, 3);
+      assert.equal(messages.length, 2);
 
-      const first = messages[0] as { role?: string };
+      const first = messages[0] as { role?: string; runId?: string };
       assert.equal(first.role, "user");
-      const last = messages[2] as { role?: string };
-      assert.equal(last.role, "system");
+      assert.equal(first.runId, undefined);
+      const last = messages[1] as { role?: string };
+      assert.equal(last.role, "assistant");
     } finally {
       restoreEnv(snapshot);
       await rm(tempDir, { recursive: true, force: true });
@@ -129,6 +138,372 @@ describe("TranscriptReader", () => {
         ["m-2", "m-3"]
       );
       assert.equal(events[0]?.role, "assistant");
+    } finally {
+      restoreEnv(snapshot);
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("audit ログの origin=system runId を使って heartbeat ターンを除外し toolCount を付与する", async () => {
+    const tempDir = await mkdtemp(`${tmpdir()}/adjutant-transcript-`);
+    const snapshot = snapshotEnv();
+    try {
+      const sessionsPath = join(tempDir, "sessions.json");
+      const transcriptPath = join(tempDir, "session-heartbeat-audit.jsonl");
+      const auditPath = join(tempDir, "agent-audit.ndjson");
+
+      await writeFile(
+        sessionsPath,
+        JSON.stringify({
+          main: { sessionId: "session-heartbeat-audit", sessionFile: transcriptPath },
+        }),
+        "utf8"
+      );
+      await writeFile(
+        transcriptPath,
+        [
+          JSON.stringify({
+            timestamp: "2026-02-23T10:00:00.000Z",
+            message: {
+              role: "user",
+              runId: "run-user-1",
+              content: [{ type: "text", text: "通常の質問" }],
+            },
+          }),
+          JSON.stringify({
+            timestamp: "2026-02-23T10:00:01.000Z",
+            message: {
+              role: "assistant",
+              runId: "run-user-1",
+              content: [{ type: "text", text: "通常の応答" }],
+            },
+          }),
+          JSON.stringify({
+            timestamp: "2026-02-23T10:01:00.000Z",
+            message: {
+              role: "user",
+              runId: "run-hb-1",
+              content: [{ type: "text", text: "# HEARTBEAT\ncheck" }],
+            },
+          }),
+          JSON.stringify({
+            timestamp: "2026-02-23T10:01:01.000Z",
+            message: {
+              role: "assistant",
+              runId: "run-hb-1",
+              content: [{ type: "text", text: "heartbeat result" }],
+            },
+          }),
+          JSON.stringify({
+            timestamp: "2026-02-23T10:01:02.000Z",
+            message: {
+              role: "system",
+              runId: "run-system",
+              content: [{ type: "text", text: "internal note" }],
+            },
+          }),
+        ].join("\n"),
+        "utf8"
+      );
+
+      await writeFile(
+        auditPath,
+        [
+          JSON.stringify({ type: "run.start", runId: "run-hb-1", origin: "system" }),
+          JSON.stringify({
+            type: "tool.end",
+            runId: "run-user-1",
+            toolName: "bash",
+            status: "ok",
+          }),
+          JSON.stringify({
+            type: "tool.end",
+            runId: "run-user-1",
+            toolName: "read_file",
+            status: "ok",
+          }),
+        ].join("\n"),
+        "utf8"
+      );
+
+      process.env.ADJUTANT_SESSION_ENTRIES_PATH = sessionsPath;
+      process.env.ADJUTANT_AGENT_AUDIT_LOG_PATH = auditPath;
+
+      const messages = await loadMessages({ sessionKey: "main" });
+      assert.equal(messages.length, 2);
+      assert.equal(messages[0]?.role, "user");
+      assert.equal(messages[1]?.role, "assistant");
+      assert.equal(messages[1]?.runId, "run-user-1");
+      assert.equal(messages[1]?.toolCount, 2);
+    } finally {
+      restoreEnv(snapshot);
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("audit の message.bind から message.id に runId を復元できる", async () => {
+    const tempDir = await mkdtemp(`${tmpdir()}/adjutant-transcript-`);
+    const snapshot = snapshotEnv();
+    try {
+      const sessionsPath = join(tempDir, "sessions.json");
+      const transcriptPath = join(tempDir, "session-message-bind.jsonl");
+      const auditPath = join(tempDir, "agent-audit.ndjson");
+
+      await writeFile(
+        sessionsPath,
+        JSON.stringify({
+          main: { sessionId: "session-message-bind", sessionFile: transcriptPath },
+        }),
+        "utf8"
+      );
+      await writeFile(
+        transcriptPath,
+        [
+          JSON.stringify({
+            timestamp: "2026-02-23T11:00:00.000Z",
+            id: "msg-user-1",
+            message: {
+              role: "user",
+              content: [{ type: "text", text: "質問です" }],
+            },
+          }),
+          JSON.stringify({
+            timestamp: "2026-02-23T11:00:01.000Z",
+            id: "msg-assistant-1",
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: "回答です" }],
+            },
+          }),
+        ].join("\n"),
+        "utf8"
+      );
+      await writeFile(
+        auditPath,
+        [
+          JSON.stringify({
+            type: "message.bind",
+            runId: "run-user-1",
+            messageId: "msg-user-1",
+            role: "user",
+          }),
+          JSON.stringify({
+            type: "message.bind",
+            runId: "run-user-1",
+            messageId: "msg-assistant-1",
+            role: "assistant",
+          }),
+          JSON.stringify({
+            type: "tool.end",
+            runId: "run-user-1",
+            toolName: "read_file",
+            status: "ok",
+          }),
+        ].join("\n"),
+        "utf8"
+      );
+
+      process.env.ADJUTANT_SESSION_ENTRIES_PATH = sessionsPath;
+      process.env.ADJUTANT_AGENT_AUDIT_LOG_PATH = auditPath;
+
+      const messages = await loadMessages({ sessionKey: "main" });
+      assert.equal(messages.length, 2);
+      assert.equal(messages[0]?.runId, "run-user-1");
+      assert.equal(messages[1]?.runId, "run-user-1");
+      assert.equal(messages[1]?.toolCount, 1);
+    } finally {
+      restoreEnv(snapshot);
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("main.jsonl の assistant action 記録から timestamp ベースで runId を復元できる", async () => {
+    const tempDir = await mkdtemp(`${tmpdir()}/adjutant-transcript-`);
+    const snapshot = snapshotEnv();
+    try {
+      const sessionsPath = join(tempDir, "sessions.json");
+      const transcriptPath = join(tempDir, "session-terminal-fallback.jsonl");
+      const terminalPath = join(tempDir, "main.jsonl");
+      const auditPath = join(tempDir, "agent-audit.ndjson");
+
+      await writeFile(
+        sessionsPath,
+        JSON.stringify({
+          main: { sessionId: "session-terminal-fallback", sessionFile: transcriptPath },
+        }),
+        "utf8"
+      );
+      await writeFile(
+        transcriptPath,
+        [
+          JSON.stringify({
+            timestamp: "2026-02-23T12:00:00.000Z",
+            id: "msg-user-1",
+            message: { role: "user", content: [{ type: "text", text: "質問1" }] },
+          }),
+          JSON.stringify({
+            timestamp: "2026-02-23T12:00:03.000Z",
+            id: "msg-assistant-1",
+            message: { role: "assistant", content: [{ type: "text", text: "回答1" }] },
+          }),
+          JSON.stringify({
+            timestamp: "2026-02-23T12:01:00.000Z",
+            id: "msg-user-2",
+            message: { role: "user", content: [{ type: "text", text: "質問2" }] },
+          }),
+          JSON.stringify({
+            timestamp: "2026-02-23T12:01:04.000Z",
+            id: "msg-assistant-2",
+            message: { role: "assistant", content: [{ type: "text", text: "回答2" }] },
+          }),
+        ].join("\n"),
+        "utf8"
+      );
+      await writeFile(
+        terminalPath,
+        [
+          JSON.stringify({
+            schema: "adjutant.timeline.record.v1.5",
+            recordType: "action",
+            role: "assistant",
+            actionType: "assistant_final",
+            sessionKey: "other",
+            runId: "run-other",
+            ts: "2026-02-23T12:00:03.500Z",
+            loggedAt: "2026-02-23T12:00:03.500Z",
+            durationMs: 4000,
+          }),
+          JSON.stringify({
+            schema: "adjutant.timeline.record.v1.5",
+            recordType: "action",
+            role: "assistant",
+            actionType: "assistant_final",
+            sessionKey: "main",
+            runId: "run-main-1",
+            ts: "2026-02-23T12:00:05.000Z",
+            loggedAt: "2026-02-23T12:00:05.000Z",
+            durationMs: 5000,
+          }),
+          JSON.stringify({
+            schema: "adjutant.timeline.record.v1.5",
+            recordType: "action",
+            role: "assistant",
+            actionType: "assistant_final",
+            sessionKey: "main",
+            runId: "run-main-2",
+            ts: "2026-02-23T12:01:06.000Z",
+            loggedAt: "2026-02-23T12:01:06.000Z",
+            durationMs: 6000,
+          }),
+        ].join("\n"),
+        "utf8"
+      );
+      await writeFile(
+        auditPath,
+        [
+          JSON.stringify({
+            type: "tool.end",
+            runId: "run-main-1",
+            toolName: "read_file",
+            status: "ok",
+          }),
+          JSON.stringify({
+            type: "tool.end",
+            runId: "run-main-2",
+            toolName: "bash",
+            status: "ok",
+          }),
+          JSON.stringify({
+            type: "tool.end",
+            runId: "run-main-2",
+            toolName: "read_file",
+            status: "ok",
+          }),
+        ].join("\n"),
+        "utf8"
+      );
+
+      process.env.ADJUTANT_SESSION_ENTRIES_PATH = sessionsPath;
+      process.env.ADJUTANT_AGENT_AUDIT_LOG_PATH = auditPath;
+
+      const messages = await loadMessages({ sessionKey: "main" });
+      assert.equal(messages.length, 4);
+      assert.equal(messages[0]?.runId, undefined);
+      assert.equal(messages[1]?.runId, "run-main-1");
+      assert.equal(messages[1]?.toolCount, 1);
+      assert.equal(messages[3]?.runId, "run-main-2");
+      assert.equal(messages[3]?.toolCount, 2);
+    } finally {
+      restoreEnv(snapshot);
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("audit ログが使えない場合は # HEARTBEAT マーカーでベストエフォート除外する", async () => {
+    const tempDir = await mkdtemp(`${tmpdir()}/adjutant-transcript-`);
+    const snapshot = snapshotEnv();
+    try {
+      const sessionsPath = join(tempDir, "sessions.json");
+      const transcriptPath = join(tempDir, "session-heartbeat-fallback.jsonl");
+      await writeFile(
+        sessionsPath,
+        JSON.stringify({
+          main: { sessionId: "session-heartbeat-fallback", sessionFile: transcriptPath },
+        }),
+        "utf8"
+      );
+      await writeFile(
+        transcriptPath,
+        [
+          JSON.stringify({
+            timestamp: "2026-02-23T10:00:00.000Z",
+            message: {
+              role: "user",
+              content: [{ type: "text", text: "普通の会話" }],
+            },
+          }),
+          JSON.stringify({
+            timestamp: "2026-02-23T10:00:01.000Z",
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: "了解" }],
+            },
+          }),
+          JSON.stringify({
+            timestamp: "2026-02-23T10:01:00.000Z",
+            message: {
+              role: "user",
+              content: [{ type: "text", text: "# HEARTBEAT\nscheduled run" }],
+            },
+          }),
+          JSON.stringify({
+            timestamp: "2026-02-23T10:01:01.000Z",
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: "hb reply" }],
+            },
+          }),
+          JSON.stringify({
+            timestamp: "2026-02-23T10:02:00.000Z",
+            message: {
+              role: "user",
+              content: [{ type: "text", text: "後続メッセージ" }],
+            },
+          }),
+        ].join("\n"),
+        "utf8"
+      );
+
+      process.env.ADJUTANT_SESSION_ENTRIES_PATH = sessionsPath;
+      delete process.env.ADJUTANT_AGENT_AUDIT_LOG_PATH;
+
+      const messages = await loadMessages({ sessionKey: "main" });
+      assert.equal(messages.length, 3);
+      assert.deepEqual(
+        messages.map((message) => message.role),
+        ["user", "assistant", "user"]
+      );
+      assert.deepEqual(messages[2]?.content, [{ type: "text", text: "後続メッセージ" }]);
     } finally {
       restoreEnv(snapshot);
       await rm(tempDir, { recursive: true, force: true });

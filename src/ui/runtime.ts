@@ -4,6 +4,8 @@ export type RuntimeMessage = {
   role: "user" | "assistant";
   content: string;
   timestamp: number;
+  runId?: string;
+  toolCount?: number;
 };
 
 export type RuntimeState = {
@@ -106,14 +108,14 @@ export function createRuntime(baseUrl: string = "") {
             if (text) {
               const msgs = [...state.messages];
               const lastMsg = msgs[msgs.length - 1];
-              if (lastMsg?.role === "assistant" && state.isStreaming) {
+              if (lastMsg?.role === "assistant" && state.isStreaming && lastMsg.runId === runId) {
                 msgs[msgs.length - 1] = {
                   ...lastMsg,
                   content: event.state === "final" ? text : lastMsg.content + text,
                   timestamp: Date.now(),
                 };
               } else {
-                msgs.push({ role: "assistant", content: text, timestamp: Date.now() });
+                msgs.push({ role: "assistant", content: text, timestamp: Date.now(), runId });
               }
               setState({ messages: msgs });
             }
@@ -130,6 +132,9 @@ export function createRuntime(baseUrl: string = "") {
                     ? "Run was aborted"
                     : null,
             });
+            if (event.state === "final") {
+              void hydrateToolCount(runId);
+            }
           }
         } catch {
           // ignore parse errors
@@ -149,6 +154,70 @@ export function createRuntime(baseUrl: string = "") {
     }
 
     connect();
+  }
+
+  function countCompletedTools(tools: unknown[]): number {
+    let completed = 0;
+    for (const tool of tools) {
+      if (!tool || typeof tool !== "object") {
+        continue;
+      }
+      const record = tool as Record<string, unknown>;
+      if (typeof record.endedAt === "string" && record.endedAt.trim()) {
+        completed += 1;
+      }
+    }
+    return completed;
+  }
+
+  async function hydrateToolCount(runId: string): Promise<void> {
+    const maxAttempts = 4;
+    let bestCompletedCount: number | null = null;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      const delayMs = attempt === 0 ? 0 : attempt === 1 ? 250 : attempt === 2 ? 750 : 1500;
+      if (delayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+
+      try {
+        const res = await fetch(`${baseUrl}/api/chat/runs/${encodeURIComponent(runId)}/audit`);
+        if (!res.ok) {
+          return;
+        }
+        const body = (await res.json()) as { tools?: unknown; runEnded?: unknown };
+        if (!Array.isArray(body.tools)) {
+          return;
+        }
+        const completedCount = countCompletedTools(body.tools);
+        if (bestCompletedCount === null || completedCount > bestCompletedCount) {
+          bestCompletedCount = completedCount;
+        }
+        const runEnded = body.runEnded === true;
+        if (runEnded) {
+          break;
+        }
+      } catch {
+        if (attempt >= maxAttempts - 1) {
+          break;
+        }
+        continue;
+      }
+    }
+
+    if (bestCompletedCount === null) {
+      return;
+    }
+
+    const nextMessages = [...state.messages];
+    for (let i = nextMessages.length - 1; i >= 0; i -= 1) {
+      const message = nextMessages[i];
+      if (message?.role === "assistant" && message.runId === runId) {
+        nextMessages[i] = { ...message, toolCount: bestCompletedCount };
+        setState({ messages: nextMessages });
+        return;
+      }
+    }
   }
 
   function extractUserMessage(text: string): string | null {
@@ -175,6 +244,8 @@ export function createRuntime(baseUrl: string = "") {
           role?: string;
           content?: string | Array<{ type?: string; text?: string }>;
           timestamp?: number;
+          runId?: string;
+          toolCount?: number;
         }>;
       };
       if (!Array.isArray(data.messages) || data.messages.length === 0) return;
@@ -205,6 +276,10 @@ export function createRuntime(baseUrl: string = "") {
           role,
           content: text,
           timestamp: typeof msg.timestamp === "number" ? msg.timestamp : Date.now(),
+          ...(typeof msg.runId === "string" && msg.runId.trim() ? { runId: msg.runId.trim() } : {}),
+          ...(typeof msg.toolCount === "number" && Number.isFinite(msg.toolCount)
+            ? { toolCount: Math.max(0, Math.floor(msg.toolCount)) }
+            : {}),
         });
       }
       // Keep only last 50 messages to avoid overloading the UI

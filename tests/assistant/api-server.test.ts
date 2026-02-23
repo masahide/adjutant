@@ -1,5 +1,8 @@
 import { describe, it, afterEach } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createApiServer } from "../../src/assistant/api-server.js";
 import * as ChatHandler from "../../src/assistant/chat-handler.js";
 import * as StreamEventBridge from "../../src/assistant/stream-event-bridge.js";
@@ -32,12 +35,19 @@ function makeStubAgent(): ChatHandler.AgentRunFn {
 let stop: () => Promise<void>;
 let port: number;
 
-async function setupServer(agentFn?: ChatHandler.AgentRunFn) {
+async function setupServer(
+  agentFn?: ChatHandler.AgentRunFn,
+  overrides?: {
+    sessionEntriesPath?: string;
+    agentAuditLogPath?: string;
+    heartbeatRunsPath?: string;
+  }
+) {
   resetChatHandlerTestState();
   configureChatHandlerForTest(agentFn ?? makeStubAgent());
 
   port = 3100 + Math.floor(Math.random() * 900);
-  const api = createApiServer({ port, host: "127.0.0.1" });
+  const api = createApiServer({ port, host: "127.0.0.1", ...overrides });
   await api.start();
   stop = api.stop;
 }
@@ -255,6 +265,247 @@ describe("ApiServer", () => {
     assert.equal(body.sessionKey, "main");
     assert.equal(body.sessionId, "main");
     assert.ok(Array.isArray(body.messages));
+  });
+
+  it("GET /api/chat/history は heartbeat/system を除外し runId/toolCount を返す", async () => {
+    const dir = await mkdtemp(`${tmpdir()}/adjutant-api-server-`);
+    try {
+      const sessionsPath = join(dir, "sessions.json");
+      const transcriptPath = join(dir, "main.jsonl");
+      const auditPath = join(dir, "agent-audit.ndjson");
+      await writeFile(
+        sessionsPath,
+        JSON.stringify({
+          main: { sessionId: "main", sessionFile: transcriptPath },
+        }),
+        "utf8"
+      );
+      await writeFile(
+        transcriptPath,
+        [
+          JSON.stringify({
+            message: {
+              role: "user",
+              runId: "run-user-1",
+              content: [{ type: "text", text: "通常メッセージ" }],
+            },
+          }),
+          JSON.stringify({
+            message: {
+              role: "assistant",
+              runId: "run-user-1",
+              content: [{ type: "text", text: "通常応答" }],
+            },
+          }),
+          JSON.stringify({
+            message: {
+              role: "user",
+              runId: "run-hb",
+              content: [{ type: "text", text: "# HEARTBEAT\nping" }],
+            },
+          }),
+          JSON.stringify({
+            message: {
+              role: "assistant",
+              runId: "run-hb",
+              content: [{ type: "text", text: "heartbeat response" }],
+            },
+          }),
+          JSON.stringify({
+            message: {
+              role: "system",
+              runId: "run-sys",
+              content: [{ type: "text", text: "compaction" }],
+            },
+          }),
+        ].join("\n"),
+        "utf8"
+      );
+      await writeFile(
+        auditPath,
+        [
+          JSON.stringify({ type: "run.start", runId: "run-hb", origin: "system" }),
+          JSON.stringify({ type: "tool.end", runId: "run-user-1", toolName: "bash", status: "ok" }),
+          JSON.stringify({
+            type: "tool.end",
+            runId: "run-user-1",
+            toolName: "read_file",
+            status: "ok",
+          }),
+        ].join("\n"),
+        "utf8"
+      );
+
+      await setupServer(undefined, {
+        sessionEntriesPath: sessionsPath,
+        agentAuditLogPath: auditPath,
+      });
+      const res = await fetch(url("/api/chat/history?sessionKey=main"));
+      assert.equal(res.status, 200);
+      const body = (await res.json()) as {
+        messages: Array<{ role: string; runId?: string; toolCount?: number }>;
+      };
+      assert.equal(body.messages.length, 2);
+      assert.deepEqual(
+        body.messages.map((item) => item.role),
+        ["user", "assistant"]
+      );
+      assert.equal(body.messages[1]?.runId, "run-user-1");
+      assert.equal(body.messages[1]?.toolCount, 2);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("GET /api/chat/runs/:runId/audit は tool.start/end をペアリングして返す", async () => {
+    const dir = await mkdtemp(`${tmpdir()}/adjutant-api-server-`);
+    try {
+      const auditPath = join(dir, "agent-audit.ndjson");
+      await writeFile(
+        auditPath,
+        [
+          JSON.stringify({ type: "run.start", runId: "run-abc", origin: "user" }),
+          JSON.stringify({
+            type: "tool.start",
+            runId: "run-abc",
+            toolName: "bash",
+            toolCallId: "tc-1",
+            args: { command: "ls -la" },
+            ts: "2026-02-23T10:00:00.000Z",
+          }),
+          JSON.stringify({
+            type: "tool.end",
+            runId: "run-abc",
+            toolName: "bash",
+            toolCallId: "tc-1",
+            status: "ok",
+            durationMs: 44,
+            ts: "2026-02-23T10:00:00.044Z",
+          }),
+          JSON.stringify({
+            type: "run.end",
+            runId: "run-abc",
+            status: "ok",
+          }),
+        ].join("\n"),
+        "utf8"
+      );
+
+      await setupServer(undefined, { agentAuditLogPath: auditPath });
+      const res = await fetch(url("/api/chat/runs/run-abc/audit"));
+      assert.equal(res.status, 200);
+      const body = (await res.json()) as {
+        runId: string;
+        origin?: string;
+        runEnded?: boolean;
+        tools: Array<{
+          toolName: string;
+          toolCallId?: string;
+          status?: string;
+          durationMs?: number;
+        }>;
+      };
+      assert.equal(body.runId, "run-abc");
+      assert.equal(body.origin, "user");
+      assert.equal(body.runEnded, true);
+      assert.equal(body.tools.length, 1);
+      assert.equal(body.tools[0]?.toolName, "bash");
+      assert.equal(body.tools[0]?.toolCallId, "tc-1");
+      assert.equal(body.tools[0]?.status, "ok");
+      assert.equal(body.tools[0]?.durationMs, 44);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("GET /api/heartbeat/history は cursor で重複なくページングできる", async () => {
+    const dir = await mkdtemp(`${tmpdir()}/adjutant-api-server-`);
+    try {
+      const heartbeatRunsPath = join(dir, "heartbeat-runs.jsonl");
+      const lines = Array.from({ length: 25 }, (_, index) =>
+        JSON.stringify({
+          schema: "adjutant.heartbeat.result.v1",
+          runAt: new Date(
+            Date.parse("2026-02-23T10:30:00.000Z") - Math.floor(index / 5) * 60_000
+          ).toISOString(),
+          sessionKey: "main",
+          result: { status: "ran", durationMs: index + 1 },
+          preview: `preview-${index}`,
+        })
+      );
+      await writeFile(heartbeatRunsPath, lines.join("\n"), "utf8");
+
+      await setupServer(undefined, { heartbeatRunsPath });
+      const firstRes = await fetch(url("/api/heartbeat/history?limit=10"));
+      assert.equal(firstRes.status, 200);
+      const firstBody = (await firstRes.json()) as {
+        records: Array<{ preview?: string }>;
+        hasMore: boolean;
+        nextCursor: string | null;
+      };
+      assert.equal(firstBody.records.length, 10);
+      assert.equal(firstBody.hasMore, true);
+      assert.equal(typeof firstBody.nextCursor, "string");
+
+      const secondRes = await fetch(
+        url(`/api/heartbeat/history?limit=10&cursor=${encodeURIComponent(firstBody.nextCursor!)}`)
+      );
+      assert.equal(secondRes.status, 200);
+      const secondBody = (await secondRes.json()) as {
+        records: Array<{ preview?: string }>;
+        hasMore: boolean;
+        nextCursor: string | null;
+      };
+      assert.equal(secondBody.records.length, 10);
+
+      const thirdRes = await fetch(
+        url(`/api/heartbeat/history?limit=10&cursor=${encodeURIComponent(secondBody.nextCursor!)}`)
+      );
+      assert.equal(thirdRes.status, 200);
+      const thirdBody = (await thirdRes.json()) as {
+        records: Array<{ preview?: string }>;
+        hasMore: boolean;
+        nextCursor: string | null;
+      };
+      assert.equal(thirdBody.records.length, 5);
+      assert.equal(thirdBody.hasMore, false);
+      assert.equal(thirdBody.nextCursor, null);
+
+      const seen = new Set<string>();
+      for (const record of [...firstBody.records, ...secondBody.records, ...thirdBody.records]) {
+        if (record.preview) {
+          assert.equal(seen.has(record.preview), false);
+          seen.add(record.preview);
+        }
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("GET /api/heartbeat/history は不正 cursor で 400", async () => {
+    const dir = await mkdtemp(`${tmpdir()}/adjutant-api-server-`);
+    try {
+      const heartbeatRunsPath = join(dir, "heartbeat-runs.jsonl");
+      await writeFile(
+        heartbeatRunsPath,
+        JSON.stringify({
+          schema: "adjutant.heartbeat.result.v1",
+          runAt: "2026-02-23T10:30:00.000Z",
+          sessionKey: "main",
+          result: { status: "ran", durationMs: 1 },
+        }),
+        "utf8"
+      );
+
+      await setupServer(undefined, { heartbeatRunsPath });
+      const res = await fetch(url("/api/heartbeat/history?limit=10&cursor=invalid-cursor"));
+      assert.equal(res.status, 400);
+      const body = (await res.json()) as { code?: string };
+      assert.equal(body.code, "INVALID_REQUEST");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it("GET /api/heartbeat/last はプロバイダ未設定で null を返す", async () => {

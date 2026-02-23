@@ -126,4 +126,67 @@ describe("agent-event-subscriber", () => {
       await rm(tempDir, { recursive: true, force: true });
     }
   });
+
+  it("message_end(assistant) を message.bind として監査ログへ出力する", async () => {
+    let listener: ((event: unknown) => void) | undefined;
+    const tempDir = await mkdtemp(`${tmpdir()}/adjutant-agent-event-subscriber-`);
+    try {
+      const auditPath = join(tempDir, "audit", "agent-audit.ndjson");
+      configureAgentAuditLogger({
+        enabled: true,
+        path: auditPath,
+        maxFieldChars: 4000,
+      });
+      const subscription = createAgentEventSubscriber({
+        session: {
+          subscribe: (cb) => {
+            listener = cb;
+            return () => undefined;
+          },
+        },
+        runtime: {
+          appendDailyMemory: async () => undefined,
+          updateLongTermMemory: async () => undefined,
+        },
+        memoryWriteEnabled: true,
+        workspaceDir: "/tmp/workspace",
+        timezone: "UTC",
+        auditScope: { runId: "run-bind-1", sessionKey: "main" },
+        compactionTracker: createCompactionEventTracker(0),
+        isSilentTurn: () => false,
+      });
+
+      listener?.({
+        type: "message_end",
+        message: { id: "msg-assistant-1", role: "assistant" },
+      });
+
+      await subscription.waitForSettledMemoryWrites();
+      await flushAgentAuditLoggerForTest();
+
+      const events = (await readFile(auditPath, "utf8"))
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map(
+          (line) =>
+            JSON.parse(line) as {
+              type: string;
+              runId?: string;
+              sessionKey?: string;
+              messageId?: string;
+              role?: string;
+            }
+        );
+
+      assert.equal(events.length, 1);
+      assert.equal(events[0]?.type, "message.bind");
+      assert.equal(events[0]?.runId, "run-bind-1");
+      assert.equal(events[0]?.sessionKey, "main");
+      assert.equal(events[0]?.messageId, "msg-assistant-1");
+      assert.equal(events[0]?.role, "assistant");
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
 });

@@ -57,7 +57,21 @@ type AgentAuditFileEvent = {
   error?: string;
 };
 
-export type AgentAuditEvent = AgentAuditRunEvent | AgentAuditToolEvent | AgentAuditFileEvent;
+type AgentAuditMessageBindEvent = {
+  schema: typeof AGENT_AUDIT_SCHEMA;
+  type: "message.bind";
+  ts: string;
+  runId: string;
+  sessionKey: string;
+  messageId: string;
+  role?: "user" | "assistant";
+};
+
+export type AgentAuditEvent =
+  | AgentAuditRunEvent
+  | AgentAuditToolEvent
+  | AgentAuditFileEvent
+  | AgentAuditMessageBindEvent;
 
 export type ConfigureAgentAuditLoggerOptions = {
   enabled: boolean;
@@ -352,6 +366,33 @@ export function auditFileWrite(input: {
     status: input.status,
     error: input.error,
   });
+}
+
+export function auditMessageBind(input: {
+  scope: AgentAuditScope;
+  messageId: string;
+  role?: "user" | "assistant";
+}): void {
+  const logger = activeAgentAuditLogger;
+  if (!logger) {
+    return;
+  }
+
+  const messageId = input.messageId.trim();
+  if (!messageId) {
+    return;
+  }
+
+  const event: AgentAuditMessageBindEvent = {
+    schema: AGENT_AUDIT_SCHEMA,
+    type: "message.bind",
+    ts: logger.nowIso(),
+    runId: input.scope.runId,
+    sessionKey: input.scope.sessionKey,
+    messageId,
+    ...(input.role ? { role: input.role } : {}),
+  };
+  logger.appendSafe(event);
 }
 
 function auditFileEvent(input: {

@@ -132,11 +132,11 @@
 
 ```typescript
 type HistoryMessage = {
-  role: "user" | "assistant";  // system は API 層で除外
+  role: "user" | "assistant"; // system は API 層で除外
   content: string | Array<{ type: string; text: string }>;
   timestamp?: number;
-  runId?: string;         // 新規追加
-  toolCount?: number;     // 新規追加: assistant メッセージのツール実行件数
+  runId?: string; // 新規追加
+  toolCount?: number; // 新規追加: assistant メッセージのツール実行件数
 };
 ```
 
@@ -149,7 +149,7 @@ type HistoryMessage = {
 type HeartbeatHistoryResponse = {
   records: HeartbeatRunRecord[];
   hasMore: boolean;
-  nextCursor: string | null;  // 次ページ取得用カーソル（opaque token）
+  nextCursor: string | null; // 次ページ取得用カーソル（opaque token）
 };
 ```
 
@@ -166,27 +166,28 @@ type HeartbeatHistoryResponse = {
 type RunAuditResponse = {
   runId: string;
   origin?: "user" | "pipeline" | "system";
-  tools: AuditToolSummary[];     // tool.start/end をペアリング済み
+  tools: AuditToolSummary[]; // tool.start/end をペアリング済み
 };
 
 // tool.start と tool.end をペアリングしたツール単位のサマリ
 type AuditToolSummary = {
   toolName: string;
   toolCallId?: string;
-  args?: unknown;              // audit ログで既にサニタイズ済み（※後述）
-  resultSummary?: unknown;     // 同上
+  args?: unknown; // audit ログで既にサニタイズ済み（※後述）
+  resultSummary?: unknown; // 同上
   status?: "ok" | "error";
   durationMs?: number;
   truncated?: boolean;
   error?: string;
-  startedAt?: string;          // tool.start の ts
-  endedAt?: string;            // tool.end の ts
+  startedAt?: string; // tool.start の ts
+  endedAt?: string; // tool.end の ts
 };
 ```
 
 **ペアリングロジック**: `toolCallId` が存在する場合は同一 `toolCallId` の start/end を対にする。`toolCallId` が null の場合は時系列順で同一 `toolName` の直近 start に対する end をマッチする。start のみ（end なし）のツールは `status: undefined` として返す。
 
 **サニタイズ方針**: `args` と `resultSummary` は `agent-audit.ts` の `sanitizeField()` が書き込み時に以下を適用済み:
+
 - `token|api_key|password|authorization|secret|cookie|session|credential` にマッチするキーは `"***"` に置換
 - `maxFieldChars`（デフォルト4000文字）を超える値は切り詰め + `truncated: true`
 - API レスポンスではこの既サニタイズ済みデータをそのまま返す。追加のマスク処理は行わない
@@ -203,8 +204,8 @@ type RuntimeMessage = {
   role: "user" | "assistant";
   content: string;
   timestamp: number;
-  runId?: string;       // 新規追加: audit 詳細取得用
-  toolCount?: number;   // 新規追加: ▶ N tools バッジ表示用（assistant のみ）
+  runId?: string; // 新規追加: audit 詳細取得用
+  toolCount?: number; // 新規追加: ▶ N tools バッジ表示用（assistant のみ）
 };
 ```
 
@@ -220,6 +221,7 @@ type RuntimeMessage = {
 ### 4.4 代表的な例 Examples
 
 **Heartbeat 履歴取得（初回）:**
+
 ```
 GET /api/heartbeat/history?limit=3
 → 200
@@ -242,6 +244,7 @@ GET /api/heartbeat/history?limit=3
 ```
 
 **Heartbeat 履歴取得（Load more）:**
+
 ```
 GET /api/heartbeat/history?limit=3&cursor=2026-02-23T09:30:00.000Z:4821
 → 200
@@ -249,6 +252,7 @@ GET /api/heartbeat/history?limit=3&cursor=2026-02-23T09:30:00.000Z:4821
 ```
 
 **Audit 詳細取得:**
+
 ```
 GET /api/chat/runs/run-abc123/audit
 → 200
@@ -347,14 +351,14 @@ GET /api/chat/runs/run-abc123/audit
 
 ### 5.2 UI 操作フロー
 
-| 操作 | 結果 |
-|------|------|
-| HeartbeatIndicator クリック | サイドパネルが開く → Heartbeat タブがアクティブに |
-| サイドパネル開いた状態で HeartbeatIndicator 再クリック | サイドパネルが閉じる |
-| AssistantMessage の `▶ N tools` クリック | サイドパネルが開く → Audit タブがアクティブに → 該当 runId のイベントを表示 |
-| Audit タブで既に同じ runId 表示中に同じ `▶` 再クリック | サイドパネルが閉じる |
-| サイドパネル内のタブクリック | タブ切替（データは遅延ロード） |
-| サイドパネル右上の × ボタン | サイドパネルが閉じる |
+| 操作                                                    | 結果                                                                        |
+| ------------------------------------------------------- | --------------------------------------------------------------------------- |
+| HeartbeatIndicator クリック                             | サイドパネルが開く → Heartbeat タブがアクティブに                           |
+| サイドパネル開いた状態で HeartbeatIndicator 再クリック  | サイドパネルが閉じる                                                        |
+| AssistantMessage の `▶ N tools` クリック               | サイドパネルが開く → Audit タブがアクティブに → 該当 runId のイベントを表示 |
+| Audit タブで既に同じ runId 表示中に同じ `▶` 再クリック | サイドパネルが閉じる                                                        |
+| サイドパネル内のタブクリック                            | タブ切替（データは遅延ロード）                                              |
+| サイドパネル右上の × ボタン                             | サイドパネルが閉じる                                                        |
 
 ### 5.3 サイドパネル幅とレスポンシブ
 
@@ -369,7 +373,7 @@ GET /api/chat/runs/run-abc123/audit
 type SidePanelState = {
   open: boolean;
   activeTab: "heartbeat" | "audit";
-  auditRunId: string | null;  // Audit タブで表示中の runId
+  auditRunId: string | null; // Audit タブで表示中の runId
 };
 
 // 操作
@@ -482,50 +486,50 @@ sequenceDiagram
 
 ### Phase 1: 設計と準備
 
-- [ ] 要件と仕様の確定（本計画書の承認）
+- [x] 要件と仕様の確定（本計画書の承認）
 - [ ] トランスクリプト行に runId が含まれるか SDK 動作を実機確認
   - **結果A（runId あり）**: トランスクリプト行の runId と audit ログの `origin: "system"` を突合して heartbeat 判定。履歴メッセージにも runId/toolCount を付与可能
   - **結果B（runId なし）**: heartbeat 判定はプロンプト先頭 `# HEARTBEAT` パターンマッチにフォールバック。履歴メッセージの `▶ N tools` バッジは非表示（リアルタイムストリーム経由のメッセージのみ表示）。Phase 2 に「プロンプトパターンマッチ設計」タスクを追加する
-- [ ] インターフェース型定義の作成
+- [x] インターフェース型定義の作成
 
 ### Phase 2: Heartbeat フィルタ＋バックエンド API
 
-- [ ] Test: `transcript-reader` の heartbeat フィルタテスト作成（Red）
-- [ ] Impl: `loadMessages()` に heartbeat 判定・除外ロジック追加（Green）
-- [ ] Test: `audit-reader` の JSONL 読み込み＋ runId フィルタテスト作成（Red）
-- [ ] Impl: `src/assistant/audit-reader.ts` 新規作成（Green）
-- [ ] Test: `GET /api/heartbeat/history` のテスト作成（Red）
-- [ ] Impl: `api-server.ts` に heartbeat 履歴エンドポイント追加（Green）
-- [ ] Test: `GET /api/chat/runs/:runId/audit` のテスト作成（Red）
-- [ ] Impl: `api-server.ts` に audit エンドポイント追加（Green）
+- [x] Test: `transcript-reader` の heartbeat フィルタテスト作成（Red）
+- [x] Impl: `loadMessages()` に heartbeat 判定・除外ロジック追加（Green）
+- [x] Test: `audit-reader` の JSONL 読み込み＋ runId フィルタテスト作成（Red）
+- [x] Impl: `src/assistant/audit-reader.ts` 新規作成（Green）
+- [x] Test: `GET /api/heartbeat/history` のテスト作成（Red）
+- [x] Impl: `api-server.ts` に heartbeat 履歴エンドポイント追加（Green）
+- [x] Test: `GET /api/chat/runs/:runId/audit` のテスト作成（Red）
+- [x] Impl: `api-server.ts` に audit エンドポイント追加（Green）
 - [ ] Refactor: 共通 JSONL リーダーユーティリティの抽出（必要に応じて）
 
 ### Phase 3: メッセージモデル runId + toolCount 伝搬
 
-- [ ] Test: `runtime.ts` の runId/toolCount 保持ロジックのテスト作成（Red）
-- [ ] Impl: `StreamEvent` → `runtime.ts` での runId 保持ロジック追加（Green）
-- [ ] Impl: リアルタイムストリーム中の tool call イベントをカウントし toolCount を RuntimeMessage に付与
-- [ ] Test: `/api/chat/history` レスポンスに runId/toolCount が含まれるテスト作成（Red）
-- [ ] Impl: `/api/chat/history` で audit ログから runId/toolCount を付与（Green）
-- [ ] Impl: `useAdjutantThread` の `ThreadMessageLike` に `metadata.runId` と `metadata.toolCount` を含める
+- [x] Test: `runtime.ts` の runId/toolCount 保持ロジックのテスト作成（Red）
+- [x] Impl: `StreamEvent` → `runtime.ts` での runId 保持ロジック追加（Green）
+- [x] Impl: リアルタイムストリーム中の tool call イベントをカウントし toolCount を RuntimeMessage に付与
+- [x] Test: `/api/chat/history` レスポンスに runId/toolCount が含まれるテスト作成（Red）
+- [x] Impl: `/api/chat/history` で audit ログから runId/toolCount を付与（Green）
+- [x] Impl: `useAdjutantThread` の `ThreadMessageLike` に `metadata.runId` と `metadata.toolCount` を含める
 
 ### Phase 4: フロントエンド — サイドパネル基盤
 
-- [ ] Impl: `src/ui/hooks/useSidePanel.ts` 新規作成（open/close/tab切替/auditRunId 状態管理）
-- [ ] Impl: `src/ui/components/SidePanel.tsx` 新規作成（タブヘッダー、閉じるボタン、タブコンテンツ切替）
-- [ ] Impl: `src/ui/App.tsx` レイアウト変更（flex-row 2カラム: Thread + SidePanel）
-- [ ] Impl: サイドパネル開閉時の Thread 幅のリサイズ遷移（CSS transition）
+- [x] Impl: `src/ui/hooks/useSidePanel.ts` 新規作成（open/close/tab切替/auditRunId 状態管理）
+- [x] Impl: `src/ui/components/SidePanel.tsx` 新規作成（タブヘッダー、閉じるボタン、タブコンテンツ切替）
+- [x] Impl: `src/ui/App.tsx` レイアウト変更（flex-row 2カラム: Thread + SidePanel）
+- [x] Impl: サイドパネル開閉時の Thread 幅のリサイズ遷移（CSS transition）
 
 ### Phase 5: フロントエンド — Heartbeat タブ
 
-- [ ] Impl: `src/ui/components/HeartbeatHistoryTab.tsx` 新規作成（API呼び出し、一覧表示、Load more）
-- [ ] Impl: `HeartbeatIndicator.tsx` にクリックハンドラ追加（useSidePanel の open(heartbeat) を呼ぶ）
+- [x] Impl: `src/ui/components/HeartbeatHistoryTab.tsx` 新規作成（API呼び出し、一覧表示、Load more）
+- [x] Impl: `HeartbeatIndicator.tsx` にクリックハンドラ追加（useSidePanel の open(heartbeat) を呼ぶ）
 
 ### Phase 6: フロントエンド — Audit タブ＋チャット連携
 
-- [ ] Impl: `src/ui/components/AuditDetailTab.tsx` 新規作成（runId でAPI呼び出し、ツールアコーディオン表示）
-- [ ] Impl: `Thread.tsx` の `AssistantMessage` に `▶ N tools` バッジ追加
-- [ ] Impl: バッジクリック → useSidePanel の open(audit, runId) 呼び出し連携
+- [x] Impl: `src/ui/components/AuditDetailTab.tsx` 新規作成（runId でAPI呼び出し、ツールアコーディオン表示）
+- [x] Impl: `Thread.tsx` の `AssistantMessage` に `▶ N tools` バッジ追加
+- [x] Impl: バッジクリック → useSidePanel の open(audit, runId) 呼び出し連携
 
 ### Phase 7: 統合と検証
 
@@ -548,7 +552,7 @@ sequenceDiagram
 
 ### 8.2 品質 DoD Quality DoD
 
-- [ ] 全てのテストがパスしている
+- [x] 全てのテストがパスしている
 - [ ] Linter/Formatter のエラーがない
 - [ ] 不要なデバッグコードが削除されている
 
