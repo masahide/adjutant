@@ -15,6 +15,7 @@
     "test": "bash -lc 'files=$(find tests -type f -name \"*.test.ts\"); if [ -z \"$files\" ]; then echo \"No tests found\"; exit 1; fi; node --import tsx --test $files'",
     "test:slack": "node --import tsx --test \"tests/slack/**/*.test.ts\"",
     "assistant": "tsx src/assistant/main.ts",
+    "sandbox:build": "docker build -f Dockerfile.sandbox -t adjutant-sandbox:trixie-slim .",
     "check": "pnpm run format && pnpm run typecheck && pnpm run test"
   },
   "devDependencies": {

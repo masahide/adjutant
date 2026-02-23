@@ -73,6 +73,10 @@ describe("runtime-config-loader", () => {
     assert.equal(config.app.markdownSummaryBatch.intervalMs, 3_600_000);
     assert.equal(config.app.markdownSummaryBatch.messages, 15);
     assert.equal(config.app.markdownSummaryBatch.maxSessions, 200);
+    assert.equal(config.app.sandbox.mode, "off");
+    assert.equal(config.app.sandbox.docker.image, "adjutant-sandbox:trixie-slim");
+    assert.equal(config.app.sandbox.docker.containerPrefix, "adjutant-sandbox");
+    assert.equal(config.app.sandbox.docker.workdir, "/workspace");
     assert.equal(config.app.routeLlm.enabled, true);
     assert.equal(config.app.routeLlm.model, "gpt-4.1-mini");
     assert.equal(config.app.routeLlm.timeoutMs, 1500);
@@ -118,6 +122,26 @@ describe("runtime-config-loader", () => {
     assert.equal(config.app.markdownSummaryBatch.intervalMs, 60000);
     assert.equal(config.app.markdownSummaryBatch.messages, 20);
     assert.equal(config.app.markdownSummaryBatch.maxSessions, 300);
+  });
+
+  it("assistant 設定は sandbox env override を反映する", () => {
+    const config = loadAssistantGatewayRuntimeConfig({
+      ADJUTANT_SANDBOX_MODE: "all",
+      ADJUTANT_SANDBOX_IMAGE: "sandbox:test",
+      ADJUTANT_SANDBOX_CONTAINER_PREFIX: "sandbox-runner",
+      ADJUTANT_SANDBOX_WORKDIR: "/work",
+      ADJUTANT_SANDBOX_NETWORK: "none",
+      ADJUTANT_SANDBOX_MEMORY: "1g",
+      ADJUTANT_SANDBOX_PIDS_LIMIT: "512",
+    } as NodeJS.ProcessEnv);
+
+    assert.equal(config.app.sandbox.mode, "all");
+    assert.equal(config.app.sandbox.docker.image, "sandbox:test");
+    assert.equal(config.app.sandbox.docker.containerPrefix, "sandbox-runner");
+    assert.equal(config.app.sandbox.docker.workdir, "/work");
+    assert.equal(config.app.sandbox.docker.network, "none");
+    assert.equal(config.app.sandbox.docker.memory, "1g");
+    assert.equal(config.app.sandbox.docker.pidsLimit, 512);
   });
 
   it("route LLM 設定は不正値を既定値へフォールバックする", () => {

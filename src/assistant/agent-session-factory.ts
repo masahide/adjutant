@@ -2,12 +2,15 @@ import {
   AuthStorage,
   type ContextUsage,
   createAgentSession,
+  createCodingTools,
   ModelRegistry,
   readOnlyTools,
   SettingsManager,
   type ToolDefinition,
 } from "@mariozechner/pi-coding-agent";
 import { createMemoryToolDefinitions } from "./memory-search/index.js";
+import { createDockerBashOperations, shouldSandbox } from "../sandbox/docker-bash-operations.js";
+import type { SandboxMode } from "../sandbox/types.js";
 
 export type AgentSessionLike = {
   subscribe: (listener: (event: unknown) => void) => () => void;
@@ -29,6 +32,19 @@ export type CreateAgentSessionParams = {
   workspaceDir: string;
   onWarn?: (message: string, meta?: Record<string, unknown>) => void;
 };
+
+type ActiveSandboxConfig = {
+  containerName: string;
+  workdir: string;
+  hostWorkspaceDir: string;
+  mode: SandboxMode;
+};
+
+let activeSandbox: ActiveSandboxConfig | null = null;
+
+export function configureSandbox(config: ActiveSandboxConfig | null): void {
+  activeSandbox = config;
+}
 
 function parseModelSpecifier(model: string): { provider: string; modelId: string } | null {
   const specifier = model.trim();
@@ -146,6 +162,23 @@ export async function createAgentSessionFromSdk(
   if (params.memoryWriteEnabled) {
     customTools.push(createMemoryWriteToolDefinition());
   }
+  const currentSandbox = activeSandbox;
+  let sandboxedTools: ReturnType<typeof createCodingTools> | undefined;
+  if (
+    currentSandbox &&
+    !params.isHeartbeat &&
+    shouldSandbox(currentSandbox.mode, params.memoryScope)
+  ) {
+    sandboxedTools = createCodingTools(params.workspaceDir, {
+      bash: {
+        operations: createDockerBashOperations({
+          containerName: currentSandbox.containerName,
+          hostWorkspaceDir: currentSandbox.hostWorkspaceDir,
+          containerWorkdir: currentSandbox.workdir,
+        }),
+      },
+    });
+  }
 
   const created = await createAgentSession({
     cwd: params.workspaceDir,
@@ -153,7 +186,7 @@ export async function createAgentSessionFromSdk(
     settingsManager,
     modelRegistry,
     model: resolvedModel.model as never,
-    tools: params.isHeartbeat ? readOnlyTools : undefined,
+    tools: params.isHeartbeat ? readOnlyTools : sandboxedTools,
     customTools,
   });
 

@@ -1,6 +1,7 @@
 import { createApiServer } from "./api-server.js";
 import * as ChatHandler from "./chat-handler.js";
 import * as StreamEventBridge from "./stream-event-bridge.js";
+import { configureSandbox } from "./agent-session-factory.js";
 import { createAgentRunAdapter } from "./main.adapter.js";
 import { createMarkdownSummaryBatchService } from "./markdown-summary-batch.js";
 import {
@@ -37,7 +38,14 @@ import { routeEventKindFromEvent } from "../proactive/route-decision.js";
 import { createProactiveMetrics } from "../proactive/metrics.js";
 import { listJsonlFiles, recoverJsonlFiles } from "../io/jsonl-recovery.js";
 import { loadAssistantGatewayRuntimeConfig } from "../runtime/runtime-config-loader.js";
+import {
+  destroySandboxContainer,
+  ensureDockerImage,
+  ensureSandboxContainer,
+  isDockerAvailable,
+} from "../sandbox/docker.js";
 import { spawn, type ChildProcess } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { appendFile, mkdir, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
@@ -54,6 +62,7 @@ const SESSION_AGENT_ID = runtimeConfig.app.sessionStorage.agentId;
 const SESSION_TRANSCRIPTS_DIR = runtimeConfig.app.sessionStorage.transcriptsDir;
 const SESSION_ENTRIES_PATH = runtimeConfig.app.sessionStorage.sessionEntriesPath;
 const MARKDOWN_SUMMARY_BATCH = runtimeConfig.app.markdownSummaryBatch;
+const SANDBOX_CONFIG = runtimeConfig.app.sandbox;
 const IDEMPOTENCY_STORE_PATH = runtimeConfig.app.idempotency.storePath;
 const IDEMPOTENCY_MAX_ENTRIES = runtimeConfig.app.idempotency.maxEntries;
 const IDEMPOTENCY_STORE_FAILURE_MODE = runtimeConfig.app.idempotency.failureMode;
@@ -89,6 +98,34 @@ function parseNonNegativeInt(value: string | undefined, fallback: number): numbe
     return fallback;
   }
   return Math.max(0, Math.floor(parsed));
+}
+
+let activeSandboxContainer: { containerName: string; ownerNonce: string } | null = null;
+
+if (SANDBOX_CONFIG.mode === "off") {
+  configureSandbox(null);
+} else {
+  const available = await isDockerAvailable();
+  if (!available) {
+    throw new Error(
+      "sandbox mode requires Docker daemon. Set ADJUTANT_SANDBOX_MODE=off to disable sandbox."
+    );
+  }
+  await ensureDockerImage(SANDBOX_CONFIG.docker.image);
+  const ownerNonce = randomUUID().slice(0, 6);
+  const containerName = await ensureSandboxContainer({
+    cfg: SANDBOX_CONFIG.docker,
+    hostWorkspaceDir: WORKSPACE_DIR,
+    ownerNonce,
+  });
+  configureSandbox({
+    containerName,
+    workdir: SANDBOX_CONFIG.docker.workdir,
+    hostWorkspaceDir: WORKSPACE_DIR,
+    mode: SANDBOX_CONFIG.mode,
+  });
+  activeSandboxContainer = { containerName, ownerNonce };
+  console.log(`[Assistant] Sandbox enabled mode=${SANDBOX_CONFIG.mode} container=${containerName}`);
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -554,6 +591,25 @@ async function shutdown(signal: string) {
   }
   const stopTargets = pluginRegistry.list().map((plugin) => channelManager.stopChannel(plugin.id));
   await Promise.allSettled([api.stop(), ...stopTargets]);
+  if (activeSandboxContainer) {
+    try {
+      const result = await destroySandboxContainer({
+        containerName: activeSandboxContainer.containerName,
+        ownerNonce: activeSandboxContainer.ownerNonce,
+      });
+      if (!result.removed) {
+        console.warn("[Assistant][Sandbox] container cleanup skipped", {
+          containerName: activeSandboxContainer.containerName,
+          reason: result.reason,
+        });
+      }
+    } catch (error) {
+      console.warn("[Assistant][Sandbox] container cleanup failed", toReason(error));
+    } finally {
+      activeSandboxContainer = null;
+      configureSandbox(null);
+    }
+  }
   viteChild?.kill();
   process.exit(0);
 }

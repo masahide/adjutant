@@ -93,17 +93,24 @@ src/ui/                              ← @assistant-ui/react ベース Web UI（
 
 ### AI アシスタント環境変数
 
-| 変数名                           | デフォルト           | 説明                                   |
-| -------------------------------- | -------------------- | -------------------------------------- |
-| `ADJUTANT_API_PORT`              | `3100`               | API サーバーポート                     |
-| `ADJUTANT_API_HOST`              | `127.0.0.1`          | API サーバーホスト                     |
-| `ADJUTANT_DATA_DIR`              | `data`               | データディレクトリ                     |
-| `ADJUTANT_WORKSPACE_DIR`         | `$ADJUTANT_DATA_DIR` | ワークスペースディレクトリ             |
-| `ADJUTANT_TZ`                    | `Asia/Tokyo`         | タイムゾーン                           |
-| `ADJUTANT_MODEL`                 | (SDK デフォルト)     | LLM モデル指定 (`provider/model` 形式) |
-| `ADJUTANT_HEARTBEAT_INTERVAL_MS` | `1800000` (30分)     | ハートビート間隔                       |
-| `ADJUTANT_VITE_PORT`             | `5173`               | Vite dev server ポート                 |
-| `PI_CACHE_RETENTION`             | `long` (自動設定)    | プロンプトキャッシュ保持期間           |
+| 変数名                              | デフォルト                     | 説明                                    |
+| ----------------------------------- | ------------------------------ | --------------------------------------- |
+| `ADJUTANT_API_PORT`                 | `3100`                         | API サーバーポート                      |
+| `ADJUTANT_API_HOST`                 | `127.0.0.1`                    | API サーバーホスト                      |
+| `ADJUTANT_DATA_DIR`                 | `data`                         | データディレクトリ                      |
+| `ADJUTANT_WORKSPACE_DIR`            | `$ADJUTANT_DATA_DIR`           | ワークスペースディレクトリ              |
+| `ADJUTANT_TZ`                       | `Asia/Tokyo`                   | タイムゾーン                            |
+| `ADJUTANT_MODEL`                    | (SDK デフォルト)               | LLM モデル指定 (`provider/model` 形式)  |
+| `ADJUTANT_HEARTBEAT_INTERVAL_MS`    | `1800000` (30分)               | ハートビート間隔                        |
+| `ADJUTANT_VITE_PORT`                | `5173`                         | Vite dev server ポート                  |
+| `ADJUTANT_SANDBOX_MODE`             | `off`                          | sandbox 実行モード (`off/non-main/all`) |
+| `ADJUTANT_SANDBOX_IMAGE`            | `adjutant-sandbox:trixie-slim` | sandbox 用 Docker イメージ              |
+| `ADJUTANT_SANDBOX_CONTAINER_PREFIX` | `adjutant-sandbox`             | sandbox コンテナ名の接頭辞              |
+| `ADJUTANT_SANDBOX_WORKDIR`          | `/workspace`                   | コンテナ内ワークスペースパス            |
+| `ADJUTANT_SANDBOX_NETWORK`          | (未設定=bridge)                | Docker ネットワーク設定 (`none` 等)     |
+| `ADJUTANT_SANDBOX_MEMORY`           | (未設定)                       | Docker メモリ制限 (例: `1g`)            |
+| `ADJUTANT_SANDBOX_PIDS_LIMIT`       | `256`                          | Docker PID 制限                         |
+| `PI_CACHE_RETENTION`                | `long` (自動設定)              | プロンプトキャッシュ保持期間            |
 
 **モデル指定例:** `ADJUTANT_MODEL=openai/gpt-4o`, `ADJUTANT_MODEL=anthropic/claude-sonnet-4-20250514`
 

@@ -1,0 +1,12 @@
+FROM debian:trixie-slim
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends bash git curl ca-certificates jq ripgrep \
+  && rm -rf /var/lib/apt/lists/*
+
+RUN useradd --uid 1000 --create-home --shell /bin/bash sandbox
+
+USER 1000:1000
+WORKDIR /workspace
+
+CMD ["sleep", "infinity"]

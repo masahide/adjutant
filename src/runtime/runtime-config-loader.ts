@@ -12,6 +12,7 @@ import {
   resolveSessionEntriesPath,
   resolveSessionTranscriptsDir,
 } from "../assistant/session-paths.js";
+import { resolveSandboxConfig } from "../sandbox/config.js";
 
 const DEFAULT_ROUTE_LLM_MODEL = "gpt-5-mini";
 const DEFAULT_ROUTE_LLM_TIMEOUT_MS = 1_000;
@@ -133,6 +134,7 @@ export function loadAssistantGatewayRuntimeConfig(
   const slackAccountId = parseStringEnv(env.ADJUTANT_SLACK_ACCOUNT_ID, "default");
   const corsOrigin = env.ADJUTANT_CORS_ORIGIN?.trim() || `http://127.0.0.1:${String(vitePort)}`;
   const routeLlm = resolveRouteLlmRuntimeConfig(env);
+  const sandbox = resolveSandboxConfig(env);
 
   return {
     app: {
@@ -157,6 +159,7 @@ export function loadAssistantGatewayRuntimeConfig(
         messages: parsePositiveIntEnv(env.ADJUTANT_MARKDOWN_SUMMARY_BATCH_MESSAGES, 15),
         maxSessions: parsePositiveIntEnv(env.ADJUTANT_MARKDOWN_SUMMARY_BATCH_MAX_SESSIONS, 200),
       },
+      sandbox,
       idempotency: {
         storePath: idempotencyStorePath,
         maxEntries: parsePositiveIntEnv(env.ADJUTANT_IDEMPOTENCY_MAX_ENTRIES, 5000),

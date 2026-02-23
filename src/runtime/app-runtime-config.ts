@@ -53,10 +53,26 @@ export type MarkdownSummaryBatchRuntimeConfig = {
   maxSessions: number;
 };
 
+export type SandboxRuntimeConfig = {
+  mode: "off" | "non-main" | "all";
+  docker: {
+    image: string;
+    containerPrefix: string;
+    workdir: string;
+    readOnlyRoot: boolean;
+    tmpfs: string[];
+    network: string | undefined;
+    capDrop: string[];
+    pidsLimit: number | undefined;
+    memory: string | undefined;
+  };
+};
+
 export type AppRuntimeConfig = {
   assistant: AssistantRuntimeConfig;
   sessionStorage: SessionStorageRuntimeConfig;
   markdownSummaryBatch: MarkdownSummaryBatchRuntimeConfig;
+  sandbox: SandboxRuntimeConfig;
   idempotency: IdempotencyRuntimeConfig;
   sse: SseRuntimeConfig;
   routeLlm: RouteLlmRuntimeAppConfig;
