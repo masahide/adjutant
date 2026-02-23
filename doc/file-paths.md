@@ -6,7 +6,7 @@
 
 | 変数名 | 環境変数 | デフォルト値 | 説明 |
 |--------|----------|-------------|------|
-| `dataDir` | `ADJUTANT_DATA_DIR` | `data` | データ保存ルート |
+| `dataDir` | Collector: `DATA_DIR` / Assistant: `ADJUTANT_DATA_DIR` | `data` | データ保存ルート |
 | `workspaceDir` | `ADJUTANT_WORKSPACE_DIR` | `dataDir` と同値 | ワークスペースルート |
 | `stateDir` | `ADJUTANT_STATE_DIR` | `{dataDir}/_assistant` | 内部状態保存先 |
 | `agentStateDir` | — | `{stateDir}/agents/{agentId}` | エージェント別状態 (agentId デフォルト: `main`) |
@@ -23,10 +23,10 @@
 
 | パス | R/W | 定義箇所 |
 |------|-----|----------|
-| `{dataDir}/_cache/slack/channel-names-by-team.json` | R/W | `src/index.ts:228`, `src/proactive/slack-channel-plugin.ts:129` |
-| `{dataDir}/_cache/slack/user-names-by-team.json` | R/W | `src/index.ts:229`, `src/proactive/slack-channel-plugin.ts:130` |
+| `{dataDir}/_cache/slack/channel-names-by-team/{teamId}.json` | R/W | `src/index.ts:228`, `src/proactive/slack-channel-plugin.ts:129` |
+| `{dataDir}/_cache/slack/user-names-by-team/{teamId}.json` | R/W | `src/index.ts:229`, `src/proactive/slack-channel-plugin.ts:130` |
 
-実際のファイル保存は `nameCacheRepository.ts` がチーム別に `{cacheDir}/{teamId}.json` 形式で書き出す (`src/slack/nameCacheRepository.ts:259,283`)。
+設定時のベースパスは `.../channel-names-by-team.json` のようにファイル名で渡されるが、`nameCacheRepository.ts` が拡張子を除去してディレクトリ化し、チーム別に `{teamId}.json` を配置する (`src/slack/nameCacheRepository.ts:249,273,369`)。
 
 ## 3. デバッグログ
 
@@ -40,8 +40,10 @@
 | パス | R/W | 環境変数での上書き | 定義箇所 |
 |------|-----|-------------------|----------|
 | `{cwd}/.adjutant/cdp-endpoint.json` | R | `CDP_ENDPOINT_FILE` | `src/runtime/config.ts:15` |
-| `{cwd}/memory/POLICY_ROUTING.json` | R | — | `src/proactive/policy-routing.ts:9` |
+| `{cwd}/memory/POLICY_ROUTING.json` | R | `ADJUTANT_POLICY_ROUTING_PATH` | `src/proactive/policy-routing.ts:9,126` ※現時点では未参照 |
 | (任意パス) | R | `ADJUTANT_CHANNELS_CONFIG_PATH` | `src/runtime/runtime-config-loader.ts:190` |
+
+※ POLICY_ROUTING.json: `loadPolicyRouting` / `resolvePolicyRoutingPath` は定義のみで、現行ランタイムからの呼び出し箇所がない。将来用の実装。
 
 ## 5. メモリーファイル (AI アシスタント)
 
@@ -105,7 +107,9 @@
 | パス | R/W | 環境変数での上書き | 定義箇所 |
 |------|-----|-------------------|----------|
 | `{workspaceDir}/memory/timeline.jsonl` | R/W | `ADJUTANT_TIMELINE_PATH` | `src/runtime/runtime-config-loader.ts:130` |
-| `{workspaceDir}/memory/watermarks.json` | R/W | — | `src/assistant/main.ts:286` |
+| `{workspaceDir}/memory/watermarks.json` | R/W | — ※1 | `src/assistant/main.ts:286`, `src/proactive/watermark-store.ts:161` |
+
+※1 `resolveWatermarksPath` は `ADJUTANT_WATERMARKS_PATH` をサポートするが、現行ランタイム (`src/assistant/main.ts:286`) が常にパスを直接渡すため実質上書き不可。
 
 ## 9. 冪等性ストア
 
@@ -121,9 +125,9 @@
 
 ## 11. メモリーサーチ (SQLite DB)
 
-| パス | R/W | 定義箇所 |
-|------|-----|----------|
-| 設定で指定される DB パス | R/W | `src/assistant/memory-search/manager.ts:72` |
+| パス | R/W | 環境変数での上書き | 定義箇所 |
+|------|-----|-------------------|----------|
+| `{workspaceDir}/memory/index/main.sqlite` | R/W | `ADJUTANT_MEMORY_SEARCH_DB_PATH` | `src/assistant/memory-search/config.ts:14-15`, `src/assistant/memory-search/manager.ts:72` |
 
 ## 12. UI / Vite
 
@@ -177,6 +181,8 @@
     │   ├── timeline.jsonl                   [R/W] タイムライン
     │   ├── watermarks.json                  [R/W] ウォーターマーク
     │   ├── idempotency.jsonl                [R/W] 冪等性ストア
+    │   ├── index/
+    │   │   └── main.sqlite                 [R/W] メモリーサーチDB
     │   └── sessions/                        [R]   レガシーセッション
     ├── _assistant/
     │   ├── heartbeat-runs.jsonl             [W]   HB実行記録
@@ -186,8 +192,10 @@
     │       └── sessions/
     │           └── {sessionKey}.jsonl       [R/W] セッション記録
     ├── _cache/slack/
-    │   ├── channel-names-by-team.json       [R/W] チャンネル名
-    │   └── user-names-by-team.json          [R/W] ユーザー名
+    │   ├── channel-names-by-team/
+    │   │   └── {teamId}.json               [R/W] チャンネル名
+    │   └── user-names-by-team/
+    │       └── {teamId}.json               [R/W] ユーザー名
     └── _debug/
         ├── cdp-events.jsonl                 [W]   CDPイベントログ
         └── raw-fetch.jsonl                  [W]   Fetchログ
