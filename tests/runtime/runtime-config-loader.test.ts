@@ -60,6 +60,12 @@ describe("runtime-config-loader", () => {
     assert.equal(config.app.assistant.workspaceDir, resolve("workspace-x"));
     assert.equal(config.app.assistant.timezone, "UTC");
     assert.equal(config.app.assistant.model, "gpt-5-mini");
+    assert.equal(config.app.agentAudit.enabled, true);
+    assert.equal(
+      config.app.agentAudit.path,
+      resolve(expectedStateDir, "audit", "agent-audit.ndjson")
+    );
+    assert.equal(config.app.agentAudit.maxFieldChars, 4000);
     assert.equal(config.app.sessionStorage.stateDir, expectedStateDir);
     assert.equal(config.app.sessionStorage.agentId, "main");
     assert.equal(
@@ -113,6 +119,9 @@ describe("runtime-config-loader", () => {
       ADJUTANT_MARKDOWN_SUMMARY_BATCH_INTERVAL_MS: "60000",
       ADJUTANT_MARKDOWN_SUMMARY_BATCH_MESSAGES: "20",
       ADJUTANT_MARKDOWN_SUMMARY_BATCH_MAX_SESSIONS: "300",
+      ADJUTANT_AGENT_AUDIT_LOG_ENABLED: "0",
+      ADJUTANT_AGENT_AUDIT_LOG_PATH: "/tmp/custom/agent-audit.ndjson",
+      ADJUTANT_AGENT_AUDIT_MAX_FIELD_CHARS: "1234",
     } as NodeJS.ProcessEnv);
 
     assert.equal(config.app.sessionStorage.stateDir, "/tmp/adjutant-state");
@@ -120,6 +129,9 @@ describe("runtime-config-loader", () => {
     assert.equal(config.app.sessionStorage.transcriptsDir, "/tmp/custom/sessions");
     assert.equal(config.app.sessionStorage.sessionEntriesPath, "/tmp/custom/sessions.json");
     assert.equal(config.app.assistant.workspaceDir, "/tmp/adjutant-state/workspace");
+    assert.equal(config.app.agentAudit.enabled, false);
+    assert.equal(config.app.agentAudit.path, "/tmp/custom/agent-audit.ndjson");
+    assert.equal(config.app.agentAudit.maxFieldChars, 1234);
     assert.equal(config.app.markdownSummaryBatch.enabled, true);
     assert.equal(config.app.markdownSummaryBatch.intervalMs, 60000);
     assert.equal(config.app.markdownSummaryBatch.messages, 20);

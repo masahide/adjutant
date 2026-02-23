@@ -174,19 +174,46 @@ type AgentAuditEvent =
 例1: ツール開始イベント
 
 ```json
-{"schema":"adjutant.agent.audit.v1","type":"tool.start","ts":"2026-02-23T12:00:00.000Z","runId":"r1","sessionKey":"main","toolName":"memory_search","args":{"query":"release note","apiKey":"***"}}
+{
+  "schema": "adjutant.agent.audit.v1",
+  "type": "tool.start",
+  "ts": "2026-02-23T12:00:00.000Z",
+  "runId": "r1",
+  "sessionKey": "main",
+  "toolName": "memory_search",
+  "args": { "query": "release note", "apiKey": "***" }
+}
 ```
 
 例2: ファイル読取イベント
 
 ```json
-{"schema":"adjutant.agent.audit.v1","type":"file.read","ts":"2026-02-23T12:00:00.150Z","runId":"r1","sessionKey":"main","path":"memory/2026-02-23.md","operation":"read","bytes":1820,"status":"ok"}
+{
+  "schema": "adjutant.agent.audit.v1",
+  "type": "file.read",
+  "ts": "2026-02-23T12:00:00.150Z",
+  "runId": "r1",
+  "sessionKey": "main",
+  "path": "memory/2026-02-23.md",
+  "operation": "read",
+  "bytes": 1820,
+  "status": "ok"
+}
 ```
 
 例3: 実行終了イベント
 
 ```json
-{"schema":"adjutant.agent.audit.v1","type":"run.end","ts":"2026-02-23T12:00:03.450Z","runId":"r1","sessionKey":"main","status":"ok","durationMs":3450,"modelId":"gpt-5-mini"}
+{
+  "schema": "adjutant.agent.audit.v1",
+  "type": "run.end",
+  "ts": "2026-02-23T12:00:03.450Z",
+  "runId": "r1",
+  "sessionKey": "main",
+  "status": "ok",
+  "durationMs": 3450,
+  "modelId": "gpt-5-mini"
+}
 ```
 
 ## 5. アーキテクチャと設計図 Architecture and Diagrams
@@ -293,49 +320,49 @@ sequenceDiagram
 
 ### Phase 1 設計と準備
 
-- [ ] 要件と仕様の確定 受け入れ条件の確定
-- [ ] インターフェース契約の確定 スキーマと例の追加
-- [ ] Mermaid図の作成 更新
-- [ ] インターフェース 型定義の作成
-- [ ] テスト基盤の確認（`tests/assistant` 既存流儀に合わせる）
+- [x] 要件と仕様の確定 受け入れ条件の確定
+- [x] インターフェース契約の確定 スキーマと例の追加
+- [x] Mermaid図の作成 更新
+- [x] インターフェース 型定義の作成
+- [x] テスト基盤の確認（`tests/assistant` 既存流儀に合わせる）
 
 ### Phase 2 ツール監査ログの実装
 
-- [ ] Test `AgentEventSubscriber` の失敗するテストを作成（tool.start/tool.end未出力を再現）Red
-- [ ] Impl `agent-event-subscriber` に監査ロガー連携を追加しテストを通す Green
-- [ ] Refactor ツールイベント整形とマスク処理を `AuditSerializer` へ集約
-- [ ] Integration `runAgent` 経由で `run.start/tool.start/tool.end/run.end` 出力の統合テスト追加
-- [ ] Docs 契約と例を更新
+- [x] Test `AgentEventSubscriber` の失敗するテストを作成（tool.start/tool.end未出力を再現）Red
+- [x] Impl `agent-event-subscriber` に監査ロガー連携を追加しテストを通す Green
+- [x] Refactor ツールイベント整形とマスク処理を `AuditSerializer` へ集約
+- [x] Integration `runAgent` 経由で `run.start/tool.start/tool.end/run.end` 出力の統合テスト追加
+- [x] Docs 契約と例を更新
 
 ### Phase 3 ファイルI/O監査ログの実装
 
-- [ ] Test `memory-reader` / `memory-writer` / `memory-search manager` の失敗するテストを追加 Red
-- [ ] Impl file.read/file.write 監査フックを追加してテストを通す Green
-- [ ] Refactor I/O監査の共通ヘルパー化（path/bytes/status整形）
-- [ ] Integration 実ファイルでNDJSON出力を確認する統合テストを追加
-- [ ] Docs 制約と運用手順（有効化env・保存先）を更新
+- [x] Test `memory-reader` / `memory-writer` / `memory-search manager` の失敗するテストを追加 Red
+- [x] Impl file.read/file.write 監査フックを追加してテストを通す Green
+- [x] Refactor I/O監査の共通ヘルパー化（path/bytes/status整形）
+- [x] Integration 実ファイルでNDJSON出力を確認する統合テストを追加
+- [x] Docs 制約と運用手順（有効化env・保存先）を更新
 
 ### Phase 4 統合と検証
 
-- [ ] 全体テストの実行（`pnpm run check`）
-- [ ] エッジケースの動作確認（巨大params、機密キー、書込み失敗）
-- [ ] ログと例外の確認（監査失敗時に本処理継続するか）
-- [ ] ドキュメント更新（仕様 契約 図）
+- [x] 全体テストの実行（`pnpm run check`）
+- [x] エッジケースの動作確認（巨大params、機密キー、書込み失敗）
+- [x] ログと例外の確認（監査失敗時に本処理継続するか）
+- [x] ドキュメント更新（仕様 契約 図）
 
 ## 8. 完了の定義 Definition of Done
 
 ### 8.1 機能DoD Functional DoD
 
-- [ ] 受け入れ条件がすべて満たされていること
-- [ ] 既知の制約が明文化され、想定通りであること
-- [ ] 契約例に対してNDJSON出力が期待通りであること
+- [x] 受け入れ条件がすべて満たされていること
+- [x] 既知の制約が明文化され、想定通りであること
+- [x] 契約例に対してNDJSON出力が期待通りであること
 
 ### 8.2 品質DoD Quality DoD
 
-- [ ] 全てのテストがパスしていること
-- [ ] Linter Formatterのエラーがないこと
-- [ ] 不要なデバッグコードが削除されていること
-- [ ] 主要な変更点がドキュメントに反映されていること
+- [x] 全てのテストがパスしていること
+- [x] Linter Formatterのエラーがないこと
+- [x] 不要なデバッグコードが削除されていること
+- [x] 主要な変更点がドキュメントに反映されていること
 
 ## 9. 懸念事項と未確定事項 Concerns and Questions
 

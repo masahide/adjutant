@@ -1,11 +1,22 @@
 import { appendFile, mkdir, stat, writeFile } from "node:fs/promises";
+import { relative, resolve } from "node:path";
+import { auditFileWrite, type AgentAuditScope } from "./agent-audit.js";
 import { resolveMemoryPaths } from "./memory-paths.js";
 
 export type MemoryWriteOptions = {
   workspaceDir: string;
   timezone: string;
   now?: Date;
+  auditScope?: AgentAuditScope;
 };
+
+function toAuditPath(workspaceDir: string, filePath: string): string {
+  const relPath = relative(resolve(workspaceDir), resolve(filePath)).replaceAll("\\", "/");
+  if (!relPath || relPath.startsWith("..")) {
+    return resolve(filePath);
+  }
+  return relPath;
+}
 
 async function hasExistingContent(filePath: string): Promise<boolean> {
   try {
@@ -27,17 +38,55 @@ export async function appendDailyMemory(content: string, opts: MemoryWriteOption
   }
 
   const paths = resolveMemoryPaths(opts);
-  await mkdir(paths.dailyDir, { recursive: true });
-
   const prefix = (await hasExistingContent(paths.dailyPath)) ? "\n" : "";
-  await appendFile(paths.dailyPath, `${prefix}${text}\n`, "utf8");
+  const line = `${prefix}${text}\n`;
+  const bytes = Buffer.byteLength(line, "utf8");
+  const auditPath = toAuditPath(opts.workspaceDir, paths.dailyPath);
+  try {
+    await mkdir(paths.dailyDir, { recursive: true });
+    await appendFile(paths.dailyPath, line, "utf8");
+    auditFileWrite({
+      scope: opts.auditScope,
+      path: auditPath,
+      bytes,
+      status: "ok",
+    });
+  } catch (error) {
+    auditFileWrite({
+      scope: opts.auditScope,
+      path: auditPath,
+      bytes,
+      status: "error",
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
 }
 
 export async function updateLongTermMemory(
   content: string,
   opts: MemoryWriteOptions
 ): Promise<void> {
-  await mkdir(opts.workspaceDir, { recursive: true });
   const paths = resolveMemoryPaths(opts);
-  await writeFile(paths.longTermPath, content, "utf8");
+  const bytes = Buffer.byteLength(content, "utf8");
+  const auditPath = toAuditPath(opts.workspaceDir, paths.longTermPath);
+  try {
+    await mkdir(opts.workspaceDir, { recursive: true });
+    await writeFile(paths.longTermPath, content, "utf8");
+    auditFileWrite({
+      scope: opts.auditScope,
+      path: auditPath,
+      bytes,
+      status: "ok",
+    });
+  } catch (error) {
+    auditFileWrite({
+      scope: opts.auditScope,
+      path: auditPath,
+      bytes,
+      status: "error",
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
 }

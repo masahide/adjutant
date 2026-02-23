@@ -113,25 +113,33 @@
 | ------------------------------ | --- | --------------------------------- | ---------------------------------------------------------------------------- |
 | `{stateDir}/idempotency.jsonl` | R/W | `ADJUTANT_IDEMPOTENCY_STORE_PATH` | `src/runtime/runtime-config-loader.ts`, `src/assistant/idempotency-store.ts` |
 
-## 10. ハートビート実行記録
+## 10. エージェント監査ログ
+
+| パス                                  | R/W | 環境変数での上書き                     | 定義箇所                                                               |
+| ------------------------------------- | --- | -------------------------------------- | ---------------------------------------------------------------------- |
+| `{stateDir}/audit/agent-audit.ndjson` | W   | `ADJUTANT_AGENT_AUDIT_LOG_PATH`        | `src/runtime/runtime-config-loader.ts`, `src/assistant/agent-audit.ts` |
+| (有効/無効)                           | -   | `ADJUTANT_AGENT_AUDIT_LOG_ENABLED`     | `src/runtime/runtime-config-loader.ts`, `src/assistant/main.ts`        |
+| (フィールド切り詰め上限)              | -   | `ADJUTANT_AGENT_AUDIT_MAX_FIELD_CHARS` | `src/runtime/runtime-config-loader.ts`, `src/assistant/agent-audit.ts` |
+
+## 11. ハートビート実行記録
 
 | パス                              | R/W | 定義箇所                            |
 | --------------------------------- | --- | ----------------------------------- |
 | `{stateDir}/heartbeat-runs.jsonl` | W   | `src/assistant/heartbeat-runner.ts` |
 
-## 11. メモリーサーチ (SQLite DB)
+## 12. メモリーサーチ (SQLite DB)
 
 | パス                                 | R/W | 環境変数での上書き               | 定義箇所                                                                          |
 | ------------------------------------ | --- | -------------------------------- | --------------------------------------------------------------------------------- |
 | `{stateDir}/memory/{agentId}.sqlite` | R/W | `ADJUTANT_MEMORY_SEARCH_DB_PATH` | `src/assistant/memory-search/config.ts`, `src/assistant/memory-search/manager.ts` |
 
-## 12. UI / Vite
+## 13. UI / Vite
 
 | パス                           | R/W  | 定義箇所                    |
 | ------------------------------ | ---- | --------------------------- |
 | `{cwd}/node_modules/.bin/vite` | 実行 | `src/assistant/main.ts:631` |
 
-## 13. JSONL リカバリ
+## 14. JSONL リカバリ
 
 起動時に以下のパスから `.jsonl` ファイルを自動スキャン・修復する (`src/assistant/main.ts:214-235`, `src/index.ts:57-71`)。
 
@@ -186,6 +194,8 @@
     ├── watermarks.json                      [R/W] ウォーターマーク
     ├── idempotency.jsonl                    [R/W] 冪等性ストア
     ├── heartbeat-runs.jsonl                 [W]   HB実行記録
+    ├── audit/
+    │   └── agent-audit.ndjson               [W]   エージェント監査ログ
     ├── memory/
     │   └── main.sqlite                      [R/W] メモリーサーチDB
     └── agents/main/

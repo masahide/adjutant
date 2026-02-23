@@ -1,6 +1,7 @@
 import { createApiServer } from "./api-server.js";
 import * as ChatHandler from "./chat-handler.js";
 import * as StreamEventBridge from "./stream-event-bridge.js";
+import { configureAgentAuditLogger } from "./agent-audit.js";
 import { configureSandbox } from "./agent-session-factory.js";
 import { createAgentRunAdapter } from "./main.adapter.js";
 import { createMarkdownSummaryBatchService } from "./markdown-summary-batch.js";
@@ -53,6 +54,7 @@ const WORKSPACE_DIR = runtimeConfig.app.assistant.workspaceDir;
 const TIMEZONE = runtimeConfig.app.assistant.timezone;
 const MODEL = runtimeConfig.app.assistant.model;
 const TIMELINE_PATH = runtimeConfig.app.assistant.timelinePath;
+const AGENT_AUDIT = runtimeConfig.app.agentAudit;
 const SESSION_STATE_DIR = runtimeConfig.app.sessionStorage.stateDir;
 const SESSION_AGENT_ID = runtimeConfig.app.sessionStorage.agentId;
 const SESSION_TRANSCRIPTS_DIR = runtimeConfig.app.sessionStorage.transcriptsDir;
@@ -69,6 +71,15 @@ const SLACK_RETRY_MAX_MS = runtimeConfig.app.slack.retryMaxMs;
 const SLACK_DEFAULT_ACCOUNT_ID = runtimeConfig.app.slack.defaultAccountId;
 const FLUSHER_INTERVAL_MS = parsePositiveInt(process.env.ADJUTANT_FLUSHER_INTERVAL_MS, 300_000);
 const FLUSHER_STALE_MS = parsePositiveInt(process.env.ADJUTANT_FLUSHER_STALE_MS, 900_000);
+
+configureAgentAuditLogger({
+  enabled: AGENT_AUDIT.enabled,
+  path: AGENT_AUDIT.path,
+  maxFieldChars: AGENT_AUDIT.maxFieldChars,
+  onWarn: (message, meta) => {
+    console.warn("[AssistantGateway][AgentAudit]", message, meta ?? {});
+  },
+});
 
 function toReason(error: unknown): string {
   return error instanceof Error ? error.message : String(error);

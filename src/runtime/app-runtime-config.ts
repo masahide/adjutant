@@ -46,6 +46,12 @@ export type SlackRuntimeConfig = {
   domCaptureDisabled: boolean;
 };
 
+export type AgentAuditRuntimeConfig = {
+  enabled: boolean;
+  path: string;
+  maxFieldChars: number;
+};
+
 export type MarkdownSummaryBatchRuntimeConfig = {
   enabled: boolean;
   intervalMs: number;
@@ -70,6 +76,7 @@ export type SandboxRuntimeConfig = {
 
 export type AppRuntimeConfig = {
   assistant: AssistantRuntimeConfig;
+  agentAudit: AgentAuditRuntimeConfig;
   sessionStorage: SessionStorageRuntimeConfig;
   markdownSummaryBatch: MarkdownSummaryBatchRuntimeConfig;
   sandbox: SandboxRuntimeConfig;

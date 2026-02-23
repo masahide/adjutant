@@ -33,6 +33,7 @@ describe("session-store-repository", () => {
           return true;
         },
       },
+      runId: "run-1",
       sessionKey: "main",
       sessionEntriesPath: "/tmp/sessions.json",
       sessionStoreState: { path: "/tmp/sessions.json", store: { main: {} } },

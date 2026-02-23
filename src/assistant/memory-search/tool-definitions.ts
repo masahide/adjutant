@@ -1,4 +1,5 @@
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
+import type { AgentAuditScope } from "../agent-audit.js";
 import { resolveMemorySearchRuntimeConfig } from "./config.js";
 import { normalizeMemorySearchError } from "./errors.js";
 import { jsonToolResult } from "./json-tool-result.js";
@@ -48,6 +49,7 @@ function readNumberParam(params: Record<string, unknown>, key: string): number |
 
 type MemoryToolFactoryOptions = {
   workspaceDir: string;
+  auditScope?: AgentAuditScope;
   config?: MemorySearchRuntimeConfig;
   embeddingProvider?: EmbeddingProvider;
   onWarn?: (message: string, meta?: Record<string, unknown>) => void;
@@ -88,6 +90,7 @@ export function createMemoryToolDefinitions(params: MemoryToolFactoryOptions): T
         const result = await manager.search(query ?? "", {
           maxResults,
           minScore,
+          auditScope: params.auditScope,
         });
         return jsonToolResult({
           results: result.results,
@@ -140,6 +143,7 @@ export function createMemoryToolDefinitions(params: MemoryToolFactoryOptions): T
           relPath: path,
           from: from !== undefined ? Math.floor(from) : undefined,
           lines: lines !== undefined ? Math.floor(lines) : undefined,
+          auditScope: params.auditScope,
         });
         return jsonToolResult(result);
       } catch (error) {

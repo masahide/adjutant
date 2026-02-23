@@ -22,6 +22,8 @@ type SessionStoreRepositoryRuntime = {
   }) => unknown;
   createSession: (params: {
     sessionManager: unknown;
+    runId: string;
+    sessionKey: string;
     model?: string;
     isHeartbeat?: boolean;
     memoryWriteEnabled?: boolean;
@@ -137,6 +139,7 @@ export function resolveSessionMetadata(session: SessionLikeForStore): {
 
 export async function createSessionWithRecovery(params: {
   runtime: SessionStoreRepositoryRuntime;
+  runId: string;
   sessionKey: string;
   sessionId?: string;
   sessionEntriesPath: string;
@@ -161,6 +164,8 @@ export async function createSessionWithRecovery(params: {
     });
     return await params.runtime.createSession({
       sessionManager,
+      runId: params.runId,
+      sessionKey: params.sessionKey,
       model: params.model,
       isHeartbeat: params.isHeartbeat,
       memoryWriteEnabled: params.memoryWriteEnabled,

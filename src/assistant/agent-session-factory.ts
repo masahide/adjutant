@@ -8,6 +8,7 @@ import {
   SettingsManager,
   type ToolDefinition,
 } from "@mariozechner/pi-coding-agent";
+import type { AgentAuditScope } from "./agent-audit.js";
 import { createMemoryToolDefinitions } from "./memory-search/index.js";
 import { createDockerBashOperations, shouldSandbox } from "../sandbox/docker-bash-operations.js";
 import type { SandboxMode } from "../sandbox/types.js";
@@ -25,6 +26,8 @@ export type AgentSessionLike = {
 
 export type CreateAgentSessionParams = {
   sessionManager: unknown;
+  runId: string;
+  sessionKey: string;
   model?: string;
   isHeartbeat?: boolean;
   memoryWriteEnabled?: boolean;
@@ -153,6 +156,10 @@ export async function createAgentSessionFromSdk(
     customTools.push(
       ...createMemoryToolDefinitions({
         workspaceDir: params.workspaceDir,
+        auditScope: {
+          runId: params.runId,
+          sessionKey: params.sessionKey,
+        } satisfies AgentAuditScope,
         onWarn: (message, meta) => {
           params.onWarn?.(message, meta);
         },

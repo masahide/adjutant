@@ -7,6 +7,7 @@ import { OpenAiEmbeddingProvider } from "./embedding-provider.js";
 import { MemorySearchError } from "./errors.js";
 import { MemoryPathGuard } from "./path-guard.js";
 import { SQL, createVectorTableSql } from "./sql.js";
+import { auditFileRead, type AgentAuditScope } from "../agent-audit.js";
 import type {
   EmbeddingProvider,
   MemoryFileRecord,
@@ -45,6 +46,22 @@ function bm25RankToScore(rank: number): number {
   return 1 / (1 + normalized);
 }
 
+function normalizeWorkspaceRelativePath(
+  workspaceDir: string,
+  preferredPath: string,
+  fallbackPath: string
+): string {
+  const preferred = relative(workspaceDir, preferredPath).replaceAll("\\", "/");
+  if (preferred && !preferred.startsWith("..")) {
+    return preferred;
+  }
+  const fallback = relative(workspaceDir, fallbackPath).replaceAll("\\", "/");
+  if (fallback && !fallback.startsWith("..")) {
+    return fallback;
+  }
+  return preferredPath.replaceAll("\\", "/");
+}
+
 type ChunkRow = {
   id: string;
   path: string;
@@ -54,20 +71,47 @@ type ChunkRow = {
   source: "memory";
 };
 
+type FileReadAuditEntry = {
+  path: string;
+  bytes?: number;
+  status: "ok" | "error";
+  error?: string;
+};
+
+type ReadFileUtf8 = (path: string) => Promise<string>;
+
+function defaultReadFileUtf8(path: string): Promise<string> {
+  return readFile(path, "utf8");
+}
+
+class SyncIndexReadError extends Error {
+  readonly cause: unknown;
+  readonly auditEntries: FileReadAuditEntry[];
+
+  constructor(cause: unknown, auditEntries: FileReadAuditEntry[]) {
+    super("memory_search index sync read failed");
+    this.name = "SyncIndexReadError";
+    this.cause = cause;
+    this.auditEntries = auditEntries;
+  }
+}
+
 export class MemorySearchManager {
   private readonly workspaceDir: string;
   private readonly cfg: MemorySearchRuntimeConfig;
   private readonly embeddingProvider: EmbeddingProvider;
   private readonly db: DatabaseSync;
   private readonly pathGuard: MemoryPathGuard;
+  private readonly readFileUtf8: ReadFileUtf8;
   private vectorDims: number | null = null;
   private hasVectorTable = false;
-  private syncPromise: Promise<void> | null = null;
+  private syncPromise: Promise<FileReadAuditEntry[]> | null = null;
 
   static async create(params: {
     workspaceDir: string;
     config: MemorySearchRuntimeConfig;
     embeddingProvider?: EmbeddingProvider;
+    readFileUtf8?: ReadFileUtf8;
   }): Promise<MemorySearchManager> {
     const resolvedDbPath = resolve(params.config.dbPath);
     await mkdir(dirname(resolvedDbPath), { recursive: true });
@@ -85,6 +129,7 @@ export class MemorySearchManager {
       workspaceDir: params.workspaceDir,
       config,
       embeddingProvider,
+      readFileUtf8: params.readFileUtf8 ?? defaultReadFileUtf8,
     });
     await manager.initialize();
     return manager;
@@ -94,11 +139,13 @@ export class MemorySearchManager {
     workspaceDir: string;
     config: MemorySearchRuntimeConfig;
     embeddingProvider: EmbeddingProvider;
+    readFileUtf8: ReadFileUtf8;
   }) {
     this.workspaceDir = resolve(params.workspaceDir);
     this.cfg = params.config;
     this.embeddingProvider = params.embeddingProvider;
     this.pathGuard = new MemoryPathGuard(this.workspaceDir);
+    this.readFileUtf8 = params.readFileUtf8;
     const dbPath = resolve(params.config.dbPath);
     this.db = new DatabaseSync(dbPath, {
       allowExtension: true,
@@ -140,14 +187,14 @@ export class MemorySearchManager {
 
   async search(
     query: string,
-    options?: { maxResults?: number; minScore?: number }
+    options?: { maxResults?: number; minScore?: number; auditScope?: AgentAuditScope }
   ): Promise<{
     results: MemorySearchResult[];
     provider: string;
     model: string;
     fallback?: { from: string; reason?: string };
   }> {
-    await this.syncIndex();
+    await this.syncIndex(options?.auditScope);
     const cleaned = query.trim();
     if (!cleaned) {
       return {
@@ -306,6 +353,7 @@ export class MemorySearchManager {
     relPath: string;
     from?: number;
     lines?: number;
+    auditScope?: AgentAuditScope;
   }): Promise<{ path: string; text: string }> {
     let resolvedPath: { relPath: string; absPath: string };
     try {
@@ -314,7 +362,24 @@ export class MemorySearchManager {
       throw new MemorySearchError("permission_denied", "path required", error);
     }
 
-    const content = await readFile(resolvedPath.absPath, "utf8");
+    let content: string;
+    try {
+      content = await this.readFileUtf8(resolvedPath.absPath);
+      auditFileRead({
+        scope: params.auditScope,
+        path: resolvedPath.relPath,
+        bytes: Buffer.byteLength(content, "utf8"),
+        status: "ok",
+      });
+    } catch (error) {
+      auditFileRead({
+        scope: params.auditScope,
+        path: resolvedPath.relPath,
+        status: "error",
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
 
     if (params.from === undefined && params.lines === undefined) {
       return { path: resolvedPath.relPath, text: content };
@@ -331,18 +396,28 @@ export class MemorySearchManager {
     this.db.close();
   }
 
-  private async syncIndex(): Promise<void> {
-    if (this.syncPromise) {
-      return this.syncPromise;
+  private async syncIndex(auditScope?: AgentAuditScope): Promise<void> {
+    if (!this.syncPromise) {
+      const syncTask = this.runSyncIndex();
+      this.syncPromise = syncTask.finally(() => {
+        this.syncPromise = null;
+      });
     }
-    this.syncPromise = this.runSyncIndex().finally(() => {
-      this.syncPromise = null;
-    });
-    return this.syncPromise;
+    try {
+      const auditEntries = await this.syncPromise;
+      this.emitFileReadAudits(auditScope, auditEntries);
+    } catch (error) {
+      if (error instanceof SyncIndexReadError) {
+        this.emitFileReadAudits(auditScope, error.auditEntries);
+        throw error.cause;
+      }
+      throw error;
+    }
   }
 
-  private async runSyncIndex(): Promise<void> {
-    const files = await this.listMemoryFiles();
+  private async runSyncIndex(): Promise<FileReadAuditEntry[]> {
+    const indexed = await this.listMemoryFiles();
+    const files = indexed.files;
     const fileMap = new Map(files.map((file) => [file.path, file]));
     const currentRows = this.db.prepare(SQL.selectFileHashes).all() as Array<{
       path: string;
@@ -361,10 +436,15 @@ export class MemorySearchManager {
       }
       await this.upsertFile(file);
     }
+    return indexed.auditEntries;
   }
 
-  private async listMemoryFiles(): Promise<MemoryFileRecord[]> {
+  private async listMemoryFiles(): Promise<{
+    files: MemoryFileRecord[];
+    auditEntries: FileReadAuditEntry[];
+  }> {
     const files: string[] = [];
+    const auditEntries: FileReadAuditEntry[] = [];
     const memoryLongTerm = join(this.workspaceDir, "MEMORY.md");
     const memoryDir = join(this.workspaceDir, "memory");
 
@@ -411,9 +491,24 @@ export class MemorySearchManager {
     const result: MemoryFileRecord[] = [];
     for (const absPath of deduped) {
       const absRealPath = await realpath(absPath).catch(() => absPath);
-      const content = await readFile(absRealPath, "utf8");
+      const relPath = normalizeWorkspaceRelativePath(this.workspaceDir, absPath, absRealPath);
+      let content: string;
+      try {
+        content = await this.readFileUtf8(absRealPath);
+        auditEntries.push({
+          path: relPath,
+          bytes: Buffer.byteLength(content, "utf8"),
+          status: "ok",
+        });
+      } catch (error) {
+        auditEntries.push({
+          path: relPath,
+          status: "error",
+          error: error instanceof Error ? error.message : String(error),
+        });
+        throw new SyncIndexReadError(error, [...auditEntries]);
+      }
       const info = await stat(absRealPath);
-      const relPath = relative(this.workspaceDir, absRealPath).replaceAll("\\", "/");
       result.push({
         path: relPath,
         absPath: absRealPath,
@@ -423,7 +518,28 @@ export class MemorySearchManager {
         size: info.size,
       });
     }
-    return result;
+    return {
+      files: result,
+      auditEntries,
+    };
+  }
+
+  private emitFileReadAudits(
+    auditScope: AgentAuditScope | undefined,
+    entries: FileReadAuditEntry[]
+  ): void {
+    if (!auditScope) {
+      return;
+    }
+    for (const entry of entries) {
+      auditFileRead({
+        scope: auditScope,
+        path: entry.path,
+        bytes: entry.bytes,
+        status: entry.status,
+        error: entry.error,
+      });
+    }
   }
 
   private deletePath(relPath: string): void {

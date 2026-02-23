@@ -129,6 +129,8 @@ export function loadAssistantGatewayRuntimeConfig(
   const timezone = parseStringEnv(env.ADJUTANT_TZ, "Asia/Tokyo");
   const vitePort = parsePositiveIntEnv(env.ADJUTANT_VITE_PORT, 5173);
   const timelinePath = env.ADJUTANT_TIMELINE_PATH?.trim() || join(stateDir, "timeline.jsonl");
+  const agentAuditLogPath =
+    env.ADJUTANT_AGENT_AUDIT_LOG_PATH?.trim() || join(stateDir, "audit", "agent-audit.ndjson");
   const idempotencyStorePath =
     env.ADJUTANT_IDEMPOTENCY_STORE_PATH?.trim() || join(stateDir, "idempotency.jsonl");
   const slackAccountId = normalizeAccountId(
@@ -148,6 +150,11 @@ export function loadAssistantGatewayRuntimeConfig(
         timezone,
         model: env.ADJUTANT_MODEL?.trim() || undefined,
         timelinePath,
+      },
+      agentAudit: {
+        enabled: parseBooleanEnv(env.ADJUTANT_AGENT_AUDIT_LOG_ENABLED, true),
+        path: resolve(agentAuditLogPath),
+        maxFieldChars: parsePositiveIntEnv(env.ADJUTANT_AGENT_AUDIT_MAX_FIELD_CHARS, 4000),
       },
       sessionStorage: {
         stateDir,

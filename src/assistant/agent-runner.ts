@@ -2,6 +2,7 @@ import { SessionManager } from "@mariozechner/pi-coding-agent";
 import { constants as fsConstants } from "node:fs";
 import { access, rename } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { auditRunEnd, auditRunStart, type AgentAuditScope } from "./agent-audit.js";
 import { appendDailyMemory, updateLongTermMemory } from "./memory-writer.js";
 import { readMemoryFiles } from "./memory-reader.js";
 import {
@@ -94,6 +95,8 @@ type AgentRunnerRuntime = {
   }) => unknown;
   createSession: (params: {
     sessionManager: unknown;
+    runId: string;
+    sessionKey: string;
     model?: string;
     isHeartbeat?: boolean;
     memoryWriteEnabled?: boolean;
@@ -174,6 +177,8 @@ const defaultRuntime: AgentRunnerRuntime = {
   },
   createSession: async ({
     sessionManager,
+    runId,
+    sessionKey,
     model,
     isHeartbeat,
     memoryWriteEnabled,
@@ -182,6 +187,8 @@ const defaultRuntime: AgentRunnerRuntime = {
   }) =>
     await createAgentSessionFromSdk({
       sessionManager,
+      runId,
+      sessionKey,
       model,
       isHeartbeat,
       memoryWriteEnabled,
@@ -395,45 +402,18 @@ async function runAgentInternal(opts: AgentRunOptions): Promise<AgentRunResult> 
   const runtime = getRuntime();
   const startedAtMs = runtime.nowMs();
   const context = resolveAgentRunContext(opts);
+  const auditScope: AgentAuditScope = {
+    runId: context.runId,
+    sessionKey: context.sessionKey,
+  };
+  auditRunStart({
+    scope: auditScope,
+    origin: context.origin,
+    modelId: context.model,
+  });
   let terminalActionType: "assistant_final" | "assistant_aborted" | "assistant_error" =
     "assistant_error";
   let terminalReason: string | undefined;
-
-  if (context.model && !runtime.isModelAvailable(context.model)) {
-    throw new Error(`model unavailable: ${context.model}`);
-  }
-
-  const compactionSettings = resolveCompactionRuntimeSettings();
-  if (context.origin === "user") {
-    await runtime.ensureWorkspaceBootstrapFiles(context.workspaceDir);
-  }
-  const memory =
-    context.memoryScope === "main"
-      ? await runtime.readMemoryFiles({
-          workspaceDir: context.workspaceDir,
-          timezone: context.timezone,
-        })
-      : { longTerm: null, daily: null, yesterday: null };
-
-  const bootstrapFiles = shouldInjectBootstrapContext(context)
-    ? await runtime.loadWorkspaceBootstrapFiles(context.workspaceDir)
-    : undefined;
-  const prompt = buildAgentPrompt({
-    basePrompt: context.prompt,
-    systemPrompt: context.systemPrompt,
-    memory: {
-      longTerm: memory.longTerm,
-      daily: memory.daily,
-    },
-    bootstrapFiles,
-    onBootstrapWarn: (message, meta) => {
-      console.warn("[AgentRunner][BootstrapContext]", message, {
-        sessionKey: context.sessionKey,
-        origin: context.origin,
-        ...(meta ?? {}),
-      });
-    },
-  });
 
   let releaseLock: (() => void | Promise<void>) | undefined;
   let session: SessionLike | undefined;
@@ -453,6 +433,43 @@ async function runAgentInternal(opts: AgentRunOptions): Promise<AgentRunResult> 
   let isSilentTurn = false;
 
   try {
+    if (context.model && !runtime.isModelAvailable(context.model)) {
+      throw new Error(`model unavailable: ${context.model}`);
+    }
+
+    const compactionSettings = resolveCompactionRuntimeSettings();
+    if (context.origin === "user") {
+      await runtime.ensureWorkspaceBootstrapFiles(context.workspaceDir);
+    }
+    const memory =
+      context.memoryScope === "main"
+        ? await runtime.readMemoryFiles({
+            workspaceDir: context.workspaceDir,
+            timezone: context.timezone,
+            auditScope,
+          })
+        : { longTerm: null, daily: null, yesterday: null };
+
+    const bootstrapFiles = shouldInjectBootstrapContext(context)
+      ? await runtime.loadWorkspaceBootstrapFiles(context.workspaceDir)
+      : undefined;
+    const prompt = buildAgentPrompt({
+      basePrompt: context.prompt,
+      systemPrompt: context.systemPrompt,
+      memory: {
+        longTerm: memory.longTerm,
+        daily: memory.daily,
+      },
+      bootstrapFiles,
+      onBootstrapWarn: (message, meta) => {
+        console.warn("[AgentRunner][BootstrapContext]", message, {
+          sessionKey: context.sessionKey,
+          origin: context.origin,
+          ...(meta ?? {}),
+        });
+      },
+    });
+
     releaseLock = await runtime.acquireLock(toSessionStoreLockKey(context.sessionEntriesPath));
     sessionStoreState = await runtime.loadSessionEntryStore(context.sessionEntriesPath);
     const sessionEntry = getSessionEntry(sessionStoreState.store, context.sessionKey);
@@ -469,6 +486,7 @@ async function runAgentInternal(opts: AgentRunOptions): Promise<AgentRunResult> 
       isHeartbeat: context.isHeartbeat,
       memoryWriteEnabled: context.memoryWriteEnabled,
       memoryScope: context.memoryScope,
+      runId: context.runId,
     });
     sessionStoreState = createdState.sessionStoreState;
     previousUpdatedAt = createdState.previousUpdatedAt;
@@ -481,6 +499,7 @@ async function runAgentInternal(opts: AgentRunOptions): Promise<AgentRunResult> 
       memoryWriteEnabled: context.memoryWriteEnabled,
       workspaceDir: context.workspaceDir,
       timezone: context.timezone,
+      auditScope,
       compactionTracker,
       isSilentTurn: () => isSilentTurn,
       onTextDelta: opts.onTextDelta,
@@ -567,6 +586,19 @@ async function runAgentInternal(opts: AgentRunOptions): Promise<AgentRunResult> 
     const effectiveActionType = opts.isAborted?.() ? "assistant_aborted" : terminalActionType;
     const durationMs = Math.max(0, runtime.nowMs() - startedAtMs);
     const ts = new Date(runtime.nowMs()).toISOString();
+    const runStatus =
+      effectiveActionType === "assistant_final"
+        ? "ok"
+        : effectiveActionType === "assistant_aborted"
+          ? "aborted"
+          : "error";
+    auditRunEnd({
+      scope: auditScope,
+      status: runStatus,
+      durationMs,
+      modelId: sessionMetadata?.modelId ?? context.model,
+      error: terminalReason,
+    });
     if (opts.onTerminalRecord) {
       try {
         await opts.onTerminalRecord({
