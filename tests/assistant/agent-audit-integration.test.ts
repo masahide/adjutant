@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   configureAgentAuditLogger,
-  flushAgentAuditLoggerForTest,
   resetAgentAuditLoggerForTest,
 } from "../../src/assistant/agent-audit.js";
 import {
@@ -81,7 +80,6 @@ describe("agent-audit integration", () => {
         sessionEntriesPath: join(workspaceDir, "sessions.json"),
         memoryScope: "spoke",
       });
-      await flushAgentAuditLoggerForTest();
 
       const records = (await readFile(auditPath, "utf8"))
         .trim()
@@ -170,7 +168,6 @@ describe("agent-audit integration", () => {
         }),
         /model unavailable/
       );
-      await flushAgentAuditLoggerForTest();
 
       const records = (await readFile(auditPath, "utf8"))
         .trim()
@@ -225,7 +222,6 @@ describe("agent-audit integration", () => {
           memoryScope: "spoke",
         })
       );
-      await flushAgentAuditLoggerForTest();
 
       const records = (await readFile(auditPath, "utf8"))
         .trim()

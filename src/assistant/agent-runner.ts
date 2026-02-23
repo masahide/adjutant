@@ -2,7 +2,12 @@ import { SessionManager } from "@mariozechner/pi-coding-agent";
 import { constants as fsConstants } from "node:fs";
 import { access, rename } from "node:fs/promises";
 import { dirname } from "node:path";
-import { auditRunEnd, auditRunStart, type AgentAuditScope } from "./agent-audit.js";
+import {
+  auditRunEnd,
+  auditRunStart,
+  flushAgentAuditLogger,
+  type AgentAuditScope,
+} from "./agent-audit.js";
 import { appendDailyMemory, updateLongTermMemory } from "./memory-writer.js";
 import { readMemoryFiles } from "./memory-reader.js";
 import {
@@ -616,6 +621,15 @@ async function runAgentInternal(opts: AgentRunOptions): Promise<AgentRunResult> 
       modelId: sessionMetadata?.modelId ?? context.model,
       error: terminalReason,
     });
+    try {
+      await flushAgentAuditLogger();
+    } catch (error) {
+      console.warn("[AgentRunner] audit flush failed", {
+        runId: context.runId,
+        sessionKey: context.sessionKey,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
     if (opts.onTerminalRecord) {
       try {
         await opts.onTerminalRecord({

@@ -213,8 +213,12 @@ export function resetAgentAuditLoggerForTest(): void {
   activeAgentAuditLogger = null;
 }
 
-export async function flushAgentAuditLoggerForTest(): Promise<void> {
+export async function flushAgentAuditLogger(): Promise<void> {
   await activeAgentAuditLogger?.flush();
+}
+
+export async function flushAgentAuditLoggerForTest(): Promise<void> {
+  await flushAgentAuditLogger();
 }
 
 function withTs<T extends { ts: string }>(builder: (ts: string) => T): T | null {
