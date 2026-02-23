@@ -10,22 +10,25 @@ import {
   type AgentSessionLike,
 } from "../../src/assistant/agent-session-factory.js";
 
-type BashToolLike = {
+type ToolLike = {
   name: string;
   execute: (
     toolCallId: string,
-    params: { command: string; timeout?: number },
+    params: unknown,
     signal?: AbortSignal,
     onUpdate?: unknown
   ) => Promise<unknown>;
 };
 
-function getBashTool(session: AgentSessionLike): BashToolLike {
-  const tools =
-    (session as AgentSessionLike & { state: { tools: BashToolLike[] } }).state?.tools ?? [];
-  const bash = tools.find((tool) => tool.name === "bash");
-  assert.ok(bash, "bash tool should be available");
-  return bash;
+function getTool(session: AgentSessionLike, name: string): ToolLike {
+  const tools = (session as AgentSessionLike & { state: { tools: ToolLike[] } }).state?.tools ?? [];
+  const found = tools.find((tool) => tool.name === name);
+  assert.ok(found, `${name} tool should be available`);
+  return found;
+}
+
+function getBashTool(session: AgentSessionLike): ToolLike {
+  return getTool(session, "bash");
 }
 
 async function createTestSession(params: {
@@ -67,7 +70,7 @@ describe("agent-session-factory sandbox bash", () => {
       });
       const bashTool = getBashTool(session);
       await assert.rejects(
-        bashTool.execute("tool-call-1", { command: "echo sandbox-check" }),
+        bashTool.execute("tool-call-1", { command: "echo sandbox-check" } as unknown),
         /docker|container|not found|Command exited with code/i
       );
       session.dispose();
@@ -89,9 +92,41 @@ describe("agent-session-factory sandbox bash", () => {
       const bashTool = getBashTool(session);
       const result = (await bashTool.execute("tool-call-2", {
         command: "echo local-check",
-      })) as { content?: Array<{ type: string; text?: string }> };
+      } as unknown)) as { content?: Array<{ type: string; text?: string }> };
       const text = result.content?.[0]?.text ?? "";
       assert.match(text, /local-check/);
+      session.dispose();
+    } finally {
+      await rm(workspaceDir, { recursive: true, force: true });
+    }
+  });
+
+  it("heartbeat セッションでは report_heartbeat_status ツールが利用できる", async () => {
+    const workspaceDir = await mkdtemp(join(tmpdir(), "adjutant-session-heartbeat-"));
+    configureSandbox(null);
+    try {
+      const session = await createTestSession({
+        workspaceDir,
+        memoryScope: "spoke",
+        isHeartbeat: true,
+      });
+      const reportTool = getTool(session, "report_heartbeat_status");
+      const result = (await reportTool.execute("tool-call-heartbeat", {
+        status: "no_action_needed",
+        notify: false,
+        reason: "no urgent items",
+      })) as {
+        details?: {
+          status?: string;
+          notify?: boolean;
+          reason?: string;
+        };
+      };
+      assert.deepEqual(result.details, {
+        status: "no_action_needed",
+        notify: false,
+        reason: "no urgent items",
+      });
       session.dispose();
     } finally {
       await rm(workspaceDir, { recursive: true, force: true });

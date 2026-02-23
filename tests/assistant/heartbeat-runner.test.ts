@@ -243,6 +243,40 @@ describe("HeartbeatRunner", () => {
     }
   });
 
+  it("旧式 HEARTBEAT.md でも report_heartbeat_status 契約を自動追記する", async () => {
+    const tempDir = await mkdtemp(`${tmpdir()}/adjutant-heartbeat-`);
+    try {
+      await preparePromptFiles(
+        tempDir,
+        "# Heartbeat Checklist\n\n- 緊急性が低い場合は `HEARTBEAT_OK` を返す"
+      );
+      let capturedPrompt = "";
+      setHeartbeatRuntimeForTest({
+        readEvents: async () => [],
+        readMemoryFiles: async () => ({
+          longTerm: null,
+          daily: null,
+          yesterday: null,
+        }),
+        buildEventContext: () => ({ text: "", truncated: false, eventCount: 0 }),
+        getQueueSize: () => 0,
+        runAgent: async (opts) => {
+          capturedPrompt = opts.prompt;
+          return createToolAgentResult({
+            status: "no_action_needed",
+            notify: false,
+            reason: "all good",
+          });
+        },
+      });
+
+      await runOnce(createBaseConfig(tempDir), { reason: "manual" });
+      assert.match(capturedPrompt, /report_heartbeat_status/);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("report_heartbeat_status ツール呼び出しが無いと failed になる", async () => {
     const tempDir = await mkdtemp(`${tmpdir()}/adjutant-heartbeat-`);
     try {

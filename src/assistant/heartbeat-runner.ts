@@ -87,14 +87,13 @@ type HeartbeatVisibility = {
 const DEFAULT_INTERVAL_MS = 30 * 60 * 1000;
 const DEFAULT_TIMEOUT_MS = 30 * 1000;
 const DEFAULT_RETRY_DELAY_MS = 1000;
-const DEFAULT_HEARTBEAT_PROMPT = [
-  "# HEARTBEAT",
-  "",
+const HEARTBEAT_TOOL_CONTRACT = [
   "You must call `report_heartbeat_status` exactly once.",
   "status は no_action_needed / needs_attention / task_completed のいずれか。",
   "notify はユーザー通知が必要なら true。",
   "reason には簡潔な根拠を書く。",
 ].join("\n");
+const DEFAULT_HEARTBEAT_PROMPT = ["# HEARTBEAT", "", HEARTBEAT_TOOL_CONTRACT].join("\n");
 const HEARTBEAT_RUN_RECORD_RELATIVE_PATH = "heartbeat-runs.jsonl";
 const HEARTBEAT_DUPLICATE_WINDOW_MS = 24 * 60 * 60 * 1000;
 const SESSION_KEY_PATTERN = /^[A-Za-z0-9:_-]+$/;
@@ -265,6 +264,14 @@ function collapseWhitespace(text: string): string {
 function isEffectivelyEmptyHeartbeatPrompt(text: string): boolean {
   const withoutComments = text.replace(/<!--[\s\S]*?-->/g, " ");
   return collapseWhitespace(withoutComments).length === 0;
+}
+
+function ensureHeartbeatToolContract(text: string): string {
+  const normalized = collapseWhitespace(text).toLowerCase();
+  if (normalized.includes("report_heartbeat_status")) {
+    return text;
+  }
+  return [text.trim(), HEARTBEAT_TOOL_CONTRACT].filter(Boolean).join("\n\n");
 }
 
 function formatCurrentTimeLine(now: Date, timezone: string): string {
@@ -491,7 +498,15 @@ function resolveHeartbeatToolStatus(
     try {
       return validateReportHeartbeatStatusInput(call.result);
     } catch {
-      return null;
+      const wrapped = asRecord(call.result);
+      if (!wrapped) {
+        return null;
+      }
+      try {
+        return validateReportHeartbeatStatusInput(wrapped.details);
+      } catch {
+        return null;
+      }
     }
   }
   return null;
@@ -642,8 +657,8 @@ export async function runOnce(
   try {
     const heartbeatPath = resolvePath(config.heartbeatFilePath ?? "assistant/prompts/HEARTBEAT.md");
     const heartbeatPromptRaw = await readOptionalText(runtime, heartbeatPath);
-    const heartbeatPrompt = normalizeText(heartbeatPromptRaw ?? DEFAULT_HEARTBEAT_PROMPT);
-    if (isEffectivelyEmptyHeartbeatPrompt(heartbeatPrompt)) {
+    const heartbeatPromptSource = normalizeText(heartbeatPromptRaw ?? DEFAULT_HEARTBEAT_PROMPT);
+    if (isEffectivelyEmptyHeartbeatPrompt(heartbeatPromptSource)) {
       const result: HeartbeatRunResult = { status: "skipped", reason: "empty-heartbeat-file" };
       return await finalizeRun({
         runtime,
@@ -659,6 +674,7 @@ export async function runOnce(
         },
       });
     }
+    const heartbeatPrompt = ensureHeartbeatToolContract(heartbeatPromptSource);
 
     const workspaceDir = resolveWorkspaceDir(config);
     const [events, memory, soulPromptRaw, userPromptRaw, agentsPromptRaw] = await Promise.all([
