@@ -14,7 +14,7 @@ Slack Desktop の Chrome DevTools Protocol (CDP) からイベントを収集し�
 - Slack通知の一次判定（`TriggerFilter.secondaryClassifier`）に OpenAI 軽量モデルを接続可能
 
 GitHub / ローカル Git 収集は未実装で、仕様メモは `doc/spec.md` にあります。日次 Markdown 要約は `ADJUTANT_MARKDOWN_SUMMARY_BATCH_ENABLED=1` で有効化できます。
-bash ツールの Docker サンドボックス実行は `ADJUTANT_SANDBOX_MODE=non-main|all` で有効化できます（既定 `off`）。
+`bash` / `read` / `write` / `edit` / `grep` / `find` / `ls` は既定で Docker サンドボックス実行です（`ADJUTANT_SANDBOX_MODE=all`）。
 
 日次 Markdown 要約バッチの実装挙動（抜粋）は次のとおりです。
 
@@ -95,7 +95,7 @@ pnpm check               # format -> typecheck -> test
 | `ADJUTANT_ROUTE_LLM_MODEL`                     | `gpt-5-mini`                                         | route LLM に使用する OpenAI モデル名                                    |
 | `ADJUTANT_ROUTE_LLM_TIMEOUT_MS`                | `1000`                                               | route LLM 判定のタイムアウト（ミリ秒）                                  |
 | `ADJUTANT_ROUTE_LLM_MAX_CONCURRENT`            | `1`                                                  | route LLM 判定の同時実行上限（1で逐次）                                 |
-| `ADJUTANT_SANDBOX_MODE`                        | `off`                                                | bash sandbox mode（`off` / `non-main` / `all`）                         |
+| `ADJUTANT_SANDBOX_MODE`                        | `all`                                                | agent sandbox mode（`off` / `non-main` / `all`）                        |
 | `ADJUTANT_SANDBOX_IMAGE`                       | `adjutant-sandbox:trixie-slim`                       | sandbox Docker image                                                    |
 | `ADJUTANT_SANDBOX_CONTAINER_PREFIX`            | `adjutant-sandbox`                                   | sandbox container 名の prefix                                           |
 | `ADJUTANT_SANDBOX_WORKDIR`                     | `/workspace`                                         | コンテナ内作業ディレクトリ                                              |
@@ -104,16 +104,17 @@ pnpm check               # format -> typecheck -> test
 | `ADJUTANT_SANDBOX_PIDS_LIMIT`                  | `256`                                                | Docker pids limit                                                       |
 | `OPENAI_API_KEY`                               | -                                                    | route LLM 有効時に利用する OpenAI API キー                              |
 
-## Bash sandbox（Docker）
+## Agent sandbox（Docker）
 
 ```bash
 pnpm run sandbox:build
 ADJUTANT_SANDBOX_MODE=all pnpm run assistant
 ```
 
-- `off`: ホスト実行（既定）
+- `off`: ホスト実行
 - `non-main`: main 以外（spoke）のみコンテナ実行
 - `all`: heartbeat を除く全セッションをコンテナ実行
+- 対象ツールは `bash` / `read` / `write` / `edit` / `grep` / `find` / `ls`
 - sandbox イメージには `bash` / `git` / `curl` / `jq` / `rg`（ripgrep）を同梱
 - Docker 利用不可またはイメージ未ビルド時は fail-safe で起動中断します
 

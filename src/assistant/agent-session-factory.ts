@@ -12,6 +12,7 @@ import type { AgentAuditScope } from "./agent-audit.js";
 import { createMemoryToolDefinitions } from "./memory-search/index.js";
 import { createDockerBashOperations, shouldSandbox } from "../sandbox/docker-bash-operations.js";
 import type { SandboxMode } from "../sandbox/types.js";
+import { createContainerizedFileTools } from "./containerized-file-tool-operations.js";
 import {
   REPORT_HEARTBEAT_STATUS_TOOL,
   validateReportHeartbeatStatusInput,
@@ -236,6 +237,12 @@ export async function createAgentSessionFromSdk(
       }),
     });
     customTools.push(sandboxedBash as unknown as ToolDefinition);
+    customTools.push(
+      ...createContainerizedFileTools({
+        containerName: currentSandbox.containerName,
+        containerWorkdir: currentSandbox.workdir,
+      })
+    );
   }
 
   const created = await createAgentSession({

@@ -35,6 +35,7 @@ import { routeEventKindFromEvent } from "../proactive/route-decision.js";
 import { createProactiveMetrics } from "../proactive/metrics.js";
 import { listJsonlFiles, recoverJsonlFiles } from "../io/jsonl-recovery.js";
 import { loadAssistantGatewayRuntimeConfig } from "../runtime/runtime-config-loader.js";
+import { loadEnvFileIfPresent } from "../runtime/env-file-loader.js";
 import {
   checkDockerAvailability,
   destroySandboxContainer,
@@ -45,6 +46,8 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { appendFile, mkdir, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+
+loadEnvFileIfPresent();
 
 const runtimeConfig = loadAssistantGatewayRuntimeConfig();
 const PORT = runtimeConfig.app.assistant.port;
@@ -115,7 +118,7 @@ if (SANDBOX_CONFIG.mode === "off") {
   const availability = await checkDockerAvailability();
   if (!availability.available) {
     throw new Error(
-      `sandbox mode requires Docker daemon. Start Docker Desktop and retry. ${availability.reason ? `reason: ${availability.reason}` : ""} Set ADJUTANT_SANDBOX_MODE=off to disable sandbox.`
+      `サンドボックスモードの起動には Docker デーモンが必要です。Docker Desktop を起動して再実行してください。${availability.reason ? ` 理由: ${availability.reason}` : ""} サンドボックスを無効化する場合は ADJUTANT_SANDBOX_MODE=off を設定してください。`
     );
   }
   await ensureDockerImage(SANDBOX_CONFIG.docker.image, {

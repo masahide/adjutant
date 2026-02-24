@@ -80,7 +80,7 @@ describe("runtime-config-loader", () => {
     assert.equal(config.app.markdownSummaryBatch.intervalMs, 3_600_000);
     assert.equal(config.app.markdownSummaryBatch.messages, 15);
     assert.equal(config.app.markdownSummaryBatch.maxSessions, 200);
-    assert.equal(config.app.sandbox.mode, "off");
+    assert.equal(config.app.sandbox.mode, "all");
     assert.equal(config.app.sandbox.docker.image, "adjutant-sandbox:trixie-slim");
     assert.equal(config.app.sandbox.docker.autoBuildImage, true);
     assert.equal(config.app.sandbox.docker.containerPrefix, "adjutant-sandbox");

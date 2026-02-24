@@ -1,3 +1,4 @@
+import { loadEnvFileIfPresent } from "./runtime/env-file-loader.js";
 import { resolveDataDir, resolveEndpoint } from "./runtime/config.js";
 import { connectToSlackPage } from "./runtime/slackConnection.js";
 import { loadCollectorRuntimeConfig } from "./runtime/runtime-config-loader.js";
@@ -12,6 +13,8 @@ import { computeFullJitterDelayMs } from "./runtime/retry-policy.js";
 import { listJsonlFiles, recoverJsonlFiles } from "./io/jsonl-recovery.js";
 import { normalizeAccountId } from "./runtime/data-paths.js";
 import path from "node:path";
+
+loadEnvFileIfPresent();
 
 type ActiveSession = {
   client: SlackCdpClient;
