@@ -16,6 +16,7 @@ describe("runtime-config-loader", () => {
       env: {
         ADJUTANT_TZ: "",
         ADJUTANT_DISABLE_DOM_CAPTURE: "true",
+        ADJUTANT_DEBUG_SLACK_GET_COOKIES: "1",
         ADJUTANT_DEBUG_UI: "true",
         ADJUTANT_DEBUG_UI_PORT: "NaN",
         ADJUTANT_CDP_EVENT_LOG: "1",
@@ -27,6 +28,7 @@ describe("runtime-config-loader", () => {
 
     assert.equal(config.timezone, "Asia/Tokyo");
     assert.equal(config.domCaptureDisabled, true);
+    assert.equal(config.debugSlackGetCookiesEnabled, true);
     assert.equal(config.debugUiEnabled, true);
     assert.equal(config.debugUiPort, 8787);
     assert.equal(config.cdpEventLogEnabled, true);

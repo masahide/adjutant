@@ -12,6 +12,7 @@ import { DomCaptureService, type ReactionDomCandidate } from "./domCaptureServic
 import {
   SlackIngressHandlers,
   type FetchPausedEvent as IngressFetchPausedEvent,
+  type RequestWillBeSentExtraInfoEvent as IngressRequestWillBeSentExtraInfoEvent,
   type RequestWillBeSentEvent as IngressRequestWillBeSentEvent,
   type ResponseReceivedEvent as IngressResponseReceivedEvent,
   type WebSocketFrameEvent as IngressWebSocketFrameEvent,
@@ -22,6 +23,7 @@ export type FetchPausedEvent = IngressFetchPausedEvent;
 export type WebSocketFrameEvent = IngressWebSocketFrameEvent;
 export type ResponseReceivedEvent = IngressResponseReceivedEvent;
 export type RequestWillBeSentEvent = IngressRequestWillBeSentEvent;
+export type RequestWillBeSentExtraInfoEvent = IngressRequestWillBeSentExtraInfoEvent;
 
 type SlackClient = {
   Fetch: {
@@ -37,11 +39,19 @@ type SlackClient = {
         | "webSocketFrameReceived"
         | "webSocketFrameSent"
         | "responseReceived"
-        | "requestWillBeSent",
+        | "requestWillBeSent"
+        | "requestWillBeSentExtraInfo",
       handler: (
-        payload: WebSocketFrameEvent | ResponseReceivedEvent | RequestWillBeSentEvent
+        payload:
+          | WebSocketFrameEvent
+          | ResponseReceivedEvent
+          | RequestWillBeSentEvent
+          | RequestWillBeSentExtraInfoEvent
       ) => unknown
     ): void;
+    getCookies?: (params: { urls?: string[] }) => Promise<{
+      cookies?: Array<{ name?: string; value?: string; domain?: string; path?: string }>;
+    }>;
     getResponseBody(params: {
       requestId: string;
     }): Promise<{ body: string; base64Encoded: boolean }>;
@@ -64,6 +74,7 @@ type SlackAdapterDeps = {
   channelCachePath?: string;
   userCachePath?: string;
   debugFetchHookEnabled?: boolean;
+  debugCookieStoreEnabled?: boolean;
   onDebugEvent?: (event: {
     source: "slack-adapter";
     kind: "raw_fetch" | "raw_ws" | "normalized";
@@ -124,6 +135,7 @@ export class SlackAdapter implements IngestionAdapter {
   private readonly debugNetworkEvents = DEBUG_NETWORK_ENABLED;
   private readonly debugFetchEvents = DEBUG_FETCH_ENABLED;
   private readonly debugFetchHookEnabled: boolean;
+  private readonly debugCookieStoreEnabled: boolean;
   private readonly debugRuntimeEvents = DEBUG_RUNTIME_ENABLED;
   private readonly runtimeContextRegistry = new RuntimeContextRegistry();
   private readonly onDebugEvent:
@@ -151,6 +163,7 @@ export class SlackAdapter implements IngestionAdapter {
       verboseEnabled: hasSlackDebugTarget(DEBUG_TARGETS, "slack:verbose"),
     });
     this.debugFetchHookEnabled = deps.debugFetchHookEnabled ?? DEBUG_FETCH_HOOK_ENABLED;
+    this.debugCookieStoreEnabled = deps.debugCookieStoreEnabled ?? false;
     this.onDebugEvent = deps.onDebugEvent;
     this.domCaptureService = new DomCaptureService({
       disabled: this.domCaptureDisabled,
@@ -181,6 +194,7 @@ export class SlackAdapter implements IngestionAdapter {
       timezone: this.timezone,
       slackApiRe: SLACK_API_RE,
       debugFetchHookEnabled: this.debugFetchHookEnabled,
+      debugCookieStoreEnabled: this.debugCookieStoreEnabled,
       debugNotificationEnabled: DEBUG_NOTIFICATION_ENABLED,
       slackDebug: this.slackDebug,
       pushDebugEvent: (kind, payload) => this.pushDebugEvent(kind, payload),
@@ -200,6 +214,7 @@ export class SlackAdapter implements IngestionAdapter {
       nameCacheRepository: this.nameCacheRepository,
       responseBodyReader: this.responseBodyReader,
       responseProjector: this.responseProjector,
+      readCookieStore: async (requestUrl) => this.readCookieStore(requestUrl),
     });
   }
 
@@ -235,8 +250,13 @@ export class SlackAdapter implements IngestionAdapter {
       }
       await this.ingressHandlers.handleResponseReceived(payload as ResponseReceivedEvent);
     });
-    Network.on("requestWillBeSent", (payload) => {
-      void this.ingressHandlers.handleRequestWillBeSent(payload as RequestWillBeSentEvent);
+    Network.on("requestWillBeSent", async (payload) => {
+      await this.ingressHandlers.handleRequestWillBeSent(payload as RequestWillBeSentEvent);
+    });
+    Network.on("requestWillBeSentExtraInfo", async (payload) => {
+      await this.ingressHandlers.handleRequestWillBeSentExtraInfo(
+        payload as RequestWillBeSentExtraInfoEvent
+      );
     });
 
     if (typeof Runtime.on === "function") {
@@ -298,6 +318,25 @@ export class SlackAdapter implements IngestionAdapter {
     ts: string | undefined
   ): { text?: string; channelName?: string | null; channelId?: string | null } | null {
     return this.domCaptureService.consume(ts);
+  }
+
+  private async readCookieStore(
+    requestUrl: string
+  ): Promise<Array<{ name: string; value: string; domain?: string; path?: string }>> {
+    const getCookies = this.deps.client.Network.getCookies;
+    if (typeof getCookies !== "function") {
+      throw new Error("Network.getCookies is unavailable");
+    }
+    const result = await getCookies({ urls: [requestUrl] });
+    const cookies = Array.isArray(result?.cookies) ? result.cookies : [];
+    return cookies
+      .map((cookie) => ({
+        name: this.asString(cookie?.name) ?? "",
+        value: this.asString(cookie?.value) ?? "",
+        domain: this.asString(cookie?.domain),
+        path: this.asString(cookie?.path),
+      }))
+      .filter((cookie) => cookie.name.length > 0);
   }
 
   private cacheMessage(

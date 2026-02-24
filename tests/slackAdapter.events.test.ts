@@ -289,7 +289,11 @@ describe("SlackAdapter event handling", () => {
       request: {
         url: "https://hooks.slack.com/services/T00/B00/XXX",
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          authorization: "Bearer xoxc-123-456-789-abcdef123456",
+          cookie: "d=xoxd-aaa%2Bbbb; path=/",
+        },
         postData: '{"text":"hello"}',
       },
     });
@@ -304,6 +308,11 @@ describe("SlackAdapter event handling", () => {
             method?: string;
             url?: string;
             urlInfo?: { host?: string; pathname?: string };
+            authDebug?: {
+              xoxc?: { detected?: boolean };
+              xoxd?: { detected?: boolean };
+              cookieD?: { present?: boolean };
+            };
           };
         }
       | undefined;
@@ -312,6 +321,119 @@ describe("SlackAdapter event handling", () => {
     assert.equal(rawFetch.payload?.url, "https://hooks.slack.com/services/T00/B00/XXX");
     assert.equal(rawFetch.payload?.urlInfo?.host, "hooks.slack.com");
     assert.equal(rawFetch.payload?.urlInfo?.pathname, "/services/T00/B00/XXX");
+    assert.equal(rawFetch.payload?.authDebug?.xoxc?.detected, true);
+    assert.equal(rawFetch.payload?.authDebug?.xoxd?.detected, true);
+    assert.equal(rawFetch.payload?.authDebug?.cookieD?.present, true);
+  });
+
+  it("requestWillBeSentExtraInfo を raw_fetch として出力し、getCookies 無効時は cookieStoreSnapshot を出さない", async () => {
+    const mock = createMockSlackClient();
+    const debugEvents: unknown[] = [];
+    const requestUrl = "https://workspace.slack.com/api/chat.postMessage";
+    mock.cookieStoreByUrl[requestUrl] = [{ name: "d", value: "xoxd-cookie-store%2Bvalue" }];
+    const adapter = new SlackAdapter({
+      client: mock.client,
+      now: () => new Date("2024-03-22T12:45:00Z"),
+      debugFetchHookEnabled: true,
+      debugCookieStoreEnabled: false,
+      onDebugEvent: (event) => {
+        debugEvents.push(event);
+      },
+    });
+
+    await adapter.start(async () => {});
+
+    await mock.triggerNetwork("requestWillBeSent", {
+      requestId: "req-hook-extra-1",
+      type: "Fetch",
+      request: {
+        url: requestUrl,
+        method: "POST",
+      },
+    });
+    await mock.triggerNetwork("requestWillBeSentExtraInfo", {
+      requestId: "req-hook-extra-1",
+      headers: {},
+      associatedCookies: [{ cookie: { name: "d", value: "xoxd-associated%2Bvalue" } }],
+    });
+
+    const extraInfoEvent = debugEvents.find((event) => {
+      if (!event || typeof event !== "object") return false;
+      const record = event as { kind?: string; payload?: { stage?: string } };
+      return record.kind === "raw_fetch" && record.payload?.stage === "requestWillBeSentExtraInfo";
+    }) as
+      | {
+          payload?: {
+            dCookieFromAssociated?: string | null;
+            authDebug?: { cookieD?: { value?: string | null } };
+          };
+        }
+      | undefined;
+    assert.ok(extraInfoEvent, "requestWillBeSentExtraInfo event should be emitted");
+    assert.equal(extraInfoEvent.payload?.dCookieFromAssociated, "xoxd-associated%2Bvalue");
+    assert.equal(extraInfoEvent.payload?.authDebug?.cookieD?.value, "xoxd-associated%2Bvalue");
+
+    const cookieStoreEvent = debugEvents.find((event) => {
+      if (!event || typeof event !== "object") return false;
+      const record = event as { kind?: string; payload?: { stage?: string } };
+      return record.kind === "raw_fetch" && record.payload?.stage === "cookieStoreSnapshot";
+    });
+    assert.equal(cookieStoreEvent, undefined);
+    assert.equal(mock.cookieQueries.length, 0);
+  });
+
+  it("debugCookieStoreEnabled=true の時は getCookies を実行して cookieStoreSnapshot を別途出力する", async () => {
+    const mock = createMockSlackClient();
+    const debugEvents: unknown[] = [];
+    const requestUrl = "https://workspace.slack.com/api/chat.postMessage";
+    mock.cookieStoreByUrl[requestUrl] = [
+      { name: "d", value: "xoxd-cookie-store%2Bvalue" },
+      { name: "other", value: "1" },
+    ];
+    const adapter = new SlackAdapter({
+      client: mock.client,
+      now: () => new Date("2024-03-22T12:45:00Z"),
+      debugFetchHookEnabled: true,
+      debugCookieStoreEnabled: true,
+      onDebugEvent: (event) => {
+        debugEvents.push(event);
+      },
+    });
+
+    await adapter.start(async () => {});
+
+    await mock.triggerNetwork("requestWillBeSent", {
+      requestId: "req-hook-extra-2",
+      type: "Fetch",
+      request: {
+        url: requestUrl,
+        method: "POST",
+      },
+    });
+    await mock.triggerNetwork("requestWillBeSentExtraInfo", {
+      requestId: "req-hook-extra-2",
+      headers: {},
+      associatedCookies: [],
+    });
+
+    const cookieStoreEvent = debugEvents.find((event) => {
+      if (!event || typeof event !== "object") return false;
+      const record = event as { kind?: string; payload?: { stage?: string } };
+      return record.kind === "raw_fetch" && record.payload?.stage === "cookieStoreSnapshot";
+    }) as
+      | {
+          payload?: {
+            dCookieFromStore?: string | null;
+            cookieStoreCookiesCount?: number | null;
+            authDebug?: { cookieD?: { value?: string | null } };
+          };
+        }
+      | undefined;
+    assert.ok(cookieStoreEvent, "cookieStoreSnapshot event should be emitted");
+    assert.equal(cookieStoreEvent.payload?.dCookieFromStore, "xoxd-cookie-store%2Bvalue");
+    assert.equal(cookieStoreEvent.payload?.cookieStoreCookiesCount, 2);
+    assert.equal(cookieStoreEvent.payload?.authDebug?.cookieD?.value, "xoxd-cookie-store%2Bvalue");
+    assert.deepEqual(mock.cookieQueries, [[requestUrl]]);
   });
 
   it("fetch hook有効時にresponseReceivedをraw_fetchとして出力する", async () => {

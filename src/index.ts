@@ -73,6 +73,9 @@ async function main() {
 
   const timezone = runtimeConfig.timezone;
   console.log(`[Adjutant] timezone -> ${timezone}`);
+  if (runtimeConfig.debugSlackGetCookiesEnabled) {
+    console.log("[Adjutant] debug slack getCookies -> enabled");
+  }
 
   const defaultAccountId = normalizeAccountId(process.env.ADJUTANT_SLACK_ACCOUNT_ID, "default");
   const writer = new JsonlWriter({ dataDir, defaultAccountId });
@@ -230,6 +233,7 @@ async function main() {
       channelCachePath: path.join(dataDir, "_cache", "slack", "channel-names-by-team.json"),
       userCachePath: path.join(dataDir, "_cache", "slack", "user-names-by-team.json"),
       debugFetchHookEnabled: rawFetchEventLogger ? true : undefined,
+      debugCookieStoreEnabled: runtimeConfig.debugSlackGetCookiesEnabled,
       onDebugEvent,
     });
     const ingestor = new SlackIngestor({ adapter, writer });

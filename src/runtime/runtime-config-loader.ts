@@ -32,6 +32,7 @@ export type RouteLlmRuntimeConfig = {
 export type CollectorRuntimeConfig = {
   timezone: string;
   domCaptureDisabled: boolean;
+  debugSlackGetCookiesEnabled: boolean;
   debugUiEnabled: boolean;
   debugUiPort: number;
   cdpEventLogEnabled: boolean;
@@ -84,6 +85,7 @@ export function loadCollectorRuntimeConfig(params: {
   return {
     timezone: parseStringEnv(env.ADJUTANT_TZ, "Asia/Tokyo"),
     domCaptureDisabled: parseBooleanEnv(env.ADJUTANT_DISABLE_DOM_CAPTURE, false),
+    debugSlackGetCookiesEnabled: parseBooleanEnv(env.ADJUTANT_DEBUG_SLACK_GET_COOKIES, false),
     debugUiEnabled: parseBooleanEnv(env.ADJUTANT_DEBUG_UI, false),
     debugUiPort: parsePositiveIntEnv(env.ADJUTANT_DEBUG_UI_PORT, 8787),
     cdpEventLogEnabled: parseBooleanEnv(env.ADJUTANT_CDP_EVENT_LOG, false),

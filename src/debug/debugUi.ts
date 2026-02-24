@@ -144,6 +144,8 @@ export class DebugUiServer {
     .kind-raw_ws { color:var(--raw); }
     .kind-raw_fetch { color:var(--warn); }
     .kind-normalized { color:var(--ok); }
+    .tag-auth-on { color: var(--ok); border-color: rgba(61,220,151,.6); }
+    .tag-auth-off { color: var(--muted); border-color: rgba(147,164,209,.5); }
     mark { background: #f6d365; color: #111; padding: 0 1px; border-radius: 2px; }
     pre { margin:0; padding:10px; white-space:pre-wrap; word-break:break-word; max-height:none; overflow:visible; }
   </style>
@@ -208,6 +210,48 @@ export class DebugUiServer {
         .split(/\\s+/)
         .map((s) => s.trim())
         .filter(Boolean);
+    const asObject = (value) => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+      return value;
+    };
+    const asAuthSignal = (value) => {
+      const obj = asObject(value);
+      if (!obj) return null;
+      return {
+        detected: obj.detected === true,
+        value: typeof obj.value === "string" ? obj.value : "",
+        sources: Array.isArray(obj.sources) ? obj.sources.map((v) => String(v)) : [],
+      };
+    };
+    const asCookieSignal = (value) => {
+      const obj = asObject(value);
+      if (!obj) return null;
+      return {
+        present: obj.present === true,
+        value: typeof obj.value === "string" ? obj.value : "",
+      };
+    };
+    const renderAuthTag = (label, enabled, title) =>
+      '<span class="tag ' + (enabled ? "tag-auth-on" : "tag-auth-off") + '" title="' + escapeHtml(title) + '">' +
+      escapeHtml(label + ":" + (enabled ? "yes" : "no")) +
+      "</span>";
+    const buildAuthTags = (event) => {
+      const payload = asObject(event?.payload);
+      const auth = asObject(payload?.authDebug);
+      if (!auth) return "";
+      const xoxc = asAuthSignal(auth.xoxc);
+      const xoxd = asAuthSignal(auth.xoxd);
+      const cookieD = asCookieSignal(auth.cookieD);
+      if (!xoxc && !xoxd && !cookieD) return "";
+      const xoxcTitle = "xoxc source=" + (xoxc?.sources?.join(",") || "-") + " value=" + (xoxc?.value || "-");
+      const xoxdTitle = "xoxd source=" + (xoxd?.sources?.join(",") || "-") + " value=" + (xoxd?.value || "-");
+      const cookieTitle = "cookie d value=" + (cookieD?.value || "-");
+      return [
+        renderAuthTag("xoxc", Boolean(xoxc?.detected), xoxcTitle),
+        renderAuthTag("xoxd", Boolean(xoxd?.detected), xoxdTitle),
+        renderAuthTag("d", Boolean(cookieD?.present), cookieTitle),
+      ].join("");
+    };
     const applyHighlights = (rawText, terms) => {
       if (!terms || terms.length === 0) return escapeHtml(rawText);
       const source = String(rawText ?? "");
@@ -336,11 +380,13 @@ export class DebugUiServer {
         const body = applyHighlights(JSON.stringify(ev.payload, null, 2), searchTerms);
         const raw = encodeURIComponent(JSON.stringify(ev, null, 2));
         const stage = normalize(ev?.payload?.stage);
+        const authTags = buildAuthTags(ev);
         const isCollapsed = defaultCollapsed || collapsedByRaw.has(raw);
         return '<article class="item">' +
           '<div class="meta">' +
           '<span class="tag kind-' + ev.kind + '">' + escapeHtml(ev.kind) + '</span>' +
           '<span class="tag">' + escapeHtml(stage || "-") + '</span>' +
+          authTags +
           '<span>' + escapeHtml(ev.source) + '</span>' +
           '<span class="muted">' + escapeHtml(ev.at) + '</span>' +
           '<button class="toggle-btn" data-copy="' + raw + '" type="button">' + (isCollapsed ? "expand" : "collapse") + '</button>' +

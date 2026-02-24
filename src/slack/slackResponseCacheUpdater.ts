@@ -6,12 +6,18 @@ import type {
   UserProjection,
   UrlInfo,
 } from "./responseProjector.js";
-import type { RequestWillBeSentEvent, ResponseReceivedEvent } from "./slackIngressHandlers.js";
+import type {
+  RequestWillBeSentEvent,
+  RequestWillBeSentExtraInfoEvent,
+  ResponseReceivedEvent,
+} from "./slackIngressHandlers.js";
 import type { SlackUrlInfo } from "./slackIngressRequestParser.js";
+import { enrichSlackAuthDebugWithCookieD, extractSlackAuthDebugInfo } from "./slackAuthDebug.js";
 
 export type SlackResponseCacheUpdaterDeps = {
   slackApiRe: RegExp;
   debugFetchHookEnabled: boolean;
+  debugCookieStoreEnabled: boolean;
   pushDebugEvent: (kind: "raw_fetch", payload: unknown) => void;
   truncateForDebug: (value: string, max: number) => string;
   responseBodyReader: ResponseBodyReader;
@@ -25,6 +31,9 @@ export type SlackResponseCacheUpdaterDeps = {
   parseUrlInfo: (url: string) => SlackUrlInfo | null;
   normalizeHeader: (headers: Record<string, string> | undefined, key: string) => string;
   toTextFromBlocks: (blocks: unknown) => string;
+  readCookieStore?: (
+    requestUrl: string
+  ) => Promise<Array<{ name: string; value: string; domain?: string; path?: string }>>;
   logCacheUpdate: (
     kind: "channel" | "user",
     teamId: string,
@@ -34,9 +43,14 @@ export type SlackResponseCacheUpdaterDeps = {
 };
 
 export class SlackResponseCacheUpdater {
+  private readonly requestUrlById = new Map<string, string>();
+
   constructor(private readonly deps: SlackResponseCacheUpdaterDeps) {}
 
   async handleResponseReceived(event: ResponseReceivedEvent): Promise<void> {
+    if (event.requestId) {
+      this.requestUrlById.delete(event.requestId);
+    }
     if (this.deps.debugFetchHookEnabled) {
       await this.pushResponseDebugEvent(event);
     }
@@ -69,8 +83,13 @@ export class SlackResponseCacheUpdater {
     if (resourceType && resourceType !== "Fetch" && resourceType !== "XHR") return;
 
     const initiatorType = this.asString(event.initiator?.type);
+    this.requestUrlById.set(event.requestId, event.request.url);
     const body = event.request.postData ?? "";
     const contentType = this.deps.normalizeHeader(event.request.headers, "content-type");
+    const authDebug = extractSlackAuthDebugInfo({
+      headers: event.request.headers,
+      body,
+    });
     this.deps.pushDebugEvent("raw_fetch", {
       stage: "requestWillBeSent",
       requestId: event.requestId,
@@ -80,7 +99,103 @@ export class SlackResponseCacheUpdater {
       url: event.request.url,
       urlInfo: this.deps.parseUrlInfo(event.request.url),
       contentType,
+      authDebug,
       body: this.deps.truncateForDebug(body, 4000),
+    });
+  }
+
+  async handleRequestWillBeSentExtraInfo(event: RequestWillBeSentExtraInfoEvent): Promise<void> {
+    if (!this.deps.debugFetchHookEnabled) return;
+    if (!event?.requestId) return;
+
+    const requestUrl = this.requestUrlById.get(event.requestId);
+    let authDebug = extractSlackAuthDebugInfo({ headers: event.headers });
+
+    let dCookieFromAssociated: string | undefined;
+    for (const item of event.associatedCookies ?? []) {
+      const cookieName = this.asString(item?.cookie?.name);
+      if (cookieName !== "d") continue;
+      const cookieValue = this.asString(item?.cookie?.value);
+      if (!cookieValue) continue;
+      dCookieFromAssociated = cookieValue;
+      authDebug = enrichSlackAuthDebugWithCookieD(authDebug, cookieValue, "associatedCookies:d");
+      break;
+    }
+
+    this.deps.pushDebugEvent("raw_fetch", {
+      stage: "requestWillBeSentExtraInfo",
+      requestId: event.requestId,
+      url: requestUrl,
+      urlInfo: requestUrl ? this.deps.parseUrlInfo(requestUrl) : null,
+      authDebug,
+      associatedCookiesCount: event.associatedCookies?.length ?? 0,
+      dCookieFromAssociated: dCookieFromAssociated ?? null,
+    });
+
+    await this.pushCookieStoreDebugEvent(event.requestId, requestUrl);
+  }
+
+  private async pushCookieStoreDebugEvent(
+    requestId: string,
+    requestUrl: string | undefined
+  ): Promise<void> {
+    if (!this.deps.debugCookieStoreEnabled) return;
+
+    const noCookieDebugInfo = extractSlackAuthDebugInfo({});
+    if (!requestUrl) {
+      this.deps.pushDebugEvent("raw_fetch", {
+        stage: "cookieStoreSnapshot",
+        requestId,
+        url: null,
+        urlInfo: null,
+        authDebug: noCookieDebugInfo,
+        cookieStoreCookiesCount: null,
+        dCookieFromStore: null,
+        cookieStoreError: "requestUrlUnavailable",
+      });
+      return;
+    }
+    if (!this.deps.readCookieStore) {
+      this.deps.pushDebugEvent("raw_fetch", {
+        stage: "cookieStoreSnapshot",
+        requestId,
+        url: requestUrl,
+        urlInfo: this.deps.parseUrlInfo(requestUrl),
+        authDebug: noCookieDebugInfo,
+        cookieStoreCookiesCount: null,
+        dCookieFromStore: null,
+        cookieStoreError: "getCookiesUnavailable",
+      });
+      return;
+    }
+
+    let cookies: Array<{ name: string; value: string; domain?: string; path?: string }> = [];
+    let cookieStoreError: string | undefined;
+    try {
+      cookies = await this.deps.readCookieStore(requestUrl);
+    } catch (err) {
+      cookieStoreError = String(err);
+    }
+
+    let dCookieFromStore: string | undefined;
+    for (const cookie of cookies) {
+      if (cookie.name !== "d") continue;
+      if (!cookie.value) continue;
+      dCookieFromStore = cookie.value;
+      break;
+    }
+    const authDebug = dCookieFromStore
+      ? enrichSlackAuthDebugWithCookieD(noCookieDebugInfo, dCookieFromStore, "cookieStore:d")
+      : noCookieDebugInfo;
+    this.deps.pushDebugEvent("raw_fetch", {
+      stage: "cookieStoreSnapshot",
+      requestId,
+      url: requestUrl,
+      urlInfo: this.deps.parseUrlInfo(requestUrl),
+      authDebug,
+      cookieStoreCookiesCount: cookies.length,
+      dCookieFromStore: dCookieFromStore ?? null,
+      cookieStoreError: cookieStoreError ?? null,
     });
   }
 

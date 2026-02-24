@@ -1,5 +1,6 @@
 import type {
   FetchPausedEvent,
+  RequestWillBeSentExtraInfoEvent,
   RequestWillBeSentEvent,
   ResponseReceivedEvent,
   WebSocketFrameEvent,
@@ -12,6 +13,7 @@ export type Triggerable = {
     webSocketFrameSent?: (payload: WebSocketFrameEvent) => unknown;
     responseReceived?: (payload: ResponseReceivedEvent) => unknown;
     requestWillBeSent?: (payload: RequestWillBeSentEvent) => unknown;
+    requestWillBeSentExtraInfo?: (payload: RequestWillBeSentExtraInfoEvent) => unknown;
   };
   triggerFetch(payload: FetchPausedEvent): Promise<void>;
   triggerNetwork(
@@ -19,8 +21,13 @@ export type Triggerable = {
       | "webSocketFrameReceived"
       | "webSocketFrameSent"
       | "responseReceived"
-      | "requestWillBeSent",
-    payload: WebSocketFrameEvent | ResponseReceivedEvent | RequestWillBeSentEvent
+      | "requestWillBeSent"
+      | "requestWillBeSentExtraInfo",
+    payload:
+      | WebSocketFrameEvent
+      | ResponseReceivedEvent
+      | RequestWillBeSentEvent
+      | RequestWillBeSentExtraInfoEvent
   ): Promise<void>;
 };
 
@@ -31,6 +38,7 @@ export const createMockSlackClient = () => {
     webSocketFrameSent?: (payload: WebSocketFrameEvent) => unknown;
     responseReceived?: (payload: ResponseReceivedEvent) => unknown;
     requestWillBeSent?: (payload: RequestWillBeSentEvent) => unknown;
+    requestWillBeSentExtraInfo?: (payload: RequestWillBeSentExtraInfoEvent) => unknown;
   } = {};
   const runtimeHandlers: {
     executionContextCreated?: (payload: unknown) => void;
@@ -40,6 +48,11 @@ export const createMockSlackClient = () => {
   const continued: string[] = [];
 
   const responseBodies: Record<string, { body: string; base64Encoded: boolean }> = {};
+  const cookieStoreByUrl: Record<
+    string,
+    Array<{ name: string; value: string; domain?: string; path?: string }>
+  > = {};
+  const cookieQueries: string[][] = [];
 
   let runtimeToken: string | null = null;
   let runtimeEvaluate:
@@ -72,9 +85,14 @@ export const createMockSlackClient = () => {
           | "webSocketFrameReceived"
           | "webSocketFrameSent"
           | "responseReceived"
-          | "requestWillBeSent",
+          | "requestWillBeSent"
+          | "requestWillBeSentExtraInfo",
         handler: (
-          payload: WebSocketFrameEvent | ResponseReceivedEvent | RequestWillBeSentEvent
+          payload:
+            | WebSocketFrameEvent
+            | ResponseReceivedEvent
+            | RequestWillBeSentEvent
+            | RequestWillBeSentExtraInfoEvent
         ) => unknown
       ) {
         if (name === "webSocketFrameReceived") {
@@ -87,9 +105,21 @@ export const createMockSlackClient = () => {
           networkHandlers.requestWillBeSent = handler as (
             payload: RequestWillBeSentEvent
           ) => unknown;
+        } else if (name === "requestWillBeSentExtraInfo") {
+          networkHandlers.requestWillBeSentExtraInfo = handler as (
+            payload: RequestWillBeSentExtraInfoEvent
+          ) => unknown;
         } else {
           networkHandlers.responseReceived = handler as (payload: ResponseReceivedEvent) => unknown;
         }
+      },
+      getCookies: async ({ urls }: { urls?: string[] }) => {
+        const requestedUrls = Array.isArray(urls)
+          ? urls.filter((url): url is string => typeof url === "string" && url.length > 0)
+          : [];
+        cookieQueries.push(requestedUrls);
+        const cookies = requestedUrls.flatMap((url) => cookieStoreByUrl[url] ?? []);
+        return { cookies };
       },
       getResponseBody: async ({ requestId }: { requestId: string }) =>
         responseBodies[requestId] ?? { body: "", base64Encoded: false },
@@ -121,6 +151,8 @@ export const createMockSlackClient = () => {
     networkHandlers,
     runtimeHandlers,
     responseBodies,
+    cookieStoreByUrl,
+    cookieQueries,
     setRuntimeToken(token: string | null) {
       runtimeToken = token;
     },
@@ -148,8 +180,13 @@ export const createMockSlackClient = () => {
         | "webSocketFrameReceived"
         | "webSocketFrameSent"
         | "responseReceived"
-        | "requestWillBeSent",
-      payload: WebSocketFrameEvent | ResponseReceivedEvent | RequestWillBeSentEvent
+        | "requestWillBeSent"
+        | "requestWillBeSentExtraInfo",
+      payload:
+        | WebSocketFrameEvent
+        | ResponseReceivedEvent
+        | RequestWillBeSentEvent
+        | RequestWillBeSentExtraInfoEvent
     ) {
       if (name === "webSocketFrameReceived") {
         const handler = networkHandlers.webSocketFrameReceived;
@@ -160,6 +197,9 @@ export const createMockSlackClient = () => {
       } else if (name === "requestWillBeSent") {
         const handler = networkHandlers.requestWillBeSent;
         if (handler) await handler(payload as RequestWillBeSentEvent);
+      } else if (name === "requestWillBeSentExtraInfo") {
+        const handler = networkHandlers.requestWillBeSentExtraInfo;
+        if (handler) await handler(payload as RequestWillBeSentExtraInfoEvent);
       } else {
         const handler = networkHandlers.responseReceived;
         if (handler) await handler(payload as ResponseReceivedEvent);

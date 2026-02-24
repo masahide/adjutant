@@ -51,6 +51,20 @@ export type RequestWillBeSentEvent = {
   };
 };
 
+export type RequestWillBeSentExtraInfoEvent = {
+  requestId: string;
+  headers?: Record<string, string>;
+  associatedCookies?: Array<{
+    cookie?: {
+      name?: string;
+      value?: string;
+      domain?: string;
+      path?: string;
+    };
+    blockedReasons?: string[];
+  }>;
+};
+
 type CacheEntry = { text?: string; user?: string; teamId?: string };
 
 type SlackIngressHandlersDeps = {
@@ -58,6 +72,7 @@ type SlackIngressHandlersDeps = {
   timezone: string;
   slackApiRe: RegExp;
   debugFetchHookEnabled: boolean;
+  debugCookieStoreEnabled: boolean;
   debugNotificationEnabled: boolean;
   slackDebug: SlackDebug;
   pushDebugEvent: (kind: "raw_fetch" | "raw_ws" | "normalized", payload: unknown) => void;
@@ -91,6 +106,9 @@ type SlackIngressHandlersDeps = {
   nameCacheRepository: SlackNameCacheRepository;
   responseBodyReader: ResponseBodyReader;
   responseProjector: SlackResponseProjector;
+  readCookieStore?: (
+    requestUrl: string
+  ) => Promise<Array<{ name: string; value: string; domain?: string; path?: string }>>;
 };
 
 const REACTION_PAYLOAD_KEYS = [
@@ -128,6 +146,7 @@ export class SlackIngressHandlers {
     this.responseUpdater = new SlackResponseCacheUpdater({
       slackApiRe: deps.slackApiRe,
       debugFetchHookEnabled: deps.debugFetchHookEnabled,
+      debugCookieStoreEnabled: deps.debugCookieStoreEnabled,
       pushDebugEvent: (kind, payload) => deps.pushDebugEvent(kind, payload),
       truncateForDebug: (value, max) => deps.truncateForDebug(value, max),
       responseBodyReader: deps.responseBodyReader,
@@ -137,6 +156,7 @@ export class SlackIngressHandlers {
       parseUrlInfo: (url) => this.requestParser.parseUrlInfo(url),
       normalizeHeader: (headers, key) => this.requestParser.normalizeHeader(headers, key),
       toTextFromBlocks: (blocks) => fromBlocks(blocks),
+      readCookieStore: deps.readCookieStore,
       logCacheUpdate: (kind, teamId, changed, total) =>
         this.logCacheUpdate(kind, teamId, changed, total),
     });
@@ -173,6 +193,10 @@ export class SlackIngressHandlers {
 
   async handleRequestWillBeSent(event: RequestWillBeSentEvent): Promise<void> {
     await this.responseUpdater.handleRequestWillBeSent(event);
+  }
+
+  async handleRequestWillBeSentExtraInfo(event: RequestWillBeSentExtraInfoEvent): Promise<void> {
+    await this.responseUpdater.handleRequestWillBeSentExtraInfo(event);
   }
 
   private async handlePostMessageRequest(

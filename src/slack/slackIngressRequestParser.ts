@@ -1,5 +1,6 @@
 import type { FetchPausedEvent } from "./slackIngressHandlers.js";
 import type { SlackDebug } from "./slackDebug.js";
+import { extractSlackAuthDebugInfo } from "./slackAuthDebug.js";
 
 const JSONISH_PAYLOAD_KEYS = new Set(["blocks", "item", "attachments", "metadata", "message"]);
 
@@ -38,11 +39,17 @@ export class SlackIngressRequestParser {
 
     const body = event.request.postData ?? "";
     const contentType = this.normalizeHeader(event.request.headers, "content-type");
+    const authDebug = extractSlackAuthDebugInfo({
+      headers: event.request.headers,
+      body,
+    });
     this.deps.pushDebugEvent("raw_fetch", {
+      stage: "requestPaused",
       method: event.request.method,
       url: event.request.url,
       urlInfo: this.parseUrlInfo(event.request.url),
       contentType,
+      authDebug,
       body: this.deps.truncateForDebug(body, 4000),
     });
 
