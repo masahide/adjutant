@@ -66,6 +66,7 @@ export type SandboxRuntimeConfig = {
     autoBuildImage: boolean;
     containerPrefix: string;
     workdir: string;
+    envAllowlist: string[];
     readOnlyRoot: boolean;
     tmpfs: string[];
     network: string | undefined;

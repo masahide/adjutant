@@ -58,6 +58,7 @@ type ActiveSandboxConfig = {
   workdir: string;
   hostWorkspaceDir: string;
   mode: SandboxMode;
+  envAllowlist?: string[];
 };
 
 let activeSandbox: ActiveSandboxConfig | null = null;
@@ -231,6 +232,7 @@ export async function createAgentSessionFromSdk(
         containerName: currentSandbox.containerName,
         hostWorkspaceDir: currentSandbox.hostWorkspaceDir,
         containerWorkdir: currentSandbox.workdir,
+        envAllowlist: currentSandbox.envAllowlist,
       }),
     });
     customTools.push(sandboxedBash as unknown as ToolDefinition);

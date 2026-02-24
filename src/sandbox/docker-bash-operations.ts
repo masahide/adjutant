@@ -12,6 +12,7 @@ type SpawnLike = (
 ) => ChildProcessWithoutNullStreams;
 
 type DockerExecEnvironment = NodeJS.ProcessEnv | Record<string, string> | undefined;
+const DEFAULT_SANDBOX_ENV_ALLOWLIST = ["LANG", "LC_ALL", "TERM", "TZ"] as const;
 
 function normalizeEnvironment(env: DockerExecEnvironment): Record<string, string> {
   const result: Record<string, string> = {};
@@ -26,15 +27,32 @@ function normalizeEnvironment(env: DockerExecEnvironment): Record<string, string
   return result;
 }
 
+function resolveEnvAllowlist(customAllowlist: readonly string[] | undefined): Set<string> {
+  const resolved = new Set<string>(DEFAULT_SANDBOX_ENV_ALLOWLIST);
+  for (const key of customAllowlist ?? []) {
+    const normalized = key.trim();
+    if (!normalized) {
+      continue;
+    }
+    resolved.add(normalized);
+  }
+  return resolved;
+}
+
 export function buildDockerExecArgs(params: {
   containerName: string;
   containerCwd: string;
   command: string;
   env?: DockerExecEnvironment;
+  envAllowlist?: readonly string[];
 }): string[] {
   const args = ["exec", "-i", "-w", params.containerCwd];
+  const envAllowlist = resolveEnvAllowlist(params.envAllowlist);
   const env = normalizeEnvironment(params.env);
   for (const [key, value] of Object.entries(env)) {
+    if (!envAllowlist.has(key)) {
+      continue;
+    }
     args.push("-e", `${key}=${value}`);
   }
   args.push(params.containerName, "bash", "-lc", params.command);
@@ -58,6 +76,7 @@ export type DockerBashOperationsOptions = {
   containerName: string;
   hostWorkspaceDir: string;
   containerWorkdir: string;
+  envAllowlist?: string[];
   dockerBin?: string;
   spawnImpl?: SpawnLike;
 };
@@ -81,6 +100,7 @@ export function createDockerBashOperations(options: DockerBashOperationsOptions)
         containerCwd,
         command,
         env: params.env,
+        envAllowlist: options.envAllowlist,
       });
 
       return await new Promise<{ exitCode: number | null }>((resolve, reject) => {

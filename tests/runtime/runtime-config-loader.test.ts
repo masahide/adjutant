@@ -85,6 +85,7 @@ describe("runtime-config-loader", () => {
     assert.equal(config.app.sandbox.docker.autoBuildImage, true);
     assert.equal(config.app.sandbox.docker.containerPrefix, "adjutant-sandbox");
     assert.equal(config.app.sandbox.docker.workdir, "/workspace");
+    assert.deepEqual(config.app.sandbox.docker.envAllowlist, []);
     assert.equal(config.app.routeLlm.enabled, true);
     assert.equal(config.app.routeLlm.model, "gpt-4.1-mini");
     assert.equal(config.app.routeLlm.timeoutMs, 1500);
@@ -157,6 +158,7 @@ describe("runtime-config-loader", () => {
       ADJUTANT_SANDBOX_AUTO_BUILD_IMAGE: "0",
       ADJUTANT_SANDBOX_CONTAINER_PREFIX: "sandbox-runner",
       ADJUTANT_SANDBOX_WORKDIR: "/work",
+      ADJUTANT_SANDBOX_ENV_ALLOWLIST: "OPENAI_API_KEY, AWS_REGION",
       ADJUTANT_SANDBOX_NETWORK: "none",
       ADJUTANT_SANDBOX_MEMORY: "1g",
       ADJUTANT_SANDBOX_PIDS_LIMIT: "512",
@@ -167,6 +169,7 @@ describe("runtime-config-loader", () => {
     assert.equal(config.app.sandbox.docker.autoBuildImage, false);
     assert.equal(config.app.sandbox.docker.containerPrefix, "sandbox-runner");
     assert.equal(config.app.sandbox.docker.workdir, "/work");
+    assert.deepEqual(config.app.sandbox.docker.envAllowlist, ["OPENAI_API_KEY", "AWS_REGION"]);
     assert.equal(config.app.sandbox.docker.network, "none");
     assert.equal(config.app.sandbox.docker.memory, "1g");
     assert.equal(config.app.sandbox.docker.pidsLimit, 512);

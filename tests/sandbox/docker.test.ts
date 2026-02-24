@@ -28,6 +28,7 @@ const defaultDockerConfig: SandboxDockerConfig = {
   autoBuildImage: true,
   containerPrefix: "adjutant-sandbox",
   workdir: "/workspace",
+  envAllowlist: [],
   readOnlyRoot: true,
   tmpfs: ["/tmp", "/var/tmp", "/run"],
   network: undefined,

@@ -30,14 +30,31 @@ describe("docker bash operations", () => {
       command: "ls -la",
       env: {
         LANG: "C.UTF-8",
+        OPENAI_API_KEY: "secret",
       },
     });
     assert.deepEqual(args.slice(0, 4), ["exec", "-i", "-w", "/workspace/src"]);
     assert.equal(args.includes("-e"), true);
     assert.equal(args.includes("LANG=C.UTF-8"), true);
+    assert.equal(args.includes("OPENAI_API_KEY=secret"), false);
     assert.equal(args[args.length - 3], "bash");
     assert.equal(args[args.length - 2], "-lc");
     assert.equal(args[args.length - 1], "ls -la");
+  });
+
+  it("buildDockerExecArgs は allowlist 指定時のみ追加 env を渡す", () => {
+    const args = buildDockerExecArgs({
+      containerName: "adjutant-sandbox-a1b2c3",
+      containerCwd: "/workspace/src",
+      command: "env",
+      envAllowlist: ["OPENAI_API_KEY"],
+      env: {
+        LANG: "C.UTF-8",
+        OPENAI_API_KEY: "secret",
+      },
+    });
+    assert.equal(args.includes("LANG=C.UTF-8"), true);
+    assert.equal(args.includes("OPENAI_API_KEY=secret"), true);
   });
 
   it("shouldSandbox は mode と memoryScope で判定する", () => {

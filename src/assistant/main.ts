@@ -133,6 +133,7 @@ if (SANDBOX_CONFIG.mode === "off") {
     workdir: SANDBOX_CONFIG.docker.workdir,
     hostWorkspaceDir: WORKSPACE_DIR,
     mode: SANDBOX_CONFIG.mode,
+    envAllowlist: SANDBOX_CONFIG.docker.envAllowlist,
   });
   activeSandboxContainer = { containerName, ownerNonce };
   console.log(`[Assistant] Sandbox enabled mode=${SANDBOX_CONFIG.mode} container=${containerName}`);
