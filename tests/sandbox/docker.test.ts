@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it, mock } from "node:test";
+import { mkdtemp, rm, stat } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import {
   buildSandboxCreateArgs,
   checkDockerAvailability,
@@ -77,6 +80,34 @@ describe("sandbox docker", () => {
     assert.equal(name, "adjutant-sandbox-a1b2c3");
     assert.equal(calls[1]?.[0], "create");
     assert.equal(calls[2]?.[0], "start");
+  });
+
+  it("ensureSandboxContainer: hostWorkspaceDir が未作成でも先に作成する", async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), "adjutant-sandbox-host-workspace-"));
+    const missingWorkspaceDir = join(baseDir, "nested", "workspace");
+    const calls: string[][] = [];
+    const runner = mock.fn(async (args: string[]) => {
+      calls.push(args);
+      if (args[0] === "inspect") {
+        return { code: 1, stdout: "", stderr: "Error: No such object" };
+      }
+      return { code: 0, stdout: "", stderr: "" };
+    });
+
+    try {
+      await ensureSandboxContainer({
+        cfg: defaultDockerConfig,
+        hostWorkspaceDir: missingWorkspaceDir,
+        ownerNonce: "a1b2c3",
+        runner,
+      });
+
+      const info = await stat(missingWorkspaceDir);
+      assert.equal(info.isDirectory(), true);
+      assert.equal(calls[1]?.[0], "create");
+    } finally {
+      await rm(baseDir, { recursive: true, force: true });
+    }
   });
 
   it("ensureSandboxContainer: 停止済み(自 owner)は start して再利用する", async () => {

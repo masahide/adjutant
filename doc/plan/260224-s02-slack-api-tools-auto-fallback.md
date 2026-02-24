@@ -375,55 +375,55 @@ sequenceDiagram
 
 ### Phase 1 設計と準備
 
-- [ ] 要件と仕様の確定 受け入れ条件の確定
-- [ ] インターフェース契約の確定 スキーマと例の追加
-- [ ] Mermaid図の作成 更新
-- [ ] 型定義 `SlackMode`, `FallbackResult`, `SlackApiError` を作成
-- [ ] テスト基盤の確認（mock client 方針確定）
-- [ ] `vendor/slack-mcp-server/` 参照対応表を作成（機能ごとの準拠箇所を明記）
-- [ ] 既存キャッシュ再利用方針を確定（`nameCacheRepository` + `resolveSlackCacheBaseDir`）
+- [x] 要件と仕様の確定 受け入れ条件の確定
+- [x] インターフェース契約の確定 スキーマと例の追加
+- [x] Mermaid図の作成 更新
+- [x] 型定義 `SlackMode`, `FallbackResult`, `SlackApiError` を作成
+- [x] テスト基盤の確認（mock client 方針確定）
+- [x] `vendor/slack-mcp-server/` 参照対応表を作成（機能ごとの準拠箇所を明記）
+- [x] 既存キャッシュ再利用方針を確定（`nameCacheRepository` + `resolveSlackCacheBaseDir`）
 
 ### Phase 2 認証・クライアント基盤
 
-- [ ] Test `SlackAuthProvider` の Red テスト追加
-- [ ] Impl `xoxc/xoxd` バリデーションと Cookie 付与を実装
-- [ ] Refactor Team/Enterprise 共通 HTTP 処理を抽出
-- [ ] Integration TeamSlackClient / EnterpriseSlackClient 疎通テスト追加
-- [ ] Docs 契約の例を更新
-- [ ] `vendor/slack-mcp-server/pkg/transport/transport.go` と同等の Cookie 付与動作を確認
+- [x] Test `SlackAuthProvider` の Red テスト追加
+- [x] Impl `xoxc/xoxd` バリデーションと Cookie 付与を実装
+- [x] Refactor Team/Enterprise 共通 HTTP 処理を抽出
+- [x] Integration TeamSlackClient / EnterpriseSlackClient 疎通テスト追加
+- [x] Docs 契約の例を更新
+- [x] `vendor/slack-mcp-server/pkg/transport/transport.go` と同等の Cookie 付与動作を確認
 
 ### Phase 3 APIツール実装（自動フォールバック）
 
-- [ ] Test `search_messages/post_message` フォールバック Red テスト追加
-- [ ] Impl `SlackFallbackExecutor` を実装
-- [ ] Refactor `SlackApiService` で 6 機能を統合
-- [ ] Integration `tool_hub` の Slack provider/action へ登録
-- [ ] Docs ツールI/Fとエラー例を更新
-- [ ] `vendor/slack-mcp-server/pkg/provider/api.go` の Enterprise 分岐ロジックとの差分レビュー
-- [ ] `users_list/channels_list` を既存キャッシュファイルへ反映する統合テスト追加
+- [x] Test `search_messages/post_message` フォールバック Red テスト追加
+- [x] Impl `SlackFallbackExecutor` を実装
+- [x] Refactor `SlackApiService` で 6 機能を統合
+- [x] Integration `tool_hub` の Slack provider/action へ登録
+- [x] Docs ツールI/Fとエラー例を更新
+- [x] `vendor/slack-mcp-server/pkg/provider/api.go` の Enterprise 分岐ロジックとの差分レビュー
+- [x] `users_list/channels_list` を既存キャッシュファイルへ反映する統合テスト追加
 
 ### Phase 4 統合と検証
 
-- [ ] 全体テストの実行
-- [ ] エッジケース動作確認（両経路失敗、認証不足、タイムアウト）
-- [ ] ログと例外の確認（トークン非露出）
-- [ ] ドキュメント更新（仕様・契約・図）
+- [x] 全体テストの実行
+- [x] エッジケース動作確認（両経路失敗、認証不足、タイムアウト）
+- [x] ログと例外の確認（トークン非露出）
+- [x] ドキュメント更新（仕様・契約・図）
 
 ## 8. 完了の定義 Definition of Done
 
 ### 8.1 機能DoD Functional DoD
 
-- [ ] 受け入れ条件がすべて満たされていること
-- [ ] 6 action が `tool_hub` 経由で実行できること
-- [ ] `search_messages/post_message` の自動フォールバックが機能すること
-- [ ] 既知の制約が明文化され、想定通りであること
+- [x] 受け入れ条件がすべて満たされていること
+- [x] 6 action が `tool_hub` 経由で実行できること
+- [x] `search_messages/post_message` の自動フォールバックが機能すること
+- [x] 既知の制約が明文化され、想定通りであること
 
 ### 8.2 品質DoD Quality DoD
 
-- [ ] すべてのテストがパスしていること
-- [ ] Linter / Formatter / Typecheck のエラーがないこと
-- [ ] 不要なデバッグコードが削除されていること
-- [ ] 主要変更点がドキュメントに反映されていること
+- [x] すべてのテストがパスしていること
+- [x] Linter / Formatter / Typecheck のエラーがないこと
+- [x] 不要なデバッグコードが削除されていること
+- [x] 主要変更点がドキュメントに反映されていること
 
 ## 9. 懸念事項と未確定事項 Concerns and Questions
 

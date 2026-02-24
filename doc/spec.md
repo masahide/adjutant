@@ -31,7 +31,18 @@ Adjutant は Slack Desktop の CDP イベントを収集し、`NormalizedEvent` 
 - JSONL 追記保存 (`JsonlWriter`)
 - Debug UI (SSE) (`DebugUiServer`)
 - Slack 名称キャッシュ (`SlackNameCacheRepository`)
+- Slack 認証トークンのメモリキャッシュ（`xoxc/xoxd`, `SlackAuthTokenCache`）
 - Assistant UI 本体（`pnpm run assistant` / `src/ui/*`）
+- Dynamic Tool Hub (`tool_hub`)
+- Slack API provider（6 action）
+  - `get_user_name_by_id`
+  - `get_channel_name_by_id`
+  - `users_list`
+  - `channels_list`
+  - `search_messages`
+  - `post_message`
+  - `manual_team` / `manual_enterprise` / `auto_probe` の routing mode
+  - `auto_probe` 時の workspace route pin と限定フォールバック（`429` はフォールバックしない）
 - Assistant 用検索インデックス（SQLite + sqlite-vec, `<stateDir>/memory/<agentId>.sqlite`）
 - Proactive routing pipeline v1.5（rule triage / attention window / batch classifier / global concurrency queue）
 - Timeline v1.5 (`<stateDir>/timeline.jsonl`) と sessionKey 必須化
@@ -162,6 +173,8 @@ flowchart LR
 - `Network.getResponseBody` により API 応答の本文情報を補完
 - `conversations.view` 応答からチャンネル名キャッシュ更新
 - `/cache/{team}/users/list` 応答からユーザー名キャッシュ更新
+- `requestWillBeSent` / `requestWillBeSentExtraInfo` / `cookieStoreSnapshot` の観測値から
+  `xoxc/xoxd` を workspace 単位でメモリキャッシュ更新（`SlackAuthTokenCache`）
 
 ## 6. DOM キャプチャ
 
@@ -197,6 +210,7 @@ flowchart LR
 ```text
 <dataDir>/accounts/<account_id>/_cache/slack/channel-names-by-team/<team_id>.json
 <dataDir>/accounts/<account_id>/_cache/slack/user-names-by-team/<team_id>.json
+<dataDir>/accounts/<account_id>/_cache/slack/workspace-route-pins.json
 ```
 
 - team ごとに分割保存
@@ -208,6 +222,12 @@ flowchart LR
   - `profile.first_name`
   - `profile.last_name`
   - `profile.image_original`
+- `workspace-route-pins.json` は `tool_hub` Slack provider の `auto_probe` 結果を保存する
+  - schema: `adjutant.slack.workspace-route-pin.v1`
+  - `workspaceKey -> mode(team|enterprise)` と `decidedAt` を保持する
+- `xoxc/xoxd` の auth token キャッシュはメモリのみ（永続ファイルなし）
+  - ingest 側で観測した token はプロセス内レジストリに同期される
+  - Slack API provider は env token 未設定時にこのメモリキャッシュを fallback として参照する
 
 ### 7.3 CDP 生イベントログ（任意）
 
@@ -271,53 +291,62 @@ flowchart LR
 
 ### 8.2 Assistant / Proactive
 
-| 変数                                          | 既定値                                | 用途                                            |
-| --------------------------------------------- | ------------------------------------- | ----------------------------------------------- |
-| `ADJUTANT_ROUTING_IDLE_MS`                    | `1000`                                | channel attention-window idle                   |
-| `ADJUTANT_ROUTING_MAX_WAIT_MS`                | `30000`                               | channel attention-window max wait               |
-| `ADJUTANT_ROUTING_DM_IDLE_MS`                 | `200`                                 | DM attention-window idle                        |
-| `ADJUTANT_ROUTING_DM_MAX_WAIT_MS`             | `1000`                                | DM attention-window max wait                    |
-| `ADJUTANT_ROUTING_CONFIDENCE_THRESHOLD`       | `0.7`                                 | batch classifier confidence 閾値                |
-| `ADJUTANT_ROUTE_LLM_ENABLED`                  | `false`                               | secondary classifier（Route LLM）有効化         |
-| `ADJUTANT_ROUTE_LLM_MODEL`                    | `gpt-5-mini`                          | Route LLM モデル                                |
-| `ADJUTANT_ROUTE_LLM_TIMEOUT_MS`               | `1000`                                | Route LLM / batch classifier timeout            |
-| `ADJUTANT_ROUTE_LLM_MAX_CONCURRENT`           | `1`                                   | Route LLM 同時実行上限                          |
-| `ADJUTANT_AGENT_AUDIT_LOG_ENABLED`            | `true`                                | エージェント監査ログ（NDJSON）有効化            |
-| `ADJUTANT_AGENT_AUDIT_LOG_PATH`               | `<stateDir>/audit/agent-audit.ndjson` | エージェント監査ログ保存先                      |
-| `ADJUTANT_AGENT_AUDIT_MAX_FIELD_CHARS`        | `4000`                                | 監査ログのフィールド切り詰め上限                |
-| `ADJUTANT_GLOBAL_MAX_CONCURRENT`              | `3`                                   | global queue 基本同時実行上限                   |
-| `ADJUTANT_GLOBAL_DM_BURST_SLOT`               | `1`                                   | DM burst slot                                   |
-| `ADJUTANT_GLOBAL_MAX_RUNNING_DM`              | `3`                                   | DM 同時実行上限                                 |
-| `ADJUTANT_GLOBAL_STARVATION_MS`               | `120000`                              | starvation 昇格閾値                             |
-| `ADJUTANT_FLUSHER_INTERVAL_MS`                | `300000`                              | Pending Flusher 周期                            |
-| `ADJUTANT_FLUSHER_STALE_MS`                   | `900000`                              | stale open post 判定閾値                        |
-| `ADJUTANT_COMPACTION_ENABLED`                 | `true`                                | overflow 時 compaction 優先                     |
-| `ADJUTANT_MEMORY_FLUSH_ENABLED`               | `true`                                | pre-compaction flush 有効化                     |
-| `ADJUTANT_COMPACTION_RESERVE_TOKENS_FLOOR`    | `20000`                               | flush 閾値計算の reserve                        |
-| `ADJUTANT_MEMORY_FLUSH_SOFT_THRESHOLD_TOKENS` | `4000`                                | flush 閾値計算の soft threshold                 |
-| `ADJUTANT_MEMORY_FLUSH_PROMPT`                | 組み込み既定文                        | flush turn の user prompt                       |
-| `ADJUTANT_MEMORY_FLUSH_SYSTEM_PROMPT`         | 組み込み既定文                        | flush turn の system prompt                     |
-| `ADJUTANT_MEMORY_SEARCH_ENABLED`              | `true`                                | memory_search/memory_get 有効化                 |
-| `ADJUTANT_MEMORY_SEARCH_DB_PATH`              | `<stateDir>/memory/<agentId>.sqlite`  | メモリ検索インデックス DB                       |
-| `ADJUTANT_MEMORY_SEARCH_MODEL`                | `text-embedding-3-small`              | 埋め込みモデル                                  |
-| `ADJUTANT_MEMORY_SEARCH_MAX_RESULTS`          | `5`                                   | 検索結果上限                                    |
-| `ADJUTANT_MEMORY_SEARCH_MIN_SCORE`            | `0`                                   | 最低スコア                                      |
-| `ADJUTANT_MEMORY_SEARCH_VECTOR_ENABLED`       | `true`                                | vector 検索有効化                               |
-| `ADJUTANT_MEMORY_SEARCH_SQLITE_VEC_PATH`      | `""`                                  | sqlite-vec 拡張パス                             |
-| `ADJUTANT_MEMORY_SEARCH_CHUNK_CHARS`          | `1600`                                | chunk 文字数                                    |
-| `ADJUTANT_MEMORY_SEARCH_CHUNK_OVERLAP_CHARS`  | `320`                                 | chunk overlap                                   |
-| `ADJUTANT_MEMORY_SEARCH_SNIPPET_MAX_CHARS`    | `700`                                 | snippet 文字数上限                              |
-| `ADJUTANT_MEMORY_SEARCH_CANDIDATE_MULTIPLIER` | `3`                                   | 候補拡張倍率                                    |
-| `ADJUTANT_MEMORY_SEARCH_VECTOR_WEIGHT`        | `0.7`                                 | hybrid score の vector 重み                     |
-| `ADJUTANT_MEMORY_SEARCH_TEXT_WEIGHT`          | `0.3`                                 | hybrid score の text 重み                       |
-| `ADJUTANT_SANDBOX_MODE`                       | `off`                                 | bash sandbox mode（`off` / `non-main` / `all`） |
-| `ADJUTANT_SANDBOX_IMAGE`                      | `adjutant-sandbox:trixie-slim`        | sandbox Docker image                            |
-| `ADJUTANT_SANDBOX_AUTO_BUILD_IMAGE`           | `true`                                | 未存在時に sandbox image を自動 build する      |
-| `ADJUTANT_SANDBOX_CONTAINER_PREFIX`           | `adjutant-sandbox`                    | sandbox container 名の prefix                   |
-| `ADJUTANT_SANDBOX_WORKDIR`                    | `/workspace`                          | コンテナ内作業ディレクトリ                      |
-| `ADJUTANT_SANDBOX_NETWORK`                    | 未設定（bridge）                      | Docker network（例: `none`）                    |
-| `ADJUTANT_SANDBOX_MEMORY`                     | 未設定                                | Docker memory limit（例: `1g`）                 |
-| `ADJUTANT_SANDBOX_PIDS_LIMIT`                 | `256`                                 | Docker pids limit                               |
+| 変数                                          | 既定値                                                                  | 用途                                                |
+| --------------------------------------------- | ----------------------------------------------------------------------- | --------------------------------------------------- |
+| `ADJUTANT_ROUTING_IDLE_MS`                    | `1000`                                                                  | channel attention-window idle                       |
+| `ADJUTANT_ROUTING_MAX_WAIT_MS`                | `30000`                                                                 | channel attention-window max wait                   |
+| `ADJUTANT_ROUTING_DM_IDLE_MS`                 | `200`                                                                   | DM attention-window idle                            |
+| `ADJUTANT_ROUTING_DM_MAX_WAIT_MS`             | `1000`                                                                  | DM attention-window max wait                        |
+| `ADJUTANT_ROUTING_CONFIDENCE_THRESHOLD`       | `0.7`                                                                   | batch classifier confidence 閾値                    |
+| `ADJUTANT_ROUTE_LLM_ENABLED`                  | `false`                                                                 | secondary classifier（Route LLM）有効化             |
+| `ADJUTANT_ROUTE_LLM_MODEL`                    | `gpt-5-mini`                                                            | Route LLM モデル                                    |
+| `ADJUTANT_ROUTE_LLM_TIMEOUT_MS`               | `1000`                                                                  | Route LLM / batch classifier timeout                |
+| `ADJUTANT_ROUTE_LLM_MAX_CONCURRENT`           | `1`                                                                     | Route LLM 同時実行上限                              |
+| `ADJUTANT_DYNAMIC_TOOL_ENABLED`               | `true`                                                                  | `tool_hub` 公開の有効/無効                          |
+| `ADJUTANT_SLACK_API_ENABLED`                  | `true`                                                                  | `tool_hub` Slack provider 有効/無効                 |
+| `ADJUTANT_SLACK_API_ROUTING_MODE`             | `auto_probe`                                                            | Slack API routing mode                              |
+| `ADJUTANT_SLACK_XOXC_TOKEN`                   | -                                                                       | Slack API `xoxc` token（未設定時はメモリ fallback） |
+| `ADJUTANT_SLACK_XOXD_TOKEN`                   | -                                                                       | Slack API `xoxd` token（未設定時はメモリ fallback） |
+| `ADJUTANT_SLACK_API_TIMEOUT_MS`               | `10000`                                                                 | Slack API 1リクエストの timeout（ms）               |
+| `ADJUTANT_SLACK_TEAM_API_BASE_URL`            | `https://slack.com/api`                                                 | Team route API base URL                             |
+| `ADJUTANT_SLACK_ENTERPRISE_API_BASE_URL`      | `https://slack.com/api`                                                 | Enterprise route API base URL                       |
+| `ADJUTANT_SLACK_ROUTE_PIN_PATH`               | `<dataDir>/accounts/<accountId>/_cache/slack/workspace-route-pins.json` | route pin 保存先                                    |
+| `ADJUTANT_AGENT_AUDIT_LOG_ENABLED`            | `true`                                                                  | エージェント監査ログ（NDJSON）有効化                |
+| `ADJUTANT_AGENT_AUDIT_LOG_PATH`               | `<stateDir>/audit/agent-audit.ndjson`                                   | エージェント監査ログ保存先                          |
+| `ADJUTANT_AGENT_AUDIT_MAX_FIELD_CHARS`        | `4000`                                                                  | 監査ログのフィールド切り詰め上限                    |
+| `ADJUTANT_GLOBAL_MAX_CONCURRENT`              | `3`                                                                     | global queue 基本同時実行上限                       |
+| `ADJUTANT_GLOBAL_DM_BURST_SLOT`               | `1`                                                                     | DM burst slot                                       |
+| `ADJUTANT_GLOBAL_MAX_RUNNING_DM`              | `3`                                                                     | DM 同時実行上限                                     |
+| `ADJUTANT_GLOBAL_STARVATION_MS`               | `120000`                                                                | starvation 昇格閾値                                 |
+| `ADJUTANT_FLUSHER_INTERVAL_MS`                | `300000`                                                                | Pending Flusher 周期                                |
+| `ADJUTANT_FLUSHER_STALE_MS`                   | `900000`                                                                | stale open post 判定閾値                            |
+| `ADJUTANT_COMPACTION_ENABLED`                 | `true`                                                                  | overflow 時 compaction 優先                         |
+| `ADJUTANT_MEMORY_FLUSH_ENABLED`               | `true`                                                                  | pre-compaction flush 有効化                         |
+| `ADJUTANT_COMPACTION_RESERVE_TOKENS_FLOOR`    | `20000`                                                                 | flush 閾値計算の reserve                            |
+| `ADJUTANT_MEMORY_FLUSH_SOFT_THRESHOLD_TOKENS` | `4000`                                                                  | flush 閾値計算の soft threshold                     |
+| `ADJUTANT_MEMORY_FLUSH_PROMPT`                | 組み込み既定文                                                          | flush turn の user prompt                           |
+| `ADJUTANT_MEMORY_FLUSH_SYSTEM_PROMPT`         | 組み込み既定文                                                          | flush turn の system prompt                         |
+| `ADJUTANT_MEMORY_SEARCH_ENABLED`              | `true`                                                                  | memory_search/memory_get 有効化                     |
+| `ADJUTANT_MEMORY_SEARCH_DB_PATH`              | `<stateDir>/memory/<agentId>.sqlite`                                    | メモリ検索インデックス DB                           |
+| `ADJUTANT_MEMORY_SEARCH_MODEL`                | `text-embedding-3-small`                                                | 埋め込みモデル                                      |
+| `ADJUTANT_MEMORY_SEARCH_MAX_RESULTS`          | `5`                                                                     | 検索結果上限                                        |
+| `ADJUTANT_MEMORY_SEARCH_MIN_SCORE`            | `0`                                                                     | 最低スコア                                          |
+| `ADJUTANT_MEMORY_SEARCH_VECTOR_ENABLED`       | `true`                                                                  | vector 検索有効化                                   |
+| `ADJUTANT_MEMORY_SEARCH_SQLITE_VEC_PATH`      | `""`                                                                    | sqlite-vec 拡張パス                                 |
+| `ADJUTANT_MEMORY_SEARCH_CHUNK_CHARS`          | `1600`                                                                  | chunk 文字数                                        |
+| `ADJUTANT_MEMORY_SEARCH_CHUNK_OVERLAP_CHARS`  | `320`                                                                   | chunk overlap                                       |
+| `ADJUTANT_MEMORY_SEARCH_SNIPPET_MAX_CHARS`    | `700`                                                                   | snippet 文字数上限                                  |
+| `ADJUTANT_MEMORY_SEARCH_CANDIDATE_MULTIPLIER` | `3`                                                                     | 候補拡張倍率                                        |
+| `ADJUTANT_MEMORY_SEARCH_VECTOR_WEIGHT`        | `0.7`                                                                   | hybrid score の vector 重み                         |
+| `ADJUTANT_MEMORY_SEARCH_TEXT_WEIGHT`          | `0.3`                                                                   | hybrid score の text 重み                           |
+| `ADJUTANT_SANDBOX_MODE`                       | `off`                                                                   | bash sandbox mode（`off` / `non-main` / `all`）     |
+| `ADJUTANT_SANDBOX_IMAGE`                      | `adjutant-sandbox:trixie-slim`                                          | sandbox Docker image                                |
+| `ADJUTANT_SANDBOX_AUTO_BUILD_IMAGE`           | `true`                                                                  | 未存在時に sandbox image を自動 build する          |
+| `ADJUTANT_SANDBOX_CONTAINER_PREFIX`           | `adjutant-sandbox`                                                      | sandbox container 名の prefix                       |
+| `ADJUTANT_SANDBOX_WORKDIR`                    | `/workspace`                                                            | コンテナ内作業ディレクトリ                          |
+| `ADJUTANT_SANDBOX_NETWORK`                    | 未設定（bridge）                                                        | Docker network（例: `none`）                        |
+| `ADJUTANT_SANDBOX_MEMORY`                     | 未設定                                                                  | Docker memory limit（例: `1g`）                     |
+| `ADJUTANT_SANDBOX_PIDS_LIMIT`                 | `256`                                                                   | Docker pids limit                                   |
 
 ## 9. 実行コマンド
 

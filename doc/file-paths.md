@@ -25,8 +25,11 @@
 | --------------------------------------------------------------------------------- | --- | --------------------------------------------------------------------------- |
 | `{dataDir}/accounts/{accountId}/_cache/slack/channel-names-by-team/{teamId}.json` | R/W | `src/proactive/slack-channel-plugin.ts`, `src/slack/nameCacheRepository.ts` |
 | `{dataDir}/accounts/{accountId}/_cache/slack/user-names-by-team/{teamId}.json`    | R/W | `src/proactive/slack-channel-plugin.ts`, `src/slack/nameCacheRepository.ts` |
+| `{dataDir}/accounts/{accountId}/_cache/slack/workspace-route-pins.json`           | R/W | `src/assistant/slack-api-tools/workspace-route-pin-store.ts`                |
 
 設定時のベースパスは `.../channel-names-by-team.json` のようにファイル名で渡されるが、`nameCacheRepository.ts` が拡張子を除去してディレクトリ化し、チーム別に `{teamId}.json` を配置する (`src/slack/nameCacheRepository.ts:249,273,369`)。
+
+`xoxc/xoxd` の認証トークン（`s01`）は永続ファイルを持たず、`src/slack/slackAuthTokenRegistry.ts` のプロセス内メモリで管理される。
 
 ## 3. デバッグログ
 
@@ -173,8 +176,9 @@
     │   │   └── _cache/slack/
     │   │       ├── channel-names-by-team/
     │   │       │   └── {teamId}.json        [R/W] チャンネル名
-    │   │       └── user-names-by-team/
+    │   │       ├── user-names-by-team/
     │   │           └── {teamId}.json        [R/W] ユーザー名
+    │   │       └── workspace-route-pins.json [R/W] Slack route pin
     │   └── _debug/
     │       ├── cdp-events.jsonl             [W]   CDPイベントログ
     │       └── raw-fetch.jsonl              [W]   Fetchログ

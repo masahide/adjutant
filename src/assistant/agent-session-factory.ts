@@ -18,6 +18,10 @@ import {
 } from "../proactive/routing-tools.js";
 import { parseBooleanEnv } from "../runtime/env-parsers.js";
 import { createToolHubToolDefinition, ProviderRegistry, ToolHub } from "./dynamic-tool/index.js";
+import {
+  createSlackDynamicProviderFromEnv,
+  isSlackApiToolsEnabled,
+} from "./slack-api-tools/index.js";
 
 export type AgentSessionLike = {
   subscribe: (listener: (event: unknown) => void) => () => void;
@@ -202,6 +206,13 @@ export async function createAgentSessionFromSdk(
   const dynamicToolEnabled = parseBooleanEnv(process.env.ADJUTANT_DYNAMIC_TOOL_ENABLED, true);
   if (!params.isHeartbeat && dynamicToolEnabled) {
     const providerRegistry = new ProviderRegistry();
+    if (isSlackApiToolsEnabled(process.env)) {
+      providerRegistry.register(
+        createSlackDynamicProviderFromEnv({
+          env: process.env,
+        })
+      );
+    }
     const toolHub = new ToolHub(providerRegistry);
     customTools.push(createToolHubToolDefinition(toolHub));
   }

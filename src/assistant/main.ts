@@ -36,6 +36,7 @@ import { createProactiveMetrics } from "../proactive/metrics.js";
 import { listJsonlFiles, recoverJsonlFiles } from "../io/jsonl-recovery.js";
 import { loadAssistantGatewayRuntimeConfig } from "../runtime/runtime-config-loader.js";
 import {
+  buildSandboxContainerName,
   checkDockerAvailability,
   destroySandboxContainer,
   ensureDockerImage,
@@ -50,7 +51,7 @@ const runtimeConfig = loadAssistantGatewayRuntimeConfig();
 const PORT = runtimeConfig.app.assistant.port;
 const HOST = runtimeConfig.app.assistant.host;
 const DATA_DIR = runtimeConfig.app.assistant.dataDir;
-const WORKSPACE_DIR = runtimeConfig.app.assistant.workspaceDir;
+let workspaceDir = runtimeConfig.app.assistant.workspaceDir;
 const TIMEZONE = runtimeConfig.app.assistant.timezone;
 const MODEL = runtimeConfig.app.assistant.model;
 const TIMELINE_PATH = runtimeConfig.app.assistant.timelinePath;
@@ -83,6 +84,15 @@ configureAgentAuditLogger({
 
 function toReason(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function isDockerWorkspaceMountError(error: unknown): boolean {
+  const reason = toReason(error).toLowerCase();
+  return (
+    reason.includes("error while creating mount source path") ||
+    reason.includes('invalid mount config for type "bind"') ||
+    reason.includes("bind source path does not exist")
+  );
 }
 
 function parsePositiveInt(value: string | undefined, fallback: number): number {
@@ -118,25 +128,62 @@ if (SANDBOX_CONFIG.mode === "off") {
       `sandbox mode requires Docker daemon. Start Docker Desktop and retry. ${availability.reason ? `reason: ${availability.reason}` : ""} Set ADJUTANT_SANDBOX_MODE=off to disable sandbox.`
     );
   }
+  await mkdir(workspaceDir, { recursive: true });
   await ensureDockerImage(SANDBOX_CONFIG.docker.image, {
     autoBuild: SANDBOX_CONFIG.docker.autoBuildImage,
     buildContextDir: process.cwd(),
   });
   const ownerNonce = randomUUID().slice(0, 6);
-  const containerName = await ensureSandboxContainer({
-    cfg: SANDBOX_CONFIG.docker,
-    hostWorkspaceDir: WORKSPACE_DIR,
+  const sandboxContainerName = buildSandboxContainerName({
+    containerPrefix: SANDBOX_CONFIG.docker.containerPrefix,
     ownerNonce,
   });
+  let containerName: string;
+  try {
+    containerName = await ensureSandboxContainer({
+      cfg: SANDBOX_CONFIG.docker,
+      hostWorkspaceDir: workspaceDir,
+      ownerNonce,
+      containerName: sandboxContainerName,
+    });
+  } catch (error) {
+    if (!isDockerWorkspaceMountError(error)) {
+      throw error;
+    }
+    const fallbackWorkspaceDir = resolve(process.cwd(), ".adjutant", "workspace");
+    if (fallbackWorkspaceDir === resolve(workspaceDir)) {
+      throw error;
+    }
+    console.warn(
+      `[Assistant] Workspace mount failed for sandbox path=${workspaceDir}. Retry with fallback=${fallbackWorkspaceDir}. reason=${toReason(error)}`
+    );
+    const removed = await destroySandboxContainer({
+      containerName: sandboxContainerName,
+      ownerNonce,
+    });
+    if (removed.removed) {
+      console.warn(`[Assistant] Removed failed sandbox container name=${sandboxContainerName}`);
+    }
+    await mkdir(fallbackWorkspaceDir, { recursive: true });
+    workspaceDir = fallbackWorkspaceDir;
+    containerName = await ensureSandboxContainer({
+      cfg: SANDBOX_CONFIG.docker,
+      hostWorkspaceDir: workspaceDir,
+      ownerNonce,
+      containerName: sandboxContainerName,
+    });
+  }
   configureSandbox({
     containerName,
     workdir: SANDBOX_CONFIG.docker.workdir,
-    hostWorkspaceDir: WORKSPACE_DIR,
+    hostWorkspaceDir: workspaceDir,
     mode: SANDBOX_CONFIG.mode,
     envAllowlist: SANDBOX_CONFIG.docker.envAllowlist,
   });
   activeSandboxContainer = { containerName, ownerNonce };
-  console.log(`[Assistant] Sandbox enabled mode=${SANDBOX_CONFIG.mode} container=${containerName}`);
+  console.log(
+    `[Assistant] Sandbox enabled mode=${SANDBOX_CONFIG.mode} container=${containerName} workspace=${workspaceDir}`
+  );
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -300,7 +347,7 @@ const watermarkStore = createWatermarkStore({
 
 const agentRunFn = createAgentRunAdapter(
   {
-    workspaceDir: WORKSPACE_DIR,
+    workspaceDir,
     timezone: TIMEZONE,
     model: MODEL,
     sessionEntriesPath: SESSION_ENTRIES_PATH,
@@ -339,7 +386,7 @@ ChatHandler.configure({
   runAgent: agentRunFn,
   globalConcurrencyQueue,
   dataDir: DATA_DIR,
-  workspaceDir: WORKSPACE_DIR,
+  workspaceDir,
   timezone: TIMEZONE,
   idempotencyTtlSec: 300,
   idempotencyStorePath: IDEMPOTENCY_STORE_PATH,
@@ -474,7 +521,7 @@ const channelManager = createChannelManager({
 const heartbeatConfig: HeartbeatConfig = {
   dataDir: DATA_DIR,
   stateDir: SESSION_STATE_DIR,
-  workspaceDir: WORKSPACE_DIR,
+  workspaceDir,
   userTimezone: TIMEZONE,
   defaultAccountId: SLACK_DEFAULT_ACCOUNT_ID,
   model: MODEL,
@@ -514,7 +561,7 @@ const pendingFlusherTimer =
     : null;
 
 const markdownSummaryBatchService = createMarkdownSummaryBatchService({
-  workspaceDir: WORKSPACE_DIR,
+  workspaceDir,
   timezone: TIMEZONE,
   sessionTranscriptsDir: SESSION_TRANSCRIPTS_DIR,
   watermarkPath: resolveSummaryBatchWatermarkPath({

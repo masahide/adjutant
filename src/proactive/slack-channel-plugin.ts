@@ -6,6 +6,8 @@ import { resolveEndpoint, type CdpEndpoint } from "../runtime/config.js";
 import { computeFullJitterDelayMs } from "../runtime/retry-policy.js";
 import { connectToSlackPage, type SlackCdpClient } from "../runtime/slackConnection.js";
 import { SlackAdapter } from "../slack/adapter.js";
+import { syncSlackAuthTokenSnapshots } from "../slack/slackAuthTokenRegistry.js";
+import type { SlackAuthTokenCacheSnapshot } from "../slack/slackAuthTokenCache.js";
 import type { ChannelGatewayContext, ChannelIngestionPlugin } from "./channel-plugin.js";
 import { join } from "node:path";
 
@@ -54,6 +56,10 @@ type DisconnectAwareClient = {
 type ActiveAccountSession = {
   client: DisconnectAwareClient;
   adapter: IngestionAdapter;
+};
+
+type TokenSnapshotReadableAdapter = IngestionAdapter & {
+  listAuthTokenSnapshots?: () => SlackAuthTokenCacheSnapshot[];
 };
 
 const DEFAULT_RETRY_BASE_MS = 1000;
@@ -130,6 +136,19 @@ async function waitForDisconnectOrAbort(
     client.on("disconnect", handleDisconnect);
     abortSignal.addEventListener("abort", handleAbort, { once: true });
   });
+}
+
+function readTokenSnapshots(adapter: IngestionAdapter): SlackAuthTokenCacheSnapshot[] {
+  const reader = adapter as TokenSnapshotReadableAdapter;
+  if (typeof reader.listAuthTokenSnapshots !== "function") {
+    return [];
+  }
+  try {
+    const snapshots = reader.listAuthTokenSnapshots();
+    return Array.isArray(snapshots) ? snapshots : [];
+  } catch {
+    return [];
+  }
 }
 
 function createDefaultAdapterFactory(
@@ -221,6 +240,13 @@ export function createSlackChannelPlugin(
           lastStartAt: nowMs(),
         });
         await adapter.start(async (event) => {
+          const snapshots = readTokenSnapshots(adapter);
+          if (snapshots.length > 0) {
+            syncSlackAuthTokenSnapshots({
+              accountId: ctx.accountId,
+              snapshots,
+            });
+          }
           const withAccount = attachAccountId(event, ctx.accountId);
           await writer.append(withAccount);
           await ctx.emit({
