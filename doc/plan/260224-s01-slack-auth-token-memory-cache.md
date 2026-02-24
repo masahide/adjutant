@@ -106,10 +106,7 @@
 
 ```ts
 type TokenKind = "xoxc" | "xoxd";
-type TokenSourceStage =
-  | "requestWillBeSent"
-  | "requestWillBeSentExtraInfo"
-  | "cookieStoreSnapshot";
+type TokenSourceStage = "requestWillBeSent" | "requestWillBeSentExtraInfo" | "cookieStoreSnapshot";
 
 type TokenEntry = {
   value: string;
@@ -154,6 +151,7 @@ type SlackAuthTokenCacheSnapshot = {
 ### 4.4 代表的な例 Examples
 
 1. `requestWillBeSent` で `xoxc` 検出時の更新結果
+
 ```json
 {
   "workspaceKey": "EA8QH2AU9",
@@ -165,6 +163,7 @@ type SlackAuthTokenCacheSnapshot = {
 ```
 
 2. `requestWillBeSentExtraInfo` で同値 `xoxd` 再観測
+
 ```json
 {
   "workspaceKey": "EA8QH2AU9",
@@ -176,6 +175,7 @@ type SlackAuthTokenCacheSnapshot = {
 ```
 
 3. URL解析不可時
+
 ```json
 {
   "workspaceKey": "global",
@@ -334,4 +334,3 @@ sequenceDiagram
   開発用途としては許容だが、ログ保存先（`raw-fetch.jsonl`）運用ルールを明文化すべき。
 - プロトタイプとしてのリスク  
   メモリ保持のみのため再起動で消失する。再接続時の再収集前提が必要。
-

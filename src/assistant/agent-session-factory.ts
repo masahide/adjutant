@@ -16,6 +16,8 @@ import {
   REPORT_HEARTBEAT_STATUS_TOOL,
   validateReportHeartbeatStatusInput,
 } from "../proactive/routing-tools.js";
+import { parseBooleanEnv } from "../runtime/env-parsers.js";
+import { createToolHubToolDefinition, ProviderRegistry, ToolHub } from "./dynamic-tool/index.js";
 
 export type AgentSessionLike = {
   subscribe: (listener: (event: unknown) => void) => () => void;
@@ -197,6 +199,12 @@ export async function createAgentSessionFromSdk(
   }
   const settingsManager = SettingsManager.inMemory(settingsOverrides);
   const customTools: ToolDefinition[] = [];
+  const dynamicToolEnabled = parseBooleanEnv(process.env.ADJUTANT_DYNAMIC_TOOL_ENABLED, true);
+  if (!params.isHeartbeat && dynamicToolEnabled) {
+    const providerRegistry = new ProviderRegistry();
+    const toolHub = new ToolHub(providerRegistry);
+    customTools.push(createToolHubToolDefinition(toolHub));
+  }
   if (params.isHeartbeat) {
     customTools.push(createReportHeartbeatStatusToolDefinition());
   }

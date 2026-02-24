@@ -1,4 +1,5 @@
 export * from "./types.js";
+export * from "./dynamic-tool/index.js";
 
 export type { ReadEventsOptions } from "./event-reader.js";
 export { readEvents } from "./event-reader.js";

@@ -195,6 +195,7 @@ type WorkspaceRouteStore = Map<string, WorkspaceRoutePin>;
 ### 4.4 代表的な例 Examples
 
 1. `search_messages` 成功（auto_probe + フォールバック）
+
 ```json
 {
   "modeUsed": "enterprise",
@@ -204,6 +205,7 @@ type WorkspaceRouteStore = Map<string, WorkspaceRoutePin>;
 ```
 
 2. `post_message` 失敗（manual モード）
+
 ```json
 {
   "code": "primary_failed",
@@ -213,6 +215,7 @@ type WorkspaceRouteStore = Map<string, WorkspaceRoutePin>;
 ```
 
 3. `get_user_name_by_id` キャッシュヒット
+
 ```json
 {
   "user_id": "U123",
@@ -222,6 +225,7 @@ type WorkspaceRouteStore = Map<string, WorkspaceRoutePin>;
 ```
 
 4. workspace route pin
+
 ```json
 {
   "workspaceKey": "EA8QH2AU9",
