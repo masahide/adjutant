@@ -154,11 +154,20 @@ type SlackAuthTokenCacheSnapshot = {
 
 ```json
 {
-  "workspaceKey": "EA8QH2AU9",
-  "updated": true,
-  "tokenKind": "xoxc",
   "sourceStage": "requestWillBeSent",
-  "hits": 1
+  "observedAt": 1711115555000,
+  "workspaceKey": "EA8QH2AU9",
+  "tokens": [
+    {
+      "tokenKind": "xoxc",
+      "updated": true,
+      "hits": 1,
+      "firstSeenAt": 1711115555000,
+      "lastSeenAt": 1711115555000,
+      "sourceStage": "requestWillBeSent"
+    }
+  ],
+  "cacheError": null
 }
 ```
 
@@ -166,11 +175,20 @@ type SlackAuthTokenCacheSnapshot = {
 
 ```json
 {
-  "workspaceKey": "EA8QH2AU9",
-  "updated": false,
-  "tokenKind": "xoxd",
   "sourceStage": "requestWillBeSentExtraInfo",
-  "hits": 4
+  "observedAt": 1711115566000,
+  "workspaceKey": "EA8QH2AU9",
+  "tokens": [
+    {
+      "tokenKind": "xoxd",
+      "updated": false,
+      "hits": 4,
+      "firstSeenAt": 1711115500000,
+      "lastSeenAt": 1711115566000,
+      "sourceStage": "requestWillBeSentExtraInfo"
+    }
+  ],
+  "cacheError": null
 }
 ```
 
@@ -178,9 +196,20 @@ type SlackAuthTokenCacheSnapshot = {
 
 ```json
 {
+  "sourceStage": "cookieStoreSnapshot",
+  "observedAt": 1711115577000,
   "workspaceKey": "global",
-  "updated": true,
-  "tokenKind": "xoxd"
+  "tokens": [
+    {
+      "tokenKind": "xoxd",
+      "updated": true,
+      "hits": 1,
+      "firstSeenAt": 1711115577000,
+      "lastSeenAt": 1711115577000,
+      "sourceStage": "cookieStoreSnapshot"
+    }
+  ],
+  "cacheError": null
 }
 ```
 
@@ -215,8 +244,8 @@ classDiagram
 
   class SlackAuthTokenCache {
     -byWorkspace: Map~string,TokenPair~
-    +observe(input) bool
-    +snapshot(workspaceKey) TokenPair
+    +observe(input) SlackAuthTokenObserveResult
+    +snapshot(workspaceKey) SlackAuthTokenCacheSnapshot
   }
 
   SlackAdapter --> SlackIngressHandlers
@@ -278,51 +307,51 @@ sequenceDiagram
 
 ### Phase 1 設計と準備
 
-- [ ] 要件と仕様の確定 受け入れ条件の確定
-- [ ] インターフェース契約の確定 スキーマと例の追加
-- [ ] Mermaid図の作成 更新
-- [ ] `SlackAuthTokenCache` 型定義の作成
-- [ ] テスト基盤の確認（既存 `tests/mockSlackClient.ts` 利用方針）
+- [x] 要件と仕様の確定 受け入れ条件の確定
+- [x] インターフェース契約の確定 スキーマと例の追加
+- [x] Mermaid図の作成 更新
+- [x] `SlackAuthTokenCache` 型定義の作成
+- [x] テスト基盤の確認（既存 `tests/mockSlackClient.ts` 利用方針）
 
 ### Phase 2 Token Cache コア実装
 
-- [ ] Test `SlackAuthTokenCache` の Red テストを追加
-- [ ] Impl `src/slack/slackAuthTokenCache.ts` を最小実装
-- [ ] Refactor `observe` の重複分岐を整理
-- [ ] Integration Updater から呼び出すための I/F を調整
-- [ ] Docs 契約と図の差分反映
+- [x] Test `SlackAuthTokenCache` の Red テストを追加
+- [x] Impl `src/slack/slackAuthTokenCache.ts` を最小実装
+- [x] Refactor `observe` の重複分岐を整理
+- [x] Integration Updater から呼び出すための I/F を調整
+- [x] Docs 契約と図の差分反映
 
 ### Phase 3 Slack イベント統合
 
-- [ ] Test `requestWillBeSent` / `requestWillBeSentExtraInfo` からの更新テストを Red 追加
-- [ ] Impl `SlackResponseCacheUpdater` にキャッシュ更新処理を実装
-- [ ] Refactor `authDebug` 解析と `cacheUpdate` 生成の責務分離
-- [ ] Integration `debugCookieStoreEnabled` ON/OFF の分離動作テスト追加
-- [ ] Docs イベント例を更新
+- [x] Test `requestWillBeSent` / `requestWillBeSentExtraInfo` からの更新テストを Red 追加
+- [x] Impl `SlackResponseCacheUpdater` にキャッシュ更新処理を実装
+- [x] Refactor `authDebug` 解析と `cacheUpdate` 生成の責務分離
+- [x] Integration `debugCookieStoreEnabled` ON/OFF の分離動作テスト追加
+- [x] Docs イベント例を更新
 
 ### Phase 4 統合と検証
 
-- [ ] `pnpm run typecheck` 実行
-- [ ] `node --import tsx --test tests/slack/slackIngressHandlers.test.ts` 実行
-- [ ] `node --import tsx --test tests/slackAdapter.events.test.ts` 実行
-- [ ] ログと例外の確認（token欠落、URL不正、順不同イベント）
-- [ ] 必要ドキュメント更新（実装との差分解消）
+- [x] `pnpm run typecheck` 実行
+- [x] `node --import tsx --test tests/slack/slackIngressHandlers.test.ts` 実行
+- [x] `node --import tsx --test tests/slackAdapter.events.test.ts` 実行
+- [x] ログと例外の確認（token欠落、URL不正、順不同イベント）
+- [x] 必要ドキュメント更新（実装との差分解消）
 
 ## 8. 完了の定義 Definition of Done
 
 ### 8.1 機能DoD Functional DoD
 
-- [ ] 受け入れ条件がすべて満たされていること
-- [ ] `xoxc/xoxd` が workspace 単位でメモリ参照できること
-- [ ] `requestWillBeSent` と `requestWillBeSentExtraInfo` と `cookieStoreSnapshot` が分離記録されること
-- [ ] 既知の制約が明文化され、想定通りであること
+- [x] 受け入れ条件がすべて満たされていること
+- [x] `xoxc/xoxd` が workspace 単位でメモリ参照できること
+- [x] `requestWillBeSent` と `requestWillBeSentExtraInfo` と `cookieStoreSnapshot` が分離記録されること
+- [x] 既知の制約が明文化され、想定通りであること
 
 ### 8.2 品質DoD Quality DoD
 
-- [ ] 全テストがパスしていること
-- [ ] Linter Formatter Typecheck にエラーがないこと
-- [ ] 不要なデバッグコードが削除されていること
-- [ ] 主要変更が `doc/plan` とコードコメントに反映されていること
+- [x] 全テストがパスしていること
+- [x] Linter Formatter Typecheck にエラーがないこと
+- [x] 不要なデバッグコードが削除されていること
+- [x] 主要変更が `doc/plan` とコードコメントに反映されていること
 
 ## 9. 懸念事項と未確定事項 Concerns and Questions
 

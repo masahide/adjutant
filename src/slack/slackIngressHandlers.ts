@@ -6,6 +6,7 @@ import type { SlackNameCacheRepository } from "./nameCacheRepository.js";
 import type { ResponseBodyReader } from "./responseBodyReader.js";
 import type { SlackResponseProjector } from "./responseProjector.js";
 import type { SlackDebug } from "./slackDebug.js";
+import type { SlackAuthTokenCacheSnapshot } from "./slackAuthTokenCache.js";
 import { SlackIngressRequestParser } from "./slackIngressRequestParser.js";
 import { SlackResponseCacheUpdater } from "./slackResponseCacheUpdater.js";
 import { SlackWsNormalizer } from "./slackWsNormalizer.js";
@@ -197,6 +198,14 @@ export class SlackIngressHandlers {
 
   async handleRequestWillBeSentExtraInfo(event: RequestWillBeSentExtraInfoEvent): Promise<void> {
     await this.responseUpdater.handleRequestWillBeSentExtraInfo(event);
+  }
+
+  getAuthTokenSnapshot(workspaceKey: string): SlackAuthTokenCacheSnapshot | null {
+    return this.responseUpdater.getAuthTokenSnapshot(workspaceKey);
+  }
+
+  listAuthTokenSnapshots(): SlackAuthTokenCacheSnapshot[] {
+    return this.responseUpdater.listAuthTokenSnapshots();
   }
 
   private async handlePostMessageRequest(

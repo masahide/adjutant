@@ -17,6 +17,7 @@ import {
   type ResponseReceivedEvent as IngressResponseReceivedEvent,
   type WebSocketFrameEvent as IngressWebSocketFrameEvent,
 } from "./slackIngressHandlers.js";
+import type { SlackAuthTokenCacheSnapshot } from "./slackAuthTokenCache.js";
 import { createSlackDebugTargets, hasSlackDebugTarget, SlackDebug } from "./slackDebug.js";
 
 export type FetchPausedEvent = IngressFetchPausedEvent;
@@ -304,6 +305,14 @@ export class SlackAdapter implements IngestionAdapter {
         await Fetch.continueRequest({ requestId: event.requestId });
       }
     });
+  }
+
+  getAuthTokenSnapshot(workspaceKey: string): SlackAuthTokenCacheSnapshot | null {
+    return this.ingressHandlers.getAuthTokenSnapshot(workspaceKey);
+  }
+
+  listAuthTokenSnapshots(): SlackAuthTokenCacheSnapshot[] {
+    return this.ingressHandlers.listAuthTokenSnapshots();
   }
 
   async stop(): Promise<void> {

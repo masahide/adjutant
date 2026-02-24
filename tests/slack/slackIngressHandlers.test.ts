@@ -170,12 +170,25 @@ describe("SlackIngressHandlers", () => {
             xoxd?: { detected?: boolean };
             cookieD?: { present?: boolean };
           };
+          cacheUpdate?: {
+            workspaceKey?: string;
+            tokens?: Array<{
+              tokenKind?: string;
+              updated?: boolean;
+              hits?: number;
+            }>;
+          } | null;
         }
       | undefined;
     assert.equal(debugPayload?.stage, "requestWillBeSent");
     assert.equal(debugPayload?.authDebug?.xoxc?.detected, true);
     assert.equal(debugPayload?.authDebug?.xoxd?.detected, true);
     assert.equal(debugPayload?.authDebug?.cookieD?.present, true);
+    assert.equal(debugPayload?.cacheUpdate?.workspaceKey, "example");
+    assert.equal(debugPayload?.cacheUpdate?.tokens?.[0]?.tokenKind, "xoxc");
+    assert.equal(debugPayload?.cacheUpdate?.tokens?.[0]?.updated, true);
+    assert.equal(debugPayload?.cacheUpdate?.tokens?.[0]?.hits, 1);
+    assert.equal(debugPayload?.cacheUpdate?.tokens?.[1]?.tokenKind, "xoxd");
   });
 
   it("requestPaused の raw_fetch debug に authDebug を含める", async () => {
@@ -252,12 +265,26 @@ describe("SlackIngressHandlers", () => {
             cookieD?: { value?: string | null };
             xoxd?: { detected?: boolean };
           };
+          cacheUpdate?: {
+            workspaceKey?: string;
+            sourceStage?: string;
+            tokens?: Array<{
+              tokenKind?: string;
+              updated?: boolean;
+              hits?: number;
+            }>;
+          } | null;
         }
       | undefined;
     assert.ok(debugPayload, "requestWillBeSentExtraInfo debug payload should be emitted");
     assert.equal(debugPayload?.dCookieFromAssociated, "xoxd-associated%2Btoken");
     assert.equal(debugPayload?.authDebug?.cookieD?.value, "xoxd-associated%2Btoken");
     assert.equal(debugPayload?.authDebug?.xoxd?.detected, true);
+    assert.equal(debugPayload?.cacheUpdate?.workspaceKey, "example");
+    assert.equal(debugPayload?.cacheUpdate?.sourceStage, "requestWillBeSentExtraInfo");
+    assert.equal(debugPayload?.cacheUpdate?.tokens?.[0]?.tokenKind, "xoxd");
+    assert.equal(debugPayload?.cacheUpdate?.tokens?.[0]?.updated, true);
+    assert.equal(debugPayload?.cacheUpdate?.tokens?.[0]?.hits, 1);
   });
 
   it("debugCookieStoreEnabled=true の時だけ cookieStoreSnapshot を別イベントで出力する", async () => {
@@ -292,11 +319,59 @@ describe("SlackIngressHandlers", () => {
             cookieD?: { value?: string | null };
             xoxd?: { detected?: boolean };
           };
+          cacheUpdate?: {
+            workspaceKey?: string;
+            sourceStage?: string;
+            tokens?: Array<{
+              tokenKind?: string;
+              updated?: boolean;
+              hits?: number;
+            }>;
+          } | null;
         }
       | undefined;
     assert.ok(cookieStorePayload, "cookieStoreSnapshot payload should be emitted");
     assert.equal(cookieStorePayload?.dCookieFromStore, "xoxd-store%2Btoken");
     assert.equal(cookieStorePayload?.authDebug?.cookieD?.value, "xoxd-store%2Btoken");
     assert.equal(cookieStorePayload?.authDebug?.xoxd?.detected, true);
+    assert.equal(cookieStorePayload?.cacheUpdate?.workspaceKey, "example");
+    assert.equal(cookieStorePayload?.cacheUpdate?.sourceStage, "cookieStoreSnapshot");
+    assert.equal(cookieStorePayload?.cacheUpdate?.tokens?.[0]?.tokenKind, "xoxd");
+    assert.equal(cookieStorePayload?.cacheUpdate?.tokens?.[0]?.updated, true);
+  });
+
+  it("同一 token の再観測時は cacheUpdate.updated=false かつ hits が増える", async () => {
+    const debugEvents: unknown[] = [];
+    const { handlers } = createHandlers({
+      debugFetchHookEnabled: true,
+      onDebugEvent: (payload) => debugEvents.push(payload),
+    });
+
+    await handlers.handleRequestWillBeSent({
+      requestId: "req-repeat-1",
+      type: "Fetch",
+      request: {
+        url: "https://workspace.slack.com/api/chat.postMessage",
+        method: "POST",
+        headers: { authorization: "Bearer xoxc-123-456-789-abcdef123456" },
+      },
+    });
+    await handlers.handleRequestWillBeSent({
+      requestId: "req-repeat-2",
+      type: "Fetch",
+      request: {
+        url: "https://workspace.slack.com/api/chat.postMessage",
+        method: "POST",
+        headers: { authorization: "Bearer xoxc-123-456-789-abcdef123456" },
+      },
+    });
+
+    const second = debugEvents
+      .filter((payload) => payload && typeof payload === "object")
+      .map((payload) => payload as { stage?: string; cacheUpdate?: { tokens?: unknown[] } | null })
+      .filter((payload) => payload.stage === "requestWillBeSent")[1];
+    const token = (second?.cacheUpdate?.tokens?.[0] as { updated?: boolean; hits?: number }) ?? {};
+    assert.equal(token.updated, false);
+    assert.equal(token.hits, 2);
   });
 });

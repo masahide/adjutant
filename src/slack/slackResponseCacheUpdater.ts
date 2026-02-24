@@ -12,7 +12,14 @@ import type {
   ResponseReceivedEvent,
 } from "./slackIngressHandlers.js";
 import type { SlackUrlInfo } from "./slackIngressRequestParser.js";
+import type { SlackAuthDebugInfo } from "./slackAuthDebug.js";
 import { enrichSlackAuthDebugWithCookieD, extractSlackAuthDebugInfo } from "./slackAuthDebug.js";
+import {
+  resolveSlackWorkspaceKey,
+  SlackAuthTokenCache,
+  type SlackAuthTokenKind,
+  type SlackAuthTokenSourceStage,
+} from "./slackAuthTokenCache.js";
 
 export type SlackResponseCacheUpdaterDeps = {
   slackApiRe: RegExp;
@@ -40,12 +47,16 @@ export type SlackResponseCacheUpdaterDeps = {
     changed: number,
     total: number
   ) => void;
+  authTokenCache?: SlackAuthTokenCache;
 };
 
 export class SlackResponseCacheUpdater {
   private readonly requestUrlById = new Map<string, string>();
+  private readonly authTokenCache: SlackAuthTokenCache;
 
-  constructor(private readonly deps: SlackResponseCacheUpdaterDeps) {}
+  constructor(private readonly deps: SlackResponseCacheUpdaterDeps) {
+    this.authTokenCache = deps.authTokenCache ?? new SlackAuthTokenCache();
+  }
 
   async handleResponseReceived(event: ResponseReceivedEvent): Promise<void> {
     if (event.requestId) {
@@ -90,6 +101,12 @@ export class SlackResponseCacheUpdater {
       headers: event.request.headers,
       body,
     });
+    const cacheUpdate = this.observeAuthTokenCache({
+      requestId: event.requestId,
+      requestUrl: event.request.url,
+      sourceStage: "requestWillBeSent",
+      authDebug,
+    });
     this.deps.pushDebugEvent("raw_fetch", {
       stage: "requestWillBeSent",
       requestId: event.requestId,
@@ -100,6 +117,7 @@ export class SlackResponseCacheUpdater {
       urlInfo: this.deps.parseUrlInfo(event.request.url),
       contentType,
       authDebug,
+      cacheUpdate,
       body: this.deps.truncateForDebug(body, 4000),
     });
   }
@@ -128,6 +146,12 @@ export class SlackResponseCacheUpdater {
       url: requestUrl,
       urlInfo: requestUrl ? this.deps.parseUrlInfo(requestUrl) : null,
       authDebug,
+      cacheUpdate: this.observeAuthTokenCache({
+        requestId: event.requestId,
+        requestUrl,
+        sourceStage: "requestWillBeSentExtraInfo",
+        authDebug,
+      }),
       associatedCookiesCount: event.associatedCookies?.length ?? 0,
       dCookieFromAssociated: dCookieFromAssociated ?? null,
     });
@@ -193,10 +217,24 @@ export class SlackResponseCacheUpdater {
       url: requestUrl,
       urlInfo: this.deps.parseUrlInfo(requestUrl),
       authDebug,
+      cacheUpdate: this.observeAuthTokenCache({
+        requestId,
+        requestUrl,
+        sourceStage: "cookieStoreSnapshot",
+        authDebug,
+      }),
       cookieStoreCookiesCount: cookies.length,
       dCookieFromStore: dCookieFromStore ?? null,
       cookieStoreError: cookieStoreError ?? null,
     });
+  }
+
+  getAuthTokenSnapshot(workspaceKey: string) {
+    return this.authTokenCache.snapshot(workspaceKey);
+  }
+
+  listAuthTokenSnapshots() {
+    return this.authTokenCache.snapshots();
   }
 
   private async pushResponseDebugEvent(event: ResponseReceivedEvent): Promise<void> {
@@ -367,5 +405,98 @@ export class SlackResponseCacheUpdater {
       pathSegments: urlInfo.pathSegments,
       query: urlInfo.query,
     };
+  }
+
+  private observeAuthTokenCache(input: {
+    requestId: string;
+    requestUrl: string | undefined;
+    sourceStage: SlackAuthTokenSourceStage;
+    authDebug: SlackAuthDebugInfo;
+  }): {
+    workspaceKey: string;
+    sourceStage: SlackAuthTokenSourceStage;
+    observedAt: number;
+    tokens: Array<{
+      tokenKind: SlackAuthTokenKind;
+      updated: boolean;
+      hits: number;
+      firstSeenAt: number;
+      lastSeenAt: number;
+      sourceStage: SlackAuthTokenSourceStage;
+    }>;
+    cacheError: string | null;
+  } | null {
+    const observedAt = Date.now();
+    try {
+      let workspaceKey: string | undefined;
+      const tokens: Array<{
+        tokenKind: SlackAuthTokenKind;
+        updated: boolean;
+        hits: number;
+        firstSeenAt: number;
+        lastSeenAt: number;
+        sourceStage: SlackAuthTokenSourceStage;
+      }> = [];
+
+      const observedXoxc = this.authTokenCache.observe({
+        tokenKind: "xoxc",
+        value: this.asString(input.authDebug.xoxc.value) ?? "",
+        sourceStage: input.sourceStage,
+        requestId: input.requestId,
+        url: input.requestUrl,
+        observedAt,
+      });
+      if (observedXoxc) {
+        workspaceKey = observedXoxc.workspaceKey;
+        tokens.push({
+          tokenKind: observedXoxc.tokenKind,
+          updated: observedXoxc.updated,
+          hits: observedXoxc.hits,
+          firstSeenAt: observedXoxc.firstSeenAt,
+          lastSeenAt: observedXoxc.lastSeenAt,
+          sourceStage: observedXoxc.sourceStage,
+        });
+      }
+
+      const observedXoxd = this.authTokenCache.observe({
+        tokenKind: "xoxd",
+        value: this.asString(input.authDebug.xoxd.value) ?? "",
+        sourceStage: input.sourceStage,
+        requestId: input.requestId,
+        url: input.requestUrl,
+        observedAt,
+      });
+      if (observedXoxd) {
+        workspaceKey = workspaceKey ?? observedXoxd.workspaceKey;
+        tokens.push({
+          tokenKind: observedXoxd.tokenKind,
+          updated: observedXoxd.updated,
+          hits: observedXoxd.hits,
+          firstSeenAt: observedXoxd.firstSeenAt,
+          lastSeenAt: observedXoxd.lastSeenAt,
+          sourceStage: observedXoxd.sourceStage,
+        });
+      }
+
+      if (tokens.length === 0) {
+        return null;
+      }
+
+      return {
+        workspaceKey: workspaceKey ?? resolveSlackWorkspaceKey(input.requestUrl),
+        sourceStage: input.sourceStage,
+        observedAt,
+        tokens,
+        cacheError: null,
+      };
+    } catch (err) {
+      return {
+        workspaceKey: resolveSlackWorkspaceKey(input.requestUrl),
+        sourceStage: input.sourceStage,
+        observedAt,
+        tokens: [],
+        cacheError: String(err),
+      };
+    }
   }
 }

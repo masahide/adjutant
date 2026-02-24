@@ -313,6 +313,14 @@ describe("SlackAdapter event handling", () => {
               xoxd?: { detected?: boolean };
               cookieD?: { present?: boolean };
             };
+            cacheUpdate?: {
+              workspaceKey?: string;
+              tokens?: Array<{
+                tokenKind?: string;
+                updated?: boolean;
+                hits?: number;
+              }>;
+            } | null;
           };
         }
       | undefined;
@@ -324,6 +332,9 @@ describe("SlackAdapter event handling", () => {
     assert.equal(rawFetch.payload?.authDebug?.xoxc?.detected, true);
     assert.equal(rawFetch.payload?.authDebug?.xoxd?.detected, true);
     assert.equal(rawFetch.payload?.authDebug?.cookieD?.present, true);
+    assert.equal(rawFetch.payload?.cacheUpdate?.workspaceKey, "global");
+    assert.equal(rawFetch.payload?.cacheUpdate?.tokens?.[0]?.tokenKind, "xoxc");
+    assert.equal(rawFetch.payload?.cacheUpdate?.tokens?.[1]?.tokenKind, "xoxd");
   });
 
   it("requestWillBeSentExtraInfo を raw_fetch として出力し、getCookies 無効時は cookieStoreSnapshot を出さない", async () => {
@@ -366,12 +377,25 @@ describe("SlackAdapter event handling", () => {
           payload?: {
             dCookieFromAssociated?: string | null;
             authDebug?: { cookieD?: { value?: string | null } };
+            cacheUpdate?: {
+              workspaceKey?: string;
+              sourceStage?: string;
+              tokens?: Array<{
+                tokenKind?: string;
+                updated?: boolean;
+                hits?: number;
+              }>;
+            } | null;
           };
         }
       | undefined;
     assert.ok(extraInfoEvent, "requestWillBeSentExtraInfo event should be emitted");
     assert.equal(extraInfoEvent.payload?.dCookieFromAssociated, "xoxd-associated%2Bvalue");
     assert.equal(extraInfoEvent.payload?.authDebug?.cookieD?.value, "xoxd-associated%2Bvalue");
+    assert.equal(extraInfoEvent.payload?.cacheUpdate?.workspaceKey, "workspace");
+    assert.equal(extraInfoEvent.payload?.cacheUpdate?.sourceStage, "requestWillBeSentExtraInfo");
+    assert.equal(extraInfoEvent.payload?.cacheUpdate?.tokens?.[0]?.tokenKind, "xoxd");
+    assert.equal(extraInfoEvent.payload?.cacheUpdate?.tokens?.[0]?.updated, true);
 
     const cookieStoreEvent = debugEvents.find((event) => {
       if (!event || typeof event !== "object") return false;
@@ -426,6 +450,15 @@ describe("SlackAdapter event handling", () => {
             dCookieFromStore?: string | null;
             cookieStoreCookiesCount?: number | null;
             authDebug?: { cookieD?: { value?: string | null } };
+            cacheUpdate?: {
+              workspaceKey?: string;
+              sourceStage?: string;
+              tokens?: Array<{
+                tokenKind?: string;
+                updated?: boolean;
+                hits?: number;
+              }>;
+            } | null;
           };
         }
       | undefined;
@@ -433,6 +466,10 @@ describe("SlackAdapter event handling", () => {
     assert.equal(cookieStoreEvent.payload?.dCookieFromStore, "xoxd-cookie-store%2Bvalue");
     assert.equal(cookieStoreEvent.payload?.cookieStoreCookiesCount, 2);
     assert.equal(cookieStoreEvent.payload?.authDebug?.cookieD?.value, "xoxd-cookie-store%2Bvalue");
+    assert.equal(cookieStoreEvent.payload?.cacheUpdate?.workspaceKey, "workspace");
+    assert.equal(cookieStoreEvent.payload?.cacheUpdate?.sourceStage, "cookieStoreSnapshot");
+    assert.equal(cookieStoreEvent.payload?.cacheUpdate?.tokens?.[0]?.tokenKind, "xoxd");
+    assert.equal(cookieStoreEvent.payload?.cacheUpdate?.tokens?.[0]?.updated, true);
     assert.deepEqual(mock.cookieQueries, [[requestUrl]]);
   });
 
