@@ -26,7 +26,7 @@ export function App() {
             <SidePanel
               state={panelState}
               actions={panelActions}
-              heartbeatContent={<HeartbeatHistoryTab />}
+              heartbeatContent={<HeartbeatHistoryTab heartbeatTs={heartbeat?.ts ?? null} />}
               auditContent={<AuditDetailTab runId={panelState.auditRunId} />}
             />
           </div>

@@ -80,9 +80,13 @@ async function main() {
   const defaultAccountId = normalizeAccountId(process.env.ADJUTANT_SLACK_ACCOUNT_ID, "default");
   const writer = new JsonlWriter({ dataDir, defaultAccountId });
   const now = () => new Date();
+  const channelCachePath = path.join(dataDir, "_cache", "slack", "channel-names-by-team.json");
+  const userCachePath = path.join(dataDir, "_cache", "slack", "user-names-by-team.json");
   const debugUiEnabled = runtimeConfig.debugUiEnabled;
   const debugUiPort = runtimeConfig.debugUiPort;
-  const debugUi = debugUiEnabled ? new DebugUiServer({ port: debugUiPort }) : null;
+  const debugUi = debugUiEnabled
+    ? new DebugUiServer({ port: debugUiPort, channelCachePath, userCachePath })
+    : null;
   const cdpEventLogEnabled = runtimeConfig.cdpEventLogEnabled;
   const cdpEventLogPath = runtimeConfig.cdpEventLogPath;
   const cdpEventLogMaxParamChars = runtimeConfig.cdpEventLogMaxParamChars;
@@ -230,8 +234,8 @@ async function main() {
       now,
       timezone,
       domCaptureDisabled: runtimeConfig.domCaptureDisabled,
-      channelCachePath: path.join(dataDir, "_cache", "slack", "channel-names-by-team.json"),
-      userCachePath: path.join(dataDir, "_cache", "slack", "user-names-by-team.json"),
+      channelCachePath,
+      userCachePath,
       debugFetchHookEnabled: rawFetchEventLogger ? true : undefined,
       onDebugEvent,
     });

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -26,6 +26,26 @@ describe("workspace-bootstrap", () => {
       assert.equal(files.includes("USER.md"), true);
       assert.equal(files.includes("HEARTBEAT.md"), true);
       assert.equal(files.includes("BOOTSTRAP.md"), true);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("生成された AGENTS/HEARTBEAT テンプレートは heartbeat 適用条件を含む", async () => {
+    const rootDir = await mkdtemp(`${tmpdir()}/adjutant-workspace-bootstrap-`);
+    const workspaceDir = join(rootDir, "workspace");
+
+    try {
+      await ensureWorkspaceBootstrapFiles(workspaceDir);
+      const agents = await readFile(join(workspaceDir, "AGENTS.md"), "utf8");
+      const heartbeat = await readFile(join(workspaceDir, "HEARTBEAT.md"), "utf8");
+
+      assert.equal(
+        agents.includes("HEARTBEAT.md の指示は heartbeat 実行ターンでのみ適用する"),
+        true
+      );
+      assert.equal(heartbeat.includes("HEARTBEAT_OK"), true);
+      assert.equal(heartbeat.includes("report_heartbeat_status"), false);
     } finally {
       await rm(rootDir, { recursive: true, force: true });
     }

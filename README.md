@@ -81,6 +81,7 @@ pnpm check               # format -> typecheck -> test
 | `ADJUTANT_RAW_FETCH_LOG_MAX_PAYLOAD_CHARS`     | `0`                                                  | payload を文字列化して上限超過時に切り詰め (`0` は無制限)               |
 | `ADJUTANT_API_PORT`                            | `3100`                                               | AI アシスタント API サーバーのポート                                    |
 | `ADJUTANT_API_HOST`                            | `127.0.0.1`                                          | AI アシスタント API サーバーのバインドアドレス                          |
+| `ADJUTANT_ASSISTANT_LOG_PATH`                  | `<stateDir>/logs/assistant.log`                      | `pnpm run assistant` の標準ログ出力先                                   |
 | `ADJUTANT_VITE_PORT`                           | `5173`                                               | AI アシスタント Web UI（Vite）のポート                                  |
 | `ADJUTANT_WORKSPACE_DIR`                       | `<stateDir>/workspace`                               | アシスタントのワークスペースディレクトリ                                |
 | `ADJUTANT_STATE_DIR`                           | `~/.adjutant`                                        | アシスタント state ルート（session transcript / watermark など）        |
@@ -123,6 +124,15 @@ ADJUTANT_SANDBOX_MODE=all pnpm run assistant
 - 会話履歴の復元は `SessionManager.buildSessionContext()` に委譲します。
 - `ChatHandler` は transcript/memory を再注入せず、`system event`（ある場合）+ `## User Message` のみを送信します。
 - `/api/chat/history` は UI 表示用途として transcript-reader の読み出し結果を返します。
+
+## Heartbeat 実行契約
+
+- heartbeat 実行時は `assistant/prompts/HEARTBEAT.md` の指示を使い、返答が `HEARTBEAT_OK`（前後空白のみ許容）なら通知を抑制します。
+- `HEARTBEAT_OK` 以外の本文はアラート本文として扱い、通知対象になります。
+- `HEARTBEAT_OK` が文中に混在する本文は ACK 扱いにせず、通常の本文として扱います。
+- heartbeat ターンでは `HEARTBEAT_META`（`source` / `session_key` / `trigger_reason` / `run_at`）と custom details (`adjutant.heartbeat.turn.v1`) を付与します。
+- 通常ユーザーターンでも `HEARTBEAT.md` が Project Context に含まれる場合がありますが、適用対象は heartbeat ターンのみです。
+- heartbeat 実行履歴は `<stateDir>/heartbeat-runs.jsonl` に保存され、サイドバーから確認できます（`/api/heartbeat/history`）。
 
 ## 出力
 

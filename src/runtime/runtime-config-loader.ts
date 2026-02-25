@@ -129,6 +129,8 @@ export function loadAssistantGatewayRuntimeConfig(
   const timezone = parseStringEnv(env.ADJUTANT_TZ, "Asia/Tokyo");
   const vitePort = parsePositiveIntEnv(env.ADJUTANT_VITE_PORT, 5173);
   const timelinePath = env.ADJUTANT_TIMELINE_PATH?.trim() || join(stateDir, "timeline.jsonl");
+  const assistantLogPath =
+    env.ADJUTANT_ASSISTANT_LOG_PATH?.trim() || join(stateDir, "logs", "assistant.log");
   const agentAuditLogPath =
     env.ADJUTANT_AGENT_AUDIT_LOG_PATH?.trim() || join(stateDir, "audit", "agent-audit.ndjson");
   const idempotencyStorePath =
@@ -150,6 +152,7 @@ export function loadAssistantGatewayRuntimeConfig(
         timezone,
         model: env.ADJUTANT_MODEL?.trim() || undefined,
         timelinePath,
+        logPath: resolve(assistantLogPath),
       },
       agentAudit: {
         enabled: parseBooleanEnv(env.ADJUTANT_AGENT_AUDIT_LOG_ENABLED, true),

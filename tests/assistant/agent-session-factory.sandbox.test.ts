@@ -196,7 +196,7 @@ describe("agent-session-factory sandbox bash", () => {
     }
   });
 
-  it("heartbeat セッションでは report_heartbeat_status ツールが利用できる", async () => {
+  it("heartbeat セッションでは report_heartbeat_status ツールを登録しない", async () => {
     const workspaceDir = await mkdtemp(join(tmpdir(), "adjutant-session-heartbeat-"));
     configureSandbox(null);
     try {
@@ -206,23 +206,10 @@ describe("agent-session-factory sandbox bash", () => {
         isHeartbeat: true,
       });
       assert.equal(typeof session.sendCustomMessage, "function");
-      const reportTool = getTool(session, "report_heartbeat_status");
-      const result = (await reportTool.execute("tool-call-heartbeat", {
-        status: "no_action_needed",
-        notify: false,
-        reason: "no urgent items",
-      })) as {
-        details?: {
-          status?: string;
-          notify?: boolean;
-          reason?: string;
-        };
-      };
-      assert.deepEqual(result.details, {
-        status: "no_action_needed",
-        notify: false,
-        reason: "no urgent items",
-      });
+      const tools =
+        (session as AgentSessionLike & { state: { tools: ToolLike[] } }).state?.tools ?? [];
+      const reportTool = tools.find((tool) => tool.name === "report_heartbeat_status");
+      assert.equal(reportTool, undefined);
       session.dispose();
     } finally {
       await rm(workspaceDir, { recursive: true, force: true });

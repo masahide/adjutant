@@ -13,10 +13,6 @@ import { createMemoryToolDefinitions } from "./memory-search/index.js";
 import { createDockerBashOperations, shouldSandbox } from "../sandbox/docker-bash-operations.js";
 import type { SandboxMode } from "../sandbox/types.js";
 import { createContainerizedFileTools } from "./containerized-file-tool-operations.js";
-import {
-  REPORT_HEARTBEAT_STATUS_TOOL,
-  validateReportHeartbeatStatusInput,
-} from "../proactive/routing-tools.js";
 
 export type AgentSessionLike = {
   subscribe: (listener: (event: unknown) => void) => () => void;
@@ -156,33 +152,6 @@ function createMemoryWriteToolDefinition(): ToolDefinition {
   };
 }
 
-function createReportHeartbeatStatusToolDefinition(): ToolDefinition {
-  return {
-    name: REPORT_HEARTBEAT_STATUS_TOOL.name,
-    label: "Heartbeat Status",
-    description: REPORT_HEARTBEAT_STATUS_TOOL.description,
-    parameters: {
-      type: "object",
-      properties: {
-        status: {
-          enum: ["no_action_needed", "needs_attention", "task_completed"],
-        },
-        notify: { type: "boolean" },
-        reason: { type: "string", minLength: 1 },
-      },
-      required: ["status", "notify", "reason"],
-      additionalProperties: false,
-    } as never,
-    execute: async (_toolCallId, params) => {
-      const accepted = validateReportHeartbeatStatusInput(params);
-      return {
-        content: [{ type: "text", text: "heartbeat status accepted" }],
-        details: accepted,
-      };
-    },
-  };
-}
-
 export async function createAgentSessionFromSdk(
   params: CreateAgentSessionParams
 ): Promise<{ session: AgentSessionLike }> {
@@ -198,9 +167,6 @@ export async function createAgentSessionFromSdk(
   }
   const settingsManager = SettingsManager.inMemory(settingsOverrides);
   const customTools: ToolDefinition[] = [];
-  if (params.isHeartbeat) {
-    customTools.push(createReportHeartbeatStatusToolDefinition());
-  }
   if (params.memoryScope === "main") {
     customTools.push(
       ...createMemoryToolDefinitions({

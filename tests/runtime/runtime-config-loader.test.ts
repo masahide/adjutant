@@ -60,6 +60,7 @@ describe("runtime-config-loader", () => {
     assert.equal(config.app.assistant.workspaceDir, resolve("workspace-x"));
     assert.equal(config.app.assistant.timezone, "UTC");
     assert.equal(config.app.assistant.model, "gpt-5-mini");
+    assert.equal(config.app.assistant.logPath, resolve(expectedStateDir, "logs", "assistant.log"));
     assert.equal(config.app.agentAudit.enabled, true);
     assert.equal(
       config.app.agentAudit.path,
@@ -124,6 +125,7 @@ describe("runtime-config-loader", () => {
       ADJUTANT_AGENT_AUDIT_LOG_ENABLED: "0",
       ADJUTANT_AGENT_AUDIT_LOG_PATH: "/tmp/custom/agent-audit.ndjson",
       ADJUTANT_AGENT_AUDIT_MAX_FIELD_CHARS: "1234",
+      ADJUTANT_ASSISTANT_LOG_PATH: "/tmp/custom/assistant.log",
     } as NodeJS.ProcessEnv);
 
     assert.equal(config.app.sessionStorage.stateDir, "/tmp/adjutant-state");
@@ -131,6 +133,7 @@ describe("runtime-config-loader", () => {
     assert.equal(config.app.sessionStorage.transcriptsDir, "/tmp/custom/sessions");
     assert.equal(config.app.sessionStorage.sessionEntriesPath, "/tmp/custom/sessions.json");
     assert.equal(config.app.assistant.workspaceDir, "/tmp/adjutant-state/workspace");
+    assert.equal(config.app.assistant.logPath, "/tmp/custom/assistant.log");
     assert.equal(config.app.agentAudit.enabled, false);
     assert.equal(config.app.agentAudit.path, "/tmp/custom/agent-audit.ndjson");
     assert.equal(config.app.agentAudit.maxFieldChars, 1234);

@@ -29,5 +29,7 @@ describe("heartbeat-result-writer", () => {
     assert.equal(emitted.length, 1);
     assert.equal(records.length, 1);
     assert.equal(records[0]?.triggerReason, "timer");
+    assert.equal(records[0]?.eventStatus, "skipped");
+    assert.equal(records[0]?.eventReason, "quiet-hours");
   });
 });

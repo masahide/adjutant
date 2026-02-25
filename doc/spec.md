@@ -282,6 +282,7 @@ flowchart LR
 | `ADJUTANT_ROUTE_LLM_MODEL`                    | `gpt-5-mini`                          | Route LLM モデル                                 |
 | `ADJUTANT_ROUTE_LLM_TIMEOUT_MS`               | `1000`                                | Route LLM / batch classifier timeout             |
 | `ADJUTANT_ROUTE_LLM_MAX_CONCURRENT`           | `1`                                   | Route LLM 同時実行上限                           |
+| `ADJUTANT_ASSISTANT_LOG_PATH`                 | `<stateDir>/logs/assistant.log`       | `pnpm run assistant` の標準ログ出力先            |
 | `ADJUTANT_AGENT_AUDIT_LOG_ENABLED`            | `true`                                | エージェント監査ログ（NDJSON）有効化             |
 | `ADJUTANT_AGENT_AUDIT_LOG_PATH`               | `<stateDir>/audit/agent-audit.ndjson` | エージェント監査ログ保存先                       |
 | `ADJUTANT_AGENT_AUDIT_MAX_FIELD_CHARS`        | `4000`                                | 監査ログのフィールド切り詰め上限                 |
@@ -472,3 +473,25 @@ flowchart LR
 - `bash` は `docker exec -i -w <mappedCwd> <container> bash -lc "<command>"` を使用し、ホスト workspace は bind mount で共有する。
 - `read` / `write` / `edit` / `grep` / `find` / `ls` も sandbox 対象時はコンテナ内実行へ差し替える。
 - sandbox イメージには `bash` / `git` / `curl` / `jq` / `rg`（ripgrep）を同梱する。
+
+### 13.8 Heartbeat 実行契約（OpenClaw alignment）
+
+- heartbeat 判定は tool 呼び出しではなく assistant 最終テキストで行う。
+  - `HEARTBEAT_OK`（前後空白許容、行頭/行末トークン）: OK 扱いで通知抑制（`ok-empty` / `ok-token`）
+  - それ以外: alert 本文として配信対象（`sent`）
+  - `HEARTBEAT_OK` の文中混在は ACK とみなさない。
+- `report_heartbeat_status` ツール契約は廃止し、未呼び出しを失敗理由にしない。
+- heartbeat ターンの prompt には `HEARTBEAT_META` ブロックを付与する。
+  - `source`, `session_key`, `trigger_reason`, `run_at`
+- heartbeat ターンの custom message details には `adjutant.heartbeat.turn.v1` を付与する。
+- heartbeat 結果は `<stateDir>/heartbeat-runs.jsonl` に記録する。
+  - `result.status`（`ran|skipped|failed`）
+  - `eventStatus`（`sent|ok-empty|ok-token|skipped|failed`）
+  - `eventReason` / `preview` / `triggerReason` / `modelId`
+- UI サイドバーの Heartbeat タブは `/api/heartbeat/history` を使用し、実行結果を履歴表示する。
+
+### 13.9 通常ターンと heartbeat ターンの指示スコープ
+
+- Project Context に `HEARTBEAT.md` が含まれる場合でも、通常ユーザーターンでは heartbeat 指示を実行しない。
+- `AGENTS.md` と Project Context ヘッダの両方で、`HEARTBEAT.md` の適用範囲を heartbeat ターン限定として明示する。
+- heartbeat 実行ターンの識別は `isHeartbeat=true` と `HEARTBEAT_META` / custom details で機械判定できる。

@@ -36,6 +36,7 @@ import { createProactiveMetrics } from "../proactive/metrics.js";
 import { listJsonlFiles, recoverJsonlFiles } from "../io/jsonl-recovery.js";
 import { loadAssistantGatewayRuntimeConfig } from "../runtime/runtime-config-loader.js";
 import { loadEnvFileIfPresent } from "../runtime/env-file-loader.js";
+import { installConsoleFileLogger } from "../runtime/process-log-file.js";
 import {
   checkDockerAvailability,
   destroySandboxContainer,
@@ -57,6 +58,7 @@ const WORKSPACE_DIR = runtimeConfig.app.assistant.workspaceDir;
 const TIMEZONE = runtimeConfig.app.assistant.timezone;
 const MODEL = runtimeConfig.app.assistant.model;
 const TIMELINE_PATH = runtimeConfig.app.assistant.timelinePath;
+const ASSISTANT_LOG_PATH = runtimeConfig.app.assistant.logPath;
 const AGENT_AUDIT = runtimeConfig.app.agentAudit;
 const SESSION_STATE_DIR = runtimeConfig.app.sessionStorage.stateDir;
 const SESSION_AGENT_ID = runtimeConfig.app.sessionStorage.agentId;
@@ -74,6 +76,14 @@ const SLACK_RETRY_MAX_MS = runtimeConfig.app.slack.retryMaxMs;
 const SLACK_DEFAULT_ACCOUNT_ID = runtimeConfig.app.slack.defaultAccountId;
 const FLUSHER_INTERVAL_MS = parsePositiveInt(process.env.ADJUTANT_FLUSHER_INTERVAL_MS, 300_000);
 const FLUSHER_STALE_MS = parsePositiveInt(process.env.ADJUTANT_FLUSHER_STALE_MS, 900_000);
+
+let consoleLogHandle: { flush: () => Promise<void> } | null = null;
+try {
+  consoleLogHandle = await installConsoleFileLogger(ASSISTANT_LOG_PATH);
+  console.log(`[Assistant] Process log file -> ${ASSISTANT_LOG_PATH}`);
+} catch (error) {
+  console.warn("[Assistant] 動作ログファイルの初期化に失敗しました:", toReason(error));
+}
 
 configureAgentAuditLogger({
   enabled: AGENT_AUDIT.enabled,
@@ -623,6 +633,9 @@ async function shutdown(signal: string) {
     }
   }
   viteChild?.kill();
+  if (consoleLogHandle) {
+    await consoleLogHandle.flush();
+  }
   process.exit(0);
 }
 

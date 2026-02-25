@@ -68,6 +68,7 @@ export function resolveAgentRunContext(opts: AgentRunOptions): ResolvedAgentRunC
     origin: opts.origin ?? "system",
     memoryScope,
     isHeartbeat: Boolean(opts.isHeartbeat),
+    heartbeatMeta: opts.heartbeatMeta,
     memoryWriteEnabled,
     workspaceDir,
     timezone,

@@ -6,6 +6,7 @@ export type AssistantRuntimeConfig = {
   timezone: string;
   model?: string;
   timelinePath: string;
+  logPath: string;
 };
 
 export type SessionStorageRuntimeConfig = {
