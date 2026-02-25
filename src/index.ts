@@ -11,14 +11,19 @@ import { DebugUiServer } from "./debug/debugUi.js";
 import type { SlackCdpClient } from "./runtime/slackConnection.js";
 import { computeFullJitterDelayMs } from "./runtime/retry-policy.js";
 import { listJsonlFiles, recoverJsonlFiles } from "./io/jsonl-recovery.js";
-import { normalizeAccountId } from "./runtime/data-paths.js";
+import { resolveSlackCacheBaseDir } from "./runtime/data-paths.js";
+import { SLACK_PENDING_ACCOUNT_ID } from "./slack/slackAuthTokenStore.js";
+import type { SlackAuthTokenCacheSnapshot } from "./slack/slackAuthTokenCache.js";
 import path from "node:path";
 
 loadEnvFileIfPresent();
 
 type ActiveSession = {
   client: SlackCdpClient;
+  adapter: SlackAdapter;
   ingestor: SlackIngestor;
+  targetId: string;
+  slackUrl: string;
   detachCdpEventLogger?: () => void;
 };
 
@@ -26,6 +31,8 @@ const BASE_RETRY_DELAY_MS = 1000;
 const MAX_RETRY_DELAY_MS = 10000;
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+const GENERIC_SLACK_SUBDOMAINS = new Set(["app", "edgeapi", "hooks"]);
 
 const waitForDisconnect = (client: SlackCdpClient) =>
   new Promise<void>((resolve, reject) => {
@@ -49,6 +56,102 @@ const waitForDisconnect = (client: SlackCdpClient) =>
     client.on("disconnect", handleDisconnect);
     client.on("error", handleError);
   });
+
+function parseWorkspaceAliasFromUrl(url: string | undefined): string | null {
+  if (!url || typeof url !== "string") {
+    return null;
+  }
+  try {
+    const parsed = new URL(url);
+    const hostParts = parsed.hostname.split(".").filter((part) => part.length > 0);
+    if (hostParts.length < 3 || hostParts.slice(-2).join(".") !== "slack.com") {
+      return null;
+    }
+    const subdomain = hostParts[0]?.trim();
+    if (!subdomain || GENERIC_SLACK_SUBDOMAINS.has(subdomain.toLowerCase())) {
+      return null;
+    }
+    return subdomain;
+  } catch {
+    return null;
+  }
+}
+
+function summarizeWorkspaceSnapshot(snapshot: SlackAuthTokenCacheSnapshot): {
+  workspaceKey: string;
+  label: string;
+  hasXoxc: boolean;
+  hasXoxd: boolean;
+  lastSeenAt: number;
+} | null {
+  const workspaceKey = snapshot.workspaceKey?.trim();
+  if (!workspaceKey) {
+    return null;
+  }
+  const hasXoxc = Boolean(snapshot.tokens.xoxc?.value);
+  const hasXoxd = Boolean(snapshot.tokens.xoxd?.value);
+  const lastSeenAt = Math.max(
+    snapshot.tokens.xoxc?.lastSeenAt ?? 0,
+    snapshot.tokens.xoxd?.lastSeenAt ?? 0
+  );
+  const alias =
+    parseWorkspaceAliasFromUrl(snapshot.tokens.xoxc?.url) ??
+    parseWorkspaceAliasFromUrl(snapshot.tokens.xoxd?.url);
+  const label = `${alias ?? "subdomain unavailable"} (${workspaceKey})`;
+  return {
+    workspaceKey,
+    label,
+    hasXoxc,
+    hasXoxd,
+    lastSeenAt,
+  };
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function extractExecutedContextId(result: unknown): number | null | undefined {
+  const record = asRecord(result);
+  if (!record) {
+    return undefined;
+  }
+  const attempts = Array.isArray(record.attempts) ? record.attempts : [];
+  for (const attempt of attempts) {
+    const item = asRecord(attempt);
+    if (!item || item.ok !== true) {
+      continue;
+    }
+    if (typeof item.contextId === "number") {
+      return item.contextId;
+    }
+    if (item.contextId === null) {
+      return null;
+    }
+  }
+  return undefined;
+}
+
+function withCdpExecutionMeta(input: {
+  result: unknown;
+  requestedTargetId?: string;
+  executedTargetId: string;
+  executedSlackUrl: string;
+  requestedWorkspaceKey?: string;
+}): Record<string, unknown> {
+  const base = asRecord(input.result) ?? { result: input.result };
+  return {
+    ...base,
+    requestedTargetId: input.requestedTargetId,
+    executedTargetId: input.executedTargetId,
+    executedSlackUrl: input.executedSlackUrl,
+    requestedWorkspaceKey: input.requestedWorkspaceKey,
+    executedContextId: extractExecutedContextId(input.result),
+  };
+}
 
 async function main() {
   const { host, port } = resolveEndpoint();
@@ -80,11 +183,16 @@ async function main() {
     console.log("[Adjutant] debug slack getCookies -> enabled");
   }
 
-  const defaultAccountId = normalizeAccountId(process.env.ADJUTANT_SLACK_ACCOUNT_ID, "default");
+  const defaultAccountId = SLACK_PENDING_ACCOUNT_ID;
   const writer = new JsonlWriter({ dataDir, defaultAccountId });
   const now = () => new Date();
-  const channelCachePath = path.join(dataDir, "_cache", "slack", "channel-names-by-team.json");
-  const userCachePath = path.join(dataDir, "_cache", "slack", "user-names-by-team.json");
+  const slackCacheBaseDir = resolveSlackCacheBaseDir({
+    dataDir,
+    accountId: SLACK_PENDING_ACCOUNT_ID,
+    fallbackAccountId: SLACK_PENDING_ACCOUNT_ID,
+  });
+  const channelCachePath = path.join(slackCacheBaseDir, "channel-names-by-team.json");
+  const userCachePath = path.join(slackCacheBaseDir, "user-names-by-team.json");
   const debugUiEnabled = runtimeConfig.debugUiEnabled;
   const debugUiPort = runtimeConfig.debugUiPort;
   const debugUi = debugUiEnabled
@@ -150,6 +258,11 @@ async function main() {
     const session = activeSession;
     if (!session) return;
     activeSession = null;
+    if (debugUi) {
+      debugUi.setSlackAuthTestExecutor(undefined);
+      debugUi.setSlackChannelsListExecutor(undefined);
+      debugUi.setSlackWorkspaceListProvider(undefined);
+    }
     if (session.detachCdpEventLogger) {
       try {
         session.detachCdpEventLogger();
@@ -208,6 +321,52 @@ async function main() {
   process.on("SIGINT", () => void shutdown("SIGINT"));
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
 
+  const createSlackAdapterForClient = (client: SlackCdpClient) =>
+    new SlackAdapter({
+      client,
+      now,
+      timezone,
+      domCaptureDisabled: runtimeConfig.domCaptureDisabled,
+      channelCachePath,
+      userCachePath,
+      debugFetchHookEnabled: rawFetchEventLogger ? true : undefined,
+      debugCookieStoreEnabled: runtimeConfig.debugSlackGetCookiesEnabled,
+      onDebugEvent,
+    });
+
+  const runAuthTestOnActive = async (input: {
+    workspaceKey?: string;
+    active: ActiveSession;
+  }): Promise<Record<string, unknown>> => {
+    const requestedWorkspaceKey = input.workspaceKey?.trim();
+    const result = await input.active.adapter.runBrowserAuthTest({
+      workspaceKey: requestedWorkspaceKey,
+    });
+    return withCdpExecutionMeta({
+      result,
+      executedTargetId: input.active.targetId,
+      executedSlackUrl: input.active.slackUrl,
+      requestedWorkspaceKey,
+    });
+  };
+
+  const runChannelsListOnActive = async (input: {
+    workspaceKey?: string;
+    active: ActiveSession;
+  }): Promise<Record<string, unknown>> => {
+    const requestedWorkspaceKey = input.workspaceKey?.trim();
+    const result = await input.active.adapter.runBrowserChannelList({
+      workspaceKey: requestedWorkspaceKey,
+      limit: 10,
+    });
+    return withCdpExecutionMeta({
+      result,
+      executedTargetId: input.active.targetId,
+      executedSlackUrl: input.active.slackUrl,
+      requestedWorkspaceKey,
+    });
+  };
+
   const runSession = async (): Promise<"disconnect"> => {
     console.log("[Adjutant] establishing new CDP session...");
     if (debugUi) {
@@ -218,7 +377,7 @@ async function main() {
         payload: { event: "session_connecting", host, port },
       });
     }
-    const { client, slackUrl } = await connectToSlackPage(host, port);
+    const { client, slackUrl, targetId } = await connectToSlackPage(host, port);
     const detachCdpEventLogger = cdpEventLogger
       ? cdpEventLogger.attach(client, { host, port, slackUrl })
       : undefined;
@@ -232,19 +391,59 @@ async function main() {
       });
     }
 
-    const adapter = new SlackAdapter({
-      client,
-      now,
-      timezone,
-      domCaptureDisabled: runtimeConfig.domCaptureDisabled,
-      channelCachePath,
-      userCachePath,
-      debugFetchHookEnabled: rawFetchEventLogger ? true : undefined,
-      debugCookieStoreEnabled: runtimeConfig.debugSlackGetCookiesEnabled,
-      onDebugEvent,
-    });
+    const adapter = createSlackAdapterForClient(client);
     const ingestor = new SlackIngestor({ adapter, writer });
-    activeSession = { client, ingestor, detachCdpEventLogger };
+    activeSession = { client, adapter, ingestor, targetId, slackUrl, detachCdpEventLogger };
+    if (debugUi) {
+      debugUi.setSlackAuthTestExecutor(async ({ workspaceKey }) => {
+        const session = activeSession;
+        if (!session) {
+          throw new Error("slack session is not attached");
+        }
+        return runAuthTestOnActive({
+          workspaceKey,
+          active: session,
+        });
+      });
+      debugUi.setSlackChannelsListExecutor(async ({ workspaceKey }) => {
+        const session = activeSession;
+        if (!session) {
+          throw new Error("slack session is not attached");
+        }
+        return runChannelsListOnActive({
+          workspaceKey,
+          active: session,
+        });
+      });
+      debugUi.setSlackWorkspaceListProvider(async () => {
+        const snapshots = adapter.listAuthTokenSnapshots();
+        return snapshots
+          .map(summarizeWorkspaceSnapshot)
+          .filter(
+            (
+              item
+            ): item is {
+              workspaceKey: string;
+              label: string;
+              hasXoxc: boolean;
+              hasXoxd: boolean;
+              lastSeenAt: number;
+            } => item !== null
+          )
+          .sort((left, right) => {
+            if (right.lastSeenAt !== left.lastSeenAt) {
+              return right.lastSeenAt - left.lastSeenAt;
+            }
+            return left.workspaceKey.localeCompare(right.workspaceKey);
+          })
+          .map((item) => ({
+            workspaceKey: item.workspaceKey,
+            label: item.label,
+            hasXoxc: item.hasXoxc,
+            hasXoxd: item.hasXoxd,
+          }));
+      });
+    }
 
     try {
       await ingestor.start();

@@ -51,6 +51,7 @@ describe("SlackAdapter event handling", () => {
     assert.equal(reaction.kind, "reaction");
     assert.equal(reaction.action, "added");
     assert.equal(reaction.meta?.emoji, "thumbsup");
+    assert.equal(reaction.meta?.workspace_key, "workspace");
     const detail = reaction.detail;
     assert.ok(detail && "slack" in detail);
     const slackDetail = detail.slack as {
@@ -139,6 +140,8 @@ describe("SlackAdapter event handling", () => {
     assert.equal(notification.kind, "notification");
     assert.equal(notification.meta?.notification_type, "desktop_notification");
     assert.equal(notification.meta?.channel, "#general");
+    assert.equal(notification.meta?.workspace_key, "T1");
+    assert.equal(notification.meta?.team_id, "T1");
     assert.equal(notification.actor, "alice");
     const detail = notification.detail;
     assert.ok(detail && "slack" in detail);
@@ -209,6 +212,8 @@ describe("SlackAdapter event handling", () => {
     assert.equal(notification.kind, "notification");
     assert.equal(notification.meta?.notification_type, "mention_notification");
     assert.equal(notification.meta?.channel, "#random");
+    assert.equal(notification.meta?.workspace_key, "T2");
+    assert.equal(notification.meta?.team_id, "T2");
     const detail = notification.detail;
     assert.ok(detail && "slack" in detail);
     const slackDetail = detail.slack as {
@@ -959,5 +964,123 @@ describe("SlackAdapter event handling", () => {
       parsed.users?.U0A8ZEXKX27?.profile?.image_original,
       "https://example.com/u0a8zexkx27.png"
     );
+  });
+
+  it("CDP経由 auth.test 実験を実行できる", async () => {
+    const mock = createMockSlackClient();
+    const adapter = new SlackAdapter({
+      client: mock.client,
+      now: () => new Date("2024-03-22T12:45:00Z"),
+    });
+    await adapter.start(async () => {});
+
+    await mock.triggerNetwork("requestWillBeSent", {
+      requestId: "req-auth-1",
+      type: "Fetch",
+      request: {
+        url: "https://workspace.slack.com/api/chat.postMessage",
+        method: "POST",
+        headers: {
+          authorization: "Bearer xoxc-token-for-browser-auth-test",
+        },
+      },
+    });
+
+    mock.setRuntimeEvaluate(async () => ({
+      result: {
+        value: {
+          ok: true,
+          httpStatus: 200,
+          slackOk: true,
+          workspaceKey: "TTEAM",
+          origin: "https://app.slack.com",
+          href: "https://app.slack.com/client/TTEAM/C123",
+          payload: { ok: true, team_id: "TTEAM" },
+        },
+      },
+    }));
+
+    const result = await adapter.runBrowserAuthTest({ workspaceKey: "workspace" });
+    assert.equal(result.ok, true);
+    assert.equal(result.workspaceKey, "workspace");
+    assert.equal(result.tokenSourceWorkspaceKey, "workspace");
+    assert.equal(result.attempts.length >= 1, true);
+    assert.equal(result.attempts[0]?.httpStatus, 200);
+    assert.equal(result.attempts[0]?.slackOk, true);
+  });
+
+  it("xoxc 未観測時は CDP auth.test を実行しない", async () => {
+    const mock = createMockSlackClient();
+    const adapter = new SlackAdapter({
+      client: mock.client,
+      now: () => new Date("2024-03-22T12:45:00Z"),
+    });
+    await adapter.start(async () => {});
+
+    const result = await adapter.runBrowserAuthTest();
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, "xoxc token is not available in auth token cache");
+    assert.equal(result.attempts.length, 0);
+  });
+
+  it("CDP経由 channels.list(10件) 実験を実行できる", async () => {
+    const mock = createMockSlackClient();
+    const adapter = new SlackAdapter({
+      client: mock.client,
+      now: () => new Date("2024-03-22T12:45:00Z"),
+    });
+    await adapter.start(async () => {});
+
+    await mock.triggerNetwork("requestWillBeSent", {
+      requestId: "req-channels-1",
+      type: "Fetch",
+      request: {
+        url: "https://workspace.slack.com/api/chat.postMessage",
+        method: "POST",
+        headers: {
+          authorization: "Bearer xoxc-token-for-browser-channels-list",
+        },
+      },
+    });
+
+    mock.setRuntimeEvaluate(async () => ({
+      result: {
+        value: {
+          ok: true,
+          httpStatus: 200,
+          slackOk: true,
+          workspaceKey: "TTEAM",
+          channels: [
+            { id: "C001", name: "general", isPrivate: false, isIm: false, isMpim: false },
+            { id: "C002", name: "random", isPrivate: false, isIm: false, isMpim: false },
+          ],
+          payload: { ok: true, channels: [{ id: "C001", name: "general" }] },
+        },
+      },
+    }));
+
+    const result = await adapter.runBrowserChannelList({ workspaceKey: "workspace", limit: 10 });
+    assert.equal(result.ok, true);
+    assert.equal(result.workspaceKey, "workspace");
+    assert.equal(result.tokenSourceWorkspaceKey, "workspace");
+    assert.equal(result.attempts.length >= 1, true);
+    assert.equal(result.attempts[0]?.httpStatus, 200);
+    assert.equal(result.attempts[0]?.slackOk, true);
+    assert.equal(result.attempts[0]?.channels?.length, 2);
+    assert.equal(result.attempts[0]?.channels?.[0]?.id, "C001");
+  });
+
+  it("xoxc 未観測時は CDP channels.list を実行しない", async () => {
+    const mock = createMockSlackClient();
+    const adapter = new SlackAdapter({
+      client: mock.client,
+      now: () => new Date("2024-03-22T12:45:00Z"),
+    });
+    await adapter.start(async () => {});
+
+    const result = await adapter.runBrowserChannelList();
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, "xoxc token is not available in auth token cache");
+    assert.equal(result.attempts.length, 0);
   });
 });

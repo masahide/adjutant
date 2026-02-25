@@ -374,4 +374,33 @@ describe("SlackIngressHandlers", () => {
     assert.equal(token.updated, false);
     assert.equal(token.hits, 2);
   });
+
+  it("debugFetchHookEnabled=false でも auth token snapshot を観測する", async () => {
+    const { handlers } = createHandlers({
+      debugFetchHookEnabled: false,
+    });
+
+    await handlers.handleRequestWillBeSent({
+      requestId: "req-no-debug-1",
+      type: "Fetch",
+      request: {
+        url: "https://example.slack.com/api/chat.postMessage",
+        method: "POST",
+        headers: {
+          authorization: "Bearer xoxc-123-456-789-abcdef123456",
+        },
+      },
+    });
+    await handlers.handleRequestWillBeSentExtraInfo({
+      requestId: "req-no-debug-1",
+      headers: {},
+      associatedCookies: [{ cookie: { name: "d", value: "xoxd-associated%2Btoken" } }],
+    });
+
+    const snapshots = handlers.listAuthTokenSnapshots();
+    assert.equal(snapshots.length, 1);
+    assert.equal(snapshots[0]?.workspaceKey, "example");
+    assert.equal(snapshots[0]?.tokens.xoxc?.value?.startsWith("xoxc-"), true);
+    assert.equal(snapshots[0]?.tokens.xoxd?.value?.startsWith("xoxd-"), true);
+  });
 });

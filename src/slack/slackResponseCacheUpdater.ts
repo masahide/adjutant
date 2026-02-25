@@ -87,7 +87,6 @@ export class SlackResponseCacheUpdater {
   }
 
   async handleRequestWillBeSent(event: RequestWillBeSentEvent): Promise<void> {
-    if (!this.deps.debugFetchHookEnabled) return;
     if (!event?.request?.url || !event?.request?.method) return;
 
     const resourceType = this.asString(event.type) ?? "";
@@ -107,6 +106,7 @@ export class SlackResponseCacheUpdater {
       sourceStage: "requestWillBeSent",
       authDebug,
     });
+    if (!this.deps.debugFetchHookEnabled) return;
     this.deps.pushDebugEvent("raw_fetch", {
       stage: "requestWillBeSent",
       requestId: event.requestId,
@@ -123,7 +123,6 @@ export class SlackResponseCacheUpdater {
   }
 
   async handleRequestWillBeSentExtraInfo(event: RequestWillBeSentExtraInfoEvent): Promise<void> {
-    if (!this.deps.debugFetchHookEnabled) return;
     if (!event?.requestId) return;
 
     const requestUrl = this.requestUrlById.get(event.requestId);
@@ -140,21 +139,24 @@ export class SlackResponseCacheUpdater {
       break;
     }
 
-    this.deps.pushDebugEvent("raw_fetch", {
-      stage: "requestWillBeSentExtraInfo",
+    const cacheUpdate = this.observeAuthTokenCache({
       requestId: event.requestId,
-      url: requestUrl,
-      urlInfo: requestUrl ? this.deps.parseUrlInfo(requestUrl) : null,
+      requestUrl,
+      sourceStage: "requestWillBeSentExtraInfo",
       authDebug,
-      cacheUpdate: this.observeAuthTokenCache({
-        requestId: event.requestId,
-        requestUrl,
-        sourceStage: "requestWillBeSentExtraInfo",
-        authDebug,
-      }),
-      associatedCookiesCount: event.associatedCookies?.length ?? 0,
-      dCookieFromAssociated: dCookieFromAssociated ?? null,
     });
+    if (this.deps.debugFetchHookEnabled) {
+      this.deps.pushDebugEvent("raw_fetch", {
+        stage: "requestWillBeSentExtraInfo",
+        requestId: event.requestId,
+        url: requestUrl,
+        urlInfo: requestUrl ? this.deps.parseUrlInfo(requestUrl) : null,
+        authDebug,
+        cacheUpdate,
+        associatedCookiesCount: event.associatedCookies?.length ?? 0,
+        dCookieFromAssociated: dCookieFromAssociated ?? null,
+      });
+    }
 
     await this.pushCookieStoreDebugEvent(event.requestId, requestUrl);
   }

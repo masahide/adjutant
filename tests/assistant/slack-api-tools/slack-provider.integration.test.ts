@@ -5,78 +5,78 @@ import { tmpdir } from "node:os";
 import { beforeEach, describe, it } from "node:test";
 import { ProviderRegistry, ToolHub } from "../../../src/assistant/dynamic-tool/index.js";
 import type { ToolHubResult } from "../../../src/assistant/dynamic-tool/types.js";
-import { normalizeAccountId, resolveSlackCacheBaseDir } from "../../../src/runtime/data-paths.js";
-import { createSlackDynamicProviderFromEnv as createProviderFromEnv } from "../../../src/assistant/slack-api-tools/index.js";
+import { resolveSlackCacheBaseDir } from "../../../src/runtime/data-paths.js";
 import {
+  createSlackDynamicProviderFromEnv as createProviderFromEnv,
+  type SlackBrowserApiInvoker,
+} from "../../../src/assistant/slack-api-tools/index.js";
+import {
+  configureSlackAuthTokenRegistry,
+  flushSlackAuthTokenRegistryForTest,
   resetSlackAuthTokenCacheForTest,
   syncSlackAuthTokenSnapshots,
 } from "../../../src/slack/slackAuthTokenRegistry.js";
+import { SLACK_PENDING_ACCOUNT_ID } from "../../../src/slack/slackAuthTokenStore.js";
 
-type FetchCall = {
-  url: string;
+type BrowserCall = {
   endpoint: string;
-  route: string;
+  mode: string;
 };
 
-type FetchScenario = {
+type BrowserScenario = {
   teamSearchError?: "not_allowed_token_type";
   teamSearchRateLimited?: boolean;
 };
 
-function parseForm(body: BodyInit | null | undefined): URLSearchParams {
-  if (typeof body === "string") {
-    return new URLSearchParams(body);
-  }
-  if (body instanceof URLSearchParams) {
-    return body;
-  }
-  return new URLSearchParams();
+function createAuthProbeFetchStub(): typeof fetch {
+  return (async () =>
+    new Response(
+      JSON.stringify({
+        ok: true,
+        team_id: "TTEAM",
+        user_id: "UTEAM",
+      }),
+      { status: 200 }
+    )) as typeof fetch;
 }
 
-function createFetchStub(scenario: FetchScenario = {}) {
-  const calls: FetchCall[] = [];
+function createBrowserInvokerStub(scenario: BrowserScenario = {}) {
+  const calls: BrowserCall[] = [];
 
-  const fetchFn: typeof fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = String(input);
-    const endpoint = url.split("/").filter(Boolean).slice(-1)[0] ?? "";
-    const route = String(
-      (init?.headers as Record<string, string> | undefined)?.["x-slack-route-mode"]
-    );
-    calls.push({ url, endpoint, route });
+  const browserInvoker: SlackBrowserApiInvoker = async (input) => {
+    calls.push({
+      endpoint: input.endpoint,
+      mode: input.mode,
+    });
 
-    const form = parseForm(init?.body);
-    const token = form.get("token");
-    if (!token?.startsWith("xoxc-")) {
-      return new Response(JSON.stringify({ ok: false, error: "invalid_auth" }), { status: 200 });
-    }
-
-    if (endpoint === "auth.test") {
-      if (route === "enterprise") {
-        return new Response(
-          JSON.stringify({
+    if (input.endpoint === "auth.test") {
+      if (input.mode === "enterprise") {
+        return {
+          status: 200,
+          payload: {
             ok: true,
             team_id: "TENTER",
             enterprise_id: "EENTER",
             user_id: "UENT",
             url: "https://enterprise.slack.test/",
-          }),
-          { status: 200 }
-        );
+          },
+        };
       }
-      return new Response(
-        JSON.stringify({
+      return {
+        status: 200,
+        payload: {
           ok: true,
           team_id: "TTEAM",
           user_id: "UTEAM",
           url: "https://team.slack.test/",
-        }),
-        { status: 200 }
-      );
+        },
+      };
     }
 
-    if (endpoint === "users.list") {
-      return new Response(
-        JSON.stringify({
+    if (input.endpoint === "users.list") {
+      return {
+        status: 200,
+        payload: {
           ok: true,
           members: [
             {
@@ -87,14 +87,14 @@ function createFetchStub(scenario: FetchScenario = {}) {
             },
           ],
           response_metadata: { next_cursor: "" },
-        }),
-        { status: 200 }
-      );
+        },
+      };
     }
 
-    if (endpoint === "conversations.list") {
-      return new Response(
-        JSON.stringify({
+    if (input.endpoint === "conversations.list") {
+      return {
+        status: 200,
+        payload: {
           ok: true,
           channels: [
             {
@@ -106,46 +106,75 @@ function createFetchStub(scenario: FetchScenario = {}) {
             },
           ],
           response_metadata: { next_cursor: "" },
-        }),
-        { status: 200 }
-      );
+        },
+      };
     }
 
-    if (endpoint === "search.messages") {
-      if (route === "team" && scenario.teamSearchRateLimited) {
-        return new Response("too many requests", { status: 429 });
+    if (input.endpoint === "search.modules.channels") {
+      return {
+        status: 200,
+        payload: {
+          ok: true,
+          items: [
+            {
+              id: "C123",
+              name: "general",
+              is_private: false,
+              is_im: false,
+              is_mpim: false,
+            },
+          ],
+          pagination: { next_cursor: "" },
+        },
+      };
+    }
+
+    if (input.endpoint === "search.messages") {
+      if (input.mode === "team" && scenario.teamSearchRateLimited) {
+        return {
+          status: 429,
+          payload: {
+            ok: false,
+            error: "ratelimited",
+          },
+        };
       }
-      if (route === "team" && scenario.teamSearchError) {
-        return new Response(JSON.stringify({ ok: false, error: scenario.teamSearchError }), {
+      if (input.mode === "team" && scenario.teamSearchError) {
+        return {
           status: 200,
-        });
+          payload: {
+            ok: false,
+            error: scenario.teamSearchError,
+          },
+        };
       }
-      return new Response(
-        JSON.stringify({
+      return {
+        status: 200,
+        payload: {
           ok: true,
           messages: {
             matches: [{ channel: { id: "C123" }, ts: "1710000000.000100", text: "hello" }],
           },
-        }),
-        { status: 200 }
-      );
+        },
+      };
     }
 
-    if (endpoint === "chat.postMessage") {
-      return new Response(
-        JSON.stringify({
+    if (input.endpoint === "chat.postMessage") {
+      return {
+        status: 200,
+        payload: {
           ok: true,
           channel: "C123",
           ts: "1710000000.000200",
           message: { text: "done" },
-        }),
-        { status: 200 }
-      );
+        },
+      };
     }
 
-    if (endpoint === "users.info") {
-      return new Response(
-        JSON.stringify({
+    if (input.endpoint === "users.info") {
+      return {
+        status: 200,
+        payload: {
           ok: true,
           user: {
             id: "U123",
@@ -153,14 +182,14 @@ function createFetchStub(scenario: FetchScenario = {}) {
             real_name: "Alice Example",
             profile: { display_name: "alice" },
           },
-        }),
-        { status: 200 }
-      );
+        },
+      };
     }
 
-    if (endpoint === "conversations.info") {
-      return new Response(
-        JSON.stringify({
+    if (input.endpoint === "conversations.info" || input.endpoint === "conversations.genericInfo") {
+      return {
+        status: 200,
+        payload: {
           ok: true,
           channel: {
             id: "C123",
@@ -169,16 +198,27 @@ function createFetchStub(scenario: FetchScenario = {}) {
             is_im: false,
             is_mpim: false,
           },
-        }),
-        { status: 200 }
-      );
+          channels: [
+            {
+              id: "C123",
+              name: "general",
+              is_private: false,
+              is_im: false,
+              is_mpim: false,
+            },
+          ],
+        },
+      };
     }
 
-    return new Response(JSON.stringify({ ok: false, error: "unknown_endpoint" }), { status: 404 });
-  }) as typeof fetch;
+    return {
+      status: 404,
+      payload: { ok: false, error: "unknown_endpoint" },
+    };
+  };
 
   return {
-    fetchFn,
+    browserInvoker,
     calls,
   };
 }
@@ -189,22 +229,64 @@ function createEnv(
 ): NodeJS.ProcessEnv {
   return {
     ADJUTANT_SLACK_API_ENABLED: "1",
-    ADJUTANT_SLACK_XOXC_TOKEN: "xoxc-111",
-    ADJUTANT_SLACK_XOXD_TOKEN: "xoxd-222",
+    ADJUTANT_SLACK_API_REQUEST_ENABLED: "1",
     ADJUTANT_SLACK_API_ROUTING_MODE: "auto_probe",
-    ADJUTANT_SLACK_TEAM_API_BASE_URL: "https://team.slack.test/api",
-    ADJUTANT_SLACK_ENTERPRISE_API_BASE_URL: "https://enterprise.slack.test/api",
     DATA_DIR: dataDir,
     ...extra,
   };
 }
 
+async function seedAuthTokenCache(params: {
+  dataDir: string;
+  fetchFn: typeof fetch;
+  workspaceKey?: string;
+  xoxcToken?: string;
+  xoxdToken?: string;
+}): Promise<void> {
+  configureSlackAuthTokenRegistry({
+    dataDir: params.dataDir,
+    fetchFn: params.fetchFn,
+    authTestEnabled: true,
+    authTestRetryDelaysMs: [1, 1, 1],
+  });
+  syncSlackAuthTokenSnapshots({
+    snapshots: [
+      {
+        workspaceKey: params.workspaceKey ?? "TTEAM",
+        tokens: {
+          xoxc: {
+            value: params.xoxcToken ?? "xoxc-from-cache",
+            firstSeenAt: 1,
+            lastSeenAt: 2,
+            hits: 1,
+            sourceStage: "requestWillBeSent",
+          },
+          xoxd: {
+            value: params.xoxdToken ?? "xoxd-from-cache",
+            firstSeenAt: 1,
+            lastSeenAt: 2,
+            hits: 1,
+            sourceStage: "requestWillBeSentExtraInfo",
+          },
+        },
+      },
+    ],
+  });
+  await flushSlackAuthTokenRegistryForTest();
+}
+
 async function runTool(
   env: NodeJS.ProcessEnv,
   fetchFn: typeof fetch,
+  browserInvoker: SlackBrowserApiInvoker,
   input: Record<string, unknown>
 ): Promise<ToolHubResult> {
-  const provider = createProviderFromEnv({ env, fetchFn, dataDir: env.DATA_DIR });
+  const provider = createProviderFromEnv({
+    env,
+    fetchFn,
+    browserInvoker,
+    dataDir: env.DATA_DIR,
+  });
   const hub = new ToolHub(new ProviderRegistry([provider]));
   return await hub.execute(input);
 }
@@ -216,41 +298,15 @@ describe("Slack provider integration", () => {
 
   it("env token 未設定でも s01 キャッシュがあれば users_list を実行できる", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "adjutant-slack-cache-fallback-"));
-    const { fetchFn } = createFetchStub();
-    const env = createEnv(dataDir, {
-      ADJUTANT_SLACK_XOXC_TOKEN: "",
-      ADJUTANT_SLACK_XOXD_TOKEN: "",
-      ADJUTANT_SLACK_ACCOUNT_ID: "acct-cache",
-    });
+    const fetchFn = createAuthProbeFetchStub();
+    const { browserInvoker } = createBrowserInvokerStub();
+    const env = createEnv(dataDir, {});
 
     resetSlackAuthTokenCacheForTest();
-    syncSlackAuthTokenSnapshots({
-      accountId: env.ADJUTANT_SLACK_ACCOUNT_ID,
-      snapshots: [
-        {
-          workspaceKey: "TTEAM",
-          tokens: {
-            xoxc: {
-              value: "xoxc-from-cache",
-              firstSeenAt: 1,
-              lastSeenAt: 2,
-              hits: 1,
-              sourceStage: "requestWillBeSent",
-            },
-            xoxd: {
-              value: "xoxd-from-cache",
-              firstSeenAt: 1,
-              lastSeenAt: 2,
-              hits: 1,
-              sourceStage: "requestWillBeSentExtraInfo",
-            },
-          },
-        },
-      ],
-    });
+    await seedAuthTokenCache({ dataDir, fetchFn });
 
     try {
-      const result = await runTool(env, fetchFn, {
+      const result = await runTool(env, fetchFn, browserInvoker, {
         provider: "slack",
         action: "users_list",
         args: {},
@@ -270,19 +326,23 @@ describe("Slack provider integration", () => {
 
   it("users_list で既存 user-names-by-team キャッシュを更新する", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "adjutant-slack-users-cache-"));
-    const { fetchFn } = createFetchStub();
+    const fetchFn = createAuthProbeFetchStub();
+    const { browserInvoker } = createBrowserInvokerStub();
     const env = createEnv(dataDir);
+    await seedAuthTokenCache({ dataDir, fetchFn });
 
     try {
-      const result = await runTool(env, fetchFn, {
+      const result = await runTool(env, fetchFn, browserInvoker, {
         provider: "slack",
         action: "users_list",
         args: {},
       });
 
       assert.equal(result.ok, true);
-      const accountId = normalizeAccountId(env.ADJUTANT_SLACK_ACCOUNT_ID, "default");
-      const cacheBase = resolveSlackCacheBaseDir({ dataDir, accountId });
+      const cacheBase = resolveSlackCacheBaseDir({
+        dataDir,
+        accountId: SLACK_PENDING_ACCOUNT_ID,
+      });
       const cachePath = join(cacheBase, "user-names-by-team", "TTEAM.json");
       const raw = await readFile(cachePath, "utf8");
       const parsed = JSON.parse(raw) as {
@@ -296,11 +356,15 @@ describe("Slack provider integration", () => {
 
   it("search_messages(auto_probe) は not_supported 時に enterprise へ fallback する", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "adjutant-slack-fallback-"));
-    const { fetchFn, calls } = createFetchStub({ teamSearchError: "not_allowed_token_type" });
+    const fetchFn = createAuthProbeFetchStub();
+    const { browserInvoker, calls } = createBrowserInvokerStub({
+      teamSearchError: "not_allowed_token_type",
+    });
     const env = createEnv(dataDir);
+    await seedAuthTokenCache({ dataDir, fetchFn });
 
     try {
-      const result = await runTool(env, fetchFn, {
+      const result = await runTool(env, fetchFn, browserInvoker, {
         provider: "slack",
         action: "search_messages",
         args: { query: "hello", routing_mode: "auto_probe" },
@@ -322,10 +386,10 @@ describe("Slack provider integration", () => {
       assert.equal(Array.isArray(executeData.data?.messages), true);
 
       const teamSearchCalls = calls.filter(
-        (call) => call.endpoint === "search.messages" && call.route === "team"
+        (call) => call.endpoint === "search.messages" && call.mode === "team"
       );
       const enterpriseSearchCalls = calls.filter(
-        (call) => call.endpoint === "search.messages" && call.route === "enterprise"
+        (call) => call.endpoint === "search.messages" && call.mode === "enterprise"
       );
       assert.equal(teamSearchCalls.length, 1);
       assert.equal(enterpriseSearchCalls.length, 1);
@@ -336,11 +400,13 @@ describe("Slack provider integration", () => {
 
   it("search_messages(auto_probe) で 429 は fallback しない", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "adjutant-slack-rate-limited-"));
-    const { fetchFn, calls } = createFetchStub({ teamSearchRateLimited: true });
+    const fetchFn = createAuthProbeFetchStub();
+    const { browserInvoker, calls } = createBrowserInvokerStub({ teamSearchRateLimited: true });
     const env = createEnv(dataDir);
+    await seedAuthTokenCache({ dataDir, fetchFn });
 
     try {
-      const result = await runTool(env, fetchFn, {
+      const result = await runTool(env, fetchFn, browserInvoker, {
         provider: "slack",
         action: "search_messages",
         args: { query: "hello", routing_mode: "auto_probe" },
@@ -355,10 +421,10 @@ describe("Slack provider integration", () => {
       assert.equal(executeData.code, "rate_limited");
 
       const teamSearchCalls = calls.filter(
-        (call) => call.endpoint === "search.messages" && call.route === "team"
+        (call) => call.endpoint === "search.messages" && call.mode === "team"
       );
       const enterpriseSearchCalls = calls.filter(
-        (call) => call.endpoint === "search.messages" && call.route === "enterprise"
+        (call) => call.endpoint === "search.messages" && call.mode === "enterprise"
       );
       assert.equal(teamSearchCalls.length, 1);
       assert.equal(enterpriseSearchCalls.length, 0);
@@ -367,13 +433,14 @@ describe("Slack provider integration", () => {
     }
   });
 
-  it("xoxd 不在時は auth_invalid で失敗し HTTP 呼び出ししない", async () => {
+  it("token キャッシュ不在時は auth_invalid で失敗し HTTP 呼び出ししない", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "adjutant-slack-auth-invalid-"));
-    const { fetchFn, calls } = createFetchStub();
-    const env = createEnv(dataDir, { ADJUTANT_SLACK_XOXD_TOKEN: "" });
+    const fetchFn = createAuthProbeFetchStub();
+    const { browserInvoker, calls } = createBrowserInvokerStub();
+    const env = createEnv(dataDir, {});
 
     try {
-      const result = await runTool(env, fetchFn, {
+      const result = await runTool(env, fetchFn, browserInvoker, {
         provider: "slack",
         action: "users_list",
         args: {},
@@ -387,6 +454,49 @@ describe("Slack provider integration", () => {
       assert.equal(executeData.ok, false);
       assert.equal(executeData.code, "auth_invalid");
       assert.equal(calls.length, 0);
+    } finally {
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("authTest.enterpriseId を事前判定に使い channels_list を enterprise 経路で実行する", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "adjutant-slack-enterprise-preroute-"));
+    const fetchFn: typeof fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          ok: true,
+          team_id: "TTEAM",
+          enterprise_id: "EENTER",
+          user_id: "UTEAM",
+          url: "https://enterprise.slack.test/",
+        }),
+        { status: 200 }
+      )) as typeof fetch;
+    const { browserInvoker, calls } = createBrowserInvokerStub();
+    const env = createEnv(dataDir, {});
+    await seedAuthTokenCache({ dataDir, fetchFn });
+
+    try {
+      const result = await runTool(env, fetchFn, browserInvoker, {
+        provider: "slack",
+        action: "channels_list",
+        args: { routing_mode: "auto_probe" },
+      });
+
+      assert.equal(result.ok, true);
+      if (!result.ok) {
+        return;
+      }
+      const executeData = result.data as { ok?: boolean; modeUsed?: string };
+      assert.equal(executeData.ok, true);
+      assert.equal(executeData.modeUsed, "enterprise");
+
+      const enterpriseSearchCalls = calls.filter(
+        (call) => call.endpoint === "search.modules.channels" && call.mode === "enterprise"
+      );
+      const authTestCalls = calls.filter((call) => call.endpoint === "auth.test");
+      assert.equal(enterpriseSearchCalls.length > 0, true);
+      assert.equal(authTestCalls.length, 0);
     } finally {
       await rm(dataDir, { recursive: true, force: true });
     }

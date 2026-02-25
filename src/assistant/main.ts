@@ -75,6 +75,7 @@ const SSE_REPLAY_MAX_AGE_MS = runtimeConfig.app.sse.replayMaxAgeMs;
 const SLACK_RETRY_BASE_MS = runtimeConfig.app.slack.retryBaseMs;
 const SLACK_RETRY_MAX_MS = runtimeConfig.app.slack.retryMaxMs;
 const SLACK_DEFAULT_ACCOUNT_ID = runtimeConfig.app.slack.defaultAccountId;
+const SLACK_AUTH_TEST_ENABLED = parseBoolean(process.env.ADJUTANT_SLACK_AUTH_TEST_ENABLED, true);
 const FLUSHER_INTERVAL_MS = parsePositiveInt(process.env.ADJUTANT_FLUSHER_INTERVAL_MS, 300_000);
 const FLUSHER_STALE_MS = parsePositiveInt(process.env.ADJUTANT_FLUSHER_STALE_MS, 900_000);
 
@@ -128,6 +129,20 @@ function parseNonNegativeInt(value: string | undefined, fallback: number): numbe
     return fallback;
   }
   return Math.max(0, Math.floor(parsed));
+}
+
+function parseBoolean(value: string | undefined, fallback: boolean): boolean {
+  if (!value) {
+    return fallback;
+  }
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on") {
+    return true;
+  }
+  if (normalized === "0" || normalized === "false" || normalized === "no" || normalized === "off") {
+    return false;
+  }
+  return fallback;
 }
 
 let activeSandboxContainer: { containerName: string; ownerNonce: string } | null = null;
@@ -517,6 +532,7 @@ pluginRegistry.register(
     retryMaxMs: Number.isFinite(SLACK_RETRY_MAX_MS)
       ? Math.max(1, Math.floor(SLACK_RETRY_MAX_MS))
       : 10000,
+    authTestEnabled: SLACK_AUTH_TEST_ENABLED,
     onWarn: (message, meta) => {
       console.warn("[AssistantGateway][SlackPlugin]", message, meta ?? {});
     },

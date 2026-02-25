@@ -15,21 +15,28 @@
 
 ## 1. Slack イベントデータ
 
-| パス                                                           | R/W                           | 定義箇所                                                 |
-| -------------------------------------------------------------- | ----------------------------- | -------------------------------------------------------- |
-| `{dataDir}/accounts/{accountId}/YYYY/MM/DD/slack/events.jsonl` | W (Collector) / R (Assistant) | `src/io/jsonlWriter.ts`, `src/assistant/event-reader.ts` |
+| パス                                                           | R/W                           | 定義箇所                                                                         |
+| -------------------------------------------------------------- | ----------------------------- | -------------------------------------------------------------------------------- |
+| `{dataDir}/accounts/_pending/YYYY/MM/DD/slack/events.jsonl`    | W (Collector)                 | `src/io/jsonlWriter.ts`, `src/proactive/slack-channel-plugin.ts`, `src/index.ts` |
+| `{dataDir}/accounts/{accountId}/YYYY/MM/DD/slack/events.jsonl` | W (promotion) / R (Assistant) | `src/slack/pendingDataPromoter.ts`, `src/assistant/event-reader.ts`              |
 
 ## 2. キャッシュ
 
-| パス                                                                              | R/W | 定義箇所                                                                    |
-| --------------------------------------------------------------------------------- | --- | --------------------------------------------------------------------------- |
-| `{dataDir}/accounts/{accountId}/_cache/slack/channel-names-by-team/{teamId}.json` | R/W | `src/proactive/slack-channel-plugin.ts`, `src/slack/nameCacheRepository.ts` |
-| `{dataDir}/accounts/{accountId}/_cache/slack/user-names-by-team/{teamId}.json`    | R/W | `src/proactive/slack-channel-plugin.ts`, `src/slack/nameCacheRepository.ts` |
-| `{dataDir}/accounts/{accountId}/_cache/slack/workspace-route-pins.json`           | R/W | `src/assistant/slack-api-tools/workspace-route-pin-store.ts`                |
+| パス                                                                              | R/W | 定義箇所                                                                       |
+| --------------------------------------------------------------------------------- | --- | ------------------------------------------------------------------------------ |
+| `{dataDir}/accounts/_pending/_cache/slack/channel-names-by-team/{teamId}.json`    | R/W | `src/proactive/slack-channel-plugin.ts`, `src/slack/nameCacheRepository.ts`    |
+| `{dataDir}/accounts/_pending/_cache/slack/user-names-by-team/{teamId}.json`       | R/W | `src/proactive/slack-channel-plugin.ts`, `src/slack/nameCacheRepository.ts`    |
+| `{dataDir}/accounts/{accountId}/_cache/slack/channel-names-by-team/{teamId}.json` | R/W | `src/slack/pendingDataPromoter.ts`, `src/slack/nameCacheRepository.ts`         |
+| `{dataDir}/accounts/{accountId}/_cache/slack/user-names-by-team/{teamId}.json`    | R/W | `src/slack/pendingDataPromoter.ts`, `src/slack/nameCacheRepository.ts`         |
+| `{dataDir}/accounts/_pending/_cache/slack/workspace-route-pins.json`              | R/W | `src/assistant/slack-api-tools/factory.ts`, `src/slack/pendingDataPromoter.ts` |
+| `{dataDir}/accounts/{accountId}/_cache/slack/workspace-route-pins.json`           | R/W | `src/slack/pendingDataPromoter.ts`, `src/assistant/slack-api-tools/factory.ts` |
+| `{dataDir}/accounts/_pending/_cache/slack/auth-token-store.json`                  | R/W | `src/slack/slackAuthTokenStore.ts`, `src/slack/slackAuthTokenRegistry.ts`      |
+| `{dataDir}/accounts/{accountId}/_cache/slack/auth-token-store.json`               | R/W | `src/slack/slackAuthTokenStore.ts`, `src/slack/slackAuthTokenRegistry.ts`      |
 
 設定時のベースパスは `.../channel-names-by-team.json` のようにファイル名で渡されるが、`nameCacheRepository.ts` が拡張子を除去してディレクトリ化し、チーム別に `{teamId}.json` を配置する (`src/slack/nameCacheRepository.ts:249,273,369`)。
 
-`xoxc/xoxd` の認証トークン（`s01`）は永続ファイルを持たず、`src/slack/slackAuthTokenRegistry.ts` のプロセス内メモリで管理される。
+`xoxc/xoxd` の認証トークン（`s01`）は `_pending` ストアに保存され、`auth.test` 成功時に `enterprise_id ?? team_id` で account ストアへ昇格する。  
+同時に `events.jsonl` / team cache / workspace route pin は workspace/team 単位で `_pending` から account 配下へ移動する（`src/slack/pendingDataPromoter.ts`）。
 
 ## 3. デバッグログ
 
@@ -170,15 +177,26 @@
 │       └── BOOTSTRAP.md                     [R]
 └── ~/.adjutant/                             (= stateDir)
     ├── data/                                (= dataDir)
-    │   ├── accounts/default/
+    │   ├── accounts/_pending/
     │   │   ├── YYYY/MM/DD/slack/
-    │   │   │   └── events.jsonl             [R/W] Slackイベント
+    │   │   │   └── events.jsonl             [R/W] 未確定 Slackイベント
     │   │   └── _cache/slack/
     │   │       ├── channel-names-by-team/
-    │   │       │   └── {teamId}.json        [R/W] チャンネル名
+    │   │       │   └── {teamId}.json        [R/W] 未確定チャンネル名
     │   │       ├── user-names-by-team/
-    │   │           └── {teamId}.json        [R/W] ユーザー名
-    │   │       └── workspace-route-pins.json [R/W] Slack route pin
+    │   │       │   └── {teamId}.json        [R/W] 未確定ユーザー名
+    │   │       ├── workspace-route-pins.json [R/W] 未確定 route pin
+    │   │       └── auth-token-store.json    [R/W] 未確定 token pair
+    │   ├── accounts/{accountId}/
+    │   │   ├── YYYY/MM/DD/slack/
+    │   │   │   └── events.jsonl             [R/W] 昇格済み Slackイベント
+    │   │   └── _cache/slack/
+    │   │       ├── channel-names-by-team/
+    │   │       │   └── {teamId}.json        [R/W] 昇格済みチャンネル名
+    │   │       ├── user-names-by-team/
+    │   │       │   └── {teamId}.json        [R/W] 昇格済みユーザー名
+    │   │       ├── workspace-route-pins.json [R/W] 昇格済み route pin
+    │   │       └── auth-token-store.json    [R/W] 昇格済み token pair
     │   └── _debug/
     │       ├── cdp-events.jsonl             [W]   CDPイベントログ
     │       └── raw-fetch.jsonl              [W]   Fetchログ

@@ -1,3 +1,11 @@
+import { randomUUID } from "node:crypto";
+import { resolveEndpoint } from "../../runtime/config.js";
+import { connectToSlackPage } from "../../runtime/slackConnection.js";
+import {
+  RuntimeContextRegistry,
+  type RuntimeExecutionContextCreatedEvent,
+  type RuntimeExecutionContextDestroyedEvent,
+} from "../../slack/runtimeContextRegistry.js";
 import type {
   SlackAuthResolved,
   SlackAuthTestResult,
@@ -31,10 +39,11 @@ function asString(value: unknown): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function joinUrl(baseUrl: string, endpoint: string): string {
-  const left = baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
-  const right = endpoint.startsWith("/") ? endpoint.slice(1) : endpoint;
-  return `${left}/${right}`;
+function asFiniteNumber(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return undefined;
+  }
+  return value;
 }
 
 export type SlackRouteErrorKind =
@@ -96,7 +105,11 @@ function toRouteError(input: {
     });
   }
 
-  if (slackError === "not_allowed_token_type" || slackError === "request_not_supported_for_team") {
+  if (
+    slackError === "not_allowed_token_type" ||
+    slackError === "request_not_supported_for_team" ||
+    slackError === "enterprise_is_restricted"
+  ) {
     return new SlackRouteError({
       kind: "not_supported",
       mode: input.mode,
@@ -180,9 +193,9 @@ function toChannel(item: unknown, teamId: string): SlackChannel | null {
     id,
     name,
     teamId,
-    isPrivate: Boolean(record.is_private),
-    isIm: Boolean(record.is_im),
-    isMpIm: Boolean(record.is_mpim),
+    isPrivate: Boolean(record.is_private) || Boolean(record.isPrivate),
+    isIm: Boolean(record.is_im) || Boolean(record.isIm),
+    isMpIm: Boolean(record.is_mpim) || Boolean(record.isMpim),
   };
 }
 
@@ -205,55 +218,317 @@ function toSearchMessage(item: unknown): SlackSearchMessage | null {
   };
 }
 
+function normalizeEndpoint(endpoint: string): string {
+  const trimmed = endpoint.trim();
+  if (trimmed.startsWith("/")) {
+    return trimmed;
+  }
+  return `/api/${trimmed}`;
+}
+
+function createBrowserApiExpression(input: {
+  endpoint: string;
+  token: string;
+  params: Record<string, string | undefined>;
+  timeoutMs: number;
+}): string {
+  const endpointPath = normalizeEndpoint(input.endpoint);
+  const entries = Object.entries(input.params)
+    .filter((entry): entry is [string, string] => typeof entry[1] === "string")
+    .map(([key, value]) => [key, value]);
+
+  return `(() => {
+    const endpoint = ${JSON.stringify(endpointPath)};
+    const token = ${JSON.stringify(input.token)};
+    const timeoutMs = ${JSON.stringify(input.timeoutMs)};
+    const entries = ${JSON.stringify(entries)};
+    const startedAt = Date.now();
+    return (async () => {
+      try {
+        if (typeof fetch !== "function") {
+          return { ok: false, error: "fetch is unavailable" };
+        }
+        const form = new URLSearchParams();
+        form.set("token", token);
+        for (const entry of entries) {
+          if (!Array.isArray(entry) || entry.length < 2) {
+            continue;
+          }
+          form.set(String(entry[0]), String(entry[1]));
+        }
+
+        let controller = null;
+        let timer = null;
+        if (typeof AbortController === "function") {
+          controller = new AbortController();
+          timer = setTimeout(() => {
+            try {
+              controller.abort();
+            } catch {
+              // no-op
+            }
+          }, Math.max(1, timeoutMs));
+        }
+
+        try {
+          const response = await fetch(endpoint, {
+            method: "POST",
+            credentials: "include",
+            headers: {
+              "Content-Type": "application/x-www-form-urlencoded; charset=utf-8"
+            },
+            body: form.toString(),
+            signal: controller ? controller.signal : undefined,
+          });
+          const rawText = await response.text();
+          let payload = null;
+          try {
+            payload = JSON.parse(rawText);
+          } catch {
+            payload = null;
+          }
+          return {
+            ok: true,
+            responseOk: response.ok,
+            httpStatus: response.status,
+            payload,
+            origin: typeof location?.origin === "string" ? location.origin : undefined,
+            href: typeof location?.href === "string" ? location.href : undefined,
+            durationMs: Date.now() - startedAt,
+          };
+        } finally {
+          if (timer !== null) {
+            clearTimeout(timer);
+          }
+        }
+      } catch (err) {
+        const message = String(err);
+        const lowered = message.toLowerCase();
+        const timeout = lowered.includes("aborted") || lowered.includes("timeout");
+        return {
+          ok: false,
+          error: message,
+          timeout,
+          origin: typeof location?.origin === "string" ? location.origin : undefined,
+          href: typeof location?.href === "string" ? location.href : undefined,
+          durationMs: Date.now() - startedAt,
+        };
+      }
+    })();
+  })()`;
+}
+
+export type SlackBrowserApiCallInput = {
+  mode: SlackMode;
+  endpoint: string;
+  params: Record<string, string | undefined>;
+  workspaceKey?: string;
+  auth: SlackAuthResolved;
+  timeoutMs: number;
+};
+
+export type SlackBrowserApiCallResult = {
+  status?: number;
+  payload?: unknown;
+};
+
+export type SlackBrowserApiInvoker = (
+  input: SlackBrowserApiCallInput
+) => Promise<SlackBrowserApiCallResult>;
+
+function createDefaultBrowserApiInvoker(input: {
+  host: string;
+  port: number;
+}): SlackBrowserApiInvoker {
+  return async (callInput) => {
+    const { client } = await connectToSlackPage(input.host, input.port);
+    const runtimeRegistry = new RuntimeContextRegistry();
+    const onCreated = (event: unknown) => {
+      runtimeRegistry.onCreated(event as RuntimeExecutionContextCreatedEvent);
+    };
+    const onDestroyed = (event: unknown) => {
+      runtimeRegistry.onDestroyed(event as RuntimeExecutionContextDestroyedEvent);
+    };
+    client.Runtime.on("executionContextCreated", onCreated);
+    client.Runtime.on("executionContextDestroyed", onDestroyed);
+
+    try {
+      await client.Runtime.enable();
+      await new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+      const expression = createBrowserApiExpression({
+        endpoint: callInput.endpoint,
+        token: callInput.auth.xoxcToken,
+        params: callInput.params,
+        timeoutMs: callInput.timeoutMs,
+      });
+
+      const contextIds = runtimeRegistry.resolveContextIds();
+      let firstFailure: { status?: number; payload?: unknown; timeout?: boolean; error?: string } | null =
+        null;
+
+      for (const contextId of contextIds) {
+        const evaluateParams: Record<string, unknown> = {
+          expression,
+          returnByValue: true,
+          awaitPromise: true,
+        };
+        if (contextId !== null) {
+          evaluateParams.contextId = contextId;
+        }
+
+        const evaluated = (await client.Runtime.evaluate(evaluateParams as never)) as {
+          result?: { value?: unknown };
+          exceptionDetails?: { text?: unknown };
+        };
+        const exceptionText = asString(evaluated.exceptionDetails?.text);
+        if (exceptionText) {
+          if (!firstFailure) {
+            firstFailure = { error: exceptionText };
+          }
+          continue;
+        }
+
+        const value = asRecord(evaluated.result?.value);
+        if (!value) {
+          if (!firstFailure) {
+            firstFailure = { error: "runtime returned non-object value" };
+          }
+          continue;
+        }
+
+        if (value.ok === true) {
+          return {
+            status: asFiniteNumber(value.httpStatus),
+            payload: value.payload,
+          };
+        }
+
+        const failure = {
+          status: asFiniteNumber(value.httpStatus),
+          payload: value.payload,
+          timeout: value.timeout === true,
+          error: asString(value.error),
+        };
+        if (!firstFailure) {
+          firstFailure = failure;
+        }
+        if (failure.timeout) {
+          const timeoutError = new Error(failure.error ?? "cdp browser fetch timeout");
+          timeoutError.name = "AbortError";
+          throw timeoutError;
+        }
+      }
+
+      if (firstFailure) {
+        if (firstFailure.timeout) {
+          const timeoutError = new Error(firstFailure.error ?? "cdp browser fetch timeout");
+          timeoutError.name = "AbortError";
+          throw timeoutError;
+        }
+        return {
+          status: firstFailure.status,
+          payload: firstFailure.payload,
+        };
+      }
+
+      throw new Error("cdp runtime context is unavailable");
+    } finally {
+      try {
+        await client.close();
+      } catch {
+        // no-op
+      }
+    }
+  };
+}
+
 export type SlackRouteClientOptions = {
   mode: SlackMode;
-  apiBaseUrl: string;
-  authProvider: { resolve: () => SlackAuthResolved | null };
-  fetchFn?: typeof fetch;
+  authProvider: { resolve: (workspaceKey?: string) => SlackAuthResolved | null };
   timeoutMs?: number;
+  requestEnabled?: boolean;
+  cdpHost?: string;
+  cdpPort?: number;
+  browserInvoker?: SlackBrowserApiInvoker;
 };
 
 export class SlackRouteClient {
   private readonly mode: SlackMode;
-  private readonly apiBaseUrl: string;
-  private readonly authProvider: { resolve: () => SlackAuthResolved | null };
-  private readonly fetchFn: typeof fetch;
+  private readonly authProvider: { resolve: (workspaceKey?: string) => SlackAuthResolved | null };
   private readonly timeoutMs: number;
-  private authTestCache: SlackAuthTestResult | null = null;
+  private readonly requestEnabled: boolean;
+  private readonly browserInvoker: SlackBrowserApiInvoker;
+  private readonly authTestCache = new Map<string, SlackAuthTestResult>();
 
   constructor(options: SlackRouteClientOptions) {
     this.mode = options.mode;
-    this.apiBaseUrl = options.apiBaseUrl;
     this.authProvider = options.authProvider;
-    this.fetchFn = options.fetchFn ?? fetch;
     this.timeoutMs =
       typeof options.timeoutMs === "number" && Number.isFinite(options.timeoutMs)
         ? Math.max(1, Math.floor(options.timeoutMs))
         : DEFAULT_TIMEOUT_MS;
+    this.requestEnabled = options.requestEnabled !== false;
+
+    if (options.browserInvoker) {
+      this.browserInvoker = options.browserInvoker;
+    } else {
+      const endpoint = resolveEndpoint();
+      this.browserInvoker = createDefaultBrowserApiInvoker({
+        host: asString(options.cdpHost) ?? endpoint.host,
+        port:
+          typeof options.cdpPort === "number" && Number.isFinite(options.cdpPort)
+            ? Math.max(1, Math.floor(options.cdpPort))
+            : endpoint.port,
+      });
+    }
   }
 
-  async authTest(): Promise<SlackAuthTestResult> {
-    if (this.authTestCache) {
-      return this.authTestCache;
+  async authTest(workspaceKey?: string): Promise<SlackAuthTestResult> {
+    const cacheKey = asString(workspaceKey) ?? "__latest__";
+    const cached = this.authTestCache.get(cacheKey);
+    if (cached) {
+      return cached;
     }
-    const payload = await this.call("auth.test", {});
+
+    const auth = this.authProvider.resolve(workspaceKey);
+    if (!auth) {
+      throw new SlackRouteError({
+        kind: "auth_invalid",
+        mode: this.mode,
+        message: `xoxc/xoxd token is missing (${this.mode})`,
+      });
+    }
+
+    const workspaceHint = asString(auth.workspaceKey);
+    const payload = {
+      team_id: auth.authTest?.teamId ?? workspaceHint,
+      enterprise_id: auth.authTest?.enterpriseId,
+      url: auth.authTest?.url,
+      user_id: auth.authTest?.userId,
+    } satisfies Record<string, unknown>;
     const result: SlackAuthTestResult = {
       teamId: asString(payload.team_id),
       enterpriseId: asString(payload.enterprise_id),
       url: asString(payload.url),
       userId: asString(payload.user_id),
     };
-    this.authTestCache = result;
+    this.authTestCache.set(cacheKey, result);
     return result;
   }
 
-  async listUsers(): Promise<SlackUser[]> {
-    const info = await this.authTest();
+  async listUsers(workspaceKey?: string): Promise<SlackUser[]> {
+    const info = await this.authTest(workspaceKey);
     const teamId = info.teamId ?? info.enterpriseId ?? "global";
-    const members = await this.collectPaginated("users.list", "members", {
-      limit: "200",
-      include_locale: "false",
-    });
+    const members = await this.collectPaginated(
+      "users.list",
+      "members",
+      {
+        limit: "200",
+        include_locale: "false",
+      },
+      workspaceKey
+    );
     const users: SlackUser[] = [];
     for (const member of members) {
       const parsed = toUser(member, teamId);
@@ -264,15 +539,33 @@ export class SlackRouteClient {
     return users;
   }
 
-  async listChannels(): Promise<SlackChannel[]> {
-    const info = await this.authTest();
+  async listChannels(workspaceKey?: string): Promise<SlackChannel[]> {
+    const info = await this.authTest(workspaceKey);
     const teamId = info.teamId ?? info.enterpriseId ?? "global";
-    const channels = await this.collectPaginated("conversations.list", "channels", {
-      limit: "200",
-      exclude_archived: "true",
-      types: "public_channel,private_channel,im,mpim",
-    });
+    const shouldUseEnterpriseRoute = this.mode === "enterprise" || Boolean(info.enterpriseId);
+
     const result: SlackChannel[] = [];
+    if (shouldUseEnterpriseRoute) {
+      const items = await this.collectSearchModuleChannels(workspaceKey, 200);
+      for (const channel of items) {
+        const parsed = toChannel(channel, teamId);
+        if (parsed) {
+          result.push(parsed);
+        }
+      }
+      return result;
+    }
+
+    const channels = await this.collectPaginated(
+      "conversations.list",
+      "channels",
+      {
+        limit: "200",
+        exclude_archived: "true",
+        types: "public_channel,private_channel,im,mpim",
+      },
+      workspaceKey
+    );
     for (const channel of channels) {
       const parsed = toChannel(channel, teamId);
       if (parsed) {
@@ -282,27 +575,52 @@ export class SlackRouteClient {
     return result;
   }
 
-  async getUserInfo(userId: string): Promise<SlackUser | null> {
-    const info = await this.authTest();
+  async getUserInfo(userId: string, workspaceKey?: string): Promise<SlackUser | null> {
+    const info = await this.authTest(workspaceKey);
     const teamId = info.teamId ?? info.enterpriseId ?? "global";
-    const payload = await this.call("users.info", { user: userId });
+    const payload = await this.call("users.info", { user: userId }, workspaceKey);
     return toUser(payload.user, teamId);
   }
 
-  async getChannelInfo(channelId: string): Promise<SlackChannel | null> {
-    const info = await this.authTest();
+  async getChannelInfo(channelId: string, workspaceKey?: string): Promise<SlackChannel | null> {
+    const info = await this.authTest(workspaceKey);
     const teamId = info.teamId ?? info.enterpriseId ?? "global";
-    const payload = await this.call("conversations.info", { channel: channelId });
+    const shouldUseEnterpriseRoute = this.mode === "enterprise" || Boolean(info.enterpriseId);
+    if (shouldUseEnterpriseRoute) {
+      const payload = await this.call(
+        "conversations.genericInfo",
+        {
+          updated_channels: JSON.stringify({ [channelId]: 0 }),
+          _x_reason: "fallback:UnknownFetchManager",
+          _x_mode: "online",
+          _x_sonic: "true",
+          _x_app_name: "client",
+        },
+        workspaceKey
+      );
+      const channels = asArray(payload.channels);
+      return toChannel(channels[0], teamId);
+    }
+
+    const payload = await this.call("conversations.info", { channel: channelId }, workspaceKey);
     return toChannel(payload.channel, teamId);
   }
 
-  async searchMessages(query: string, limit = 20): Promise<{ messages: SlackSearchMessage[] }> {
-    const payload = await this.call("search.messages", {
-      query,
-      count: String(Math.max(1, Math.min(200, Math.floor(limit)))),
-      sort: "timestamp",
-      sort_dir: "desc",
-    });
+  async searchMessages(
+    query: string,
+    limit = 20,
+    workspaceKey?: string
+  ): Promise<{ messages: SlackSearchMessage[] }> {
+    const payload = await this.call(
+      "search.messages",
+      {
+        query,
+        count: String(Math.max(1, Math.min(200, Math.floor(limit)))),
+        sort: "timestamp",
+        sort_dir: "desc",
+      },
+      workspaceKey
+    );
     const messagesObject = asRecord(payload.messages);
     const matches = asArray(messagesObject?.matches);
     const messages: SlackSearchMessage[] = [];
@@ -315,12 +633,20 @@ export class SlackRouteClient {
     return { messages };
   }
 
-  async postMessage(channelId: string, text: string): Promise<SlackPostMessageResult> {
-    const payload = await this.call("chat.postMessage", {
-      channel: channelId,
-      text,
-      as_user: "true",
-    });
+  async postMessage(
+    channelId: string,
+    text: string,
+    workspaceKey?: string
+  ): Promise<SlackPostMessageResult> {
+    const payload = await this.call(
+      "chat.postMessage",
+      {
+        channel: channelId,
+        text,
+        as_user: "true",
+      },
+      workspaceKey
+    );
     const responseMessage = asRecord(payload.message);
     const resolvedChannelId = asString(payload.channel) ?? channelId;
     const ts = asString(payload.ts) ?? asString(responseMessage?.ts);
@@ -337,18 +663,78 @@ export class SlackRouteClient {
     };
   }
 
+  private async collectSearchModuleChannels(
+    workspaceKey: string | undefined,
+    count: number
+  ): Promise<unknown[]> {
+    const result: unknown[] = [];
+    let cursor: string | undefined;
+    const browseSessionId = randomUUID();
+
+    for (let index = 0; index < 50; index += 1) {
+      const payload = await this.call(
+        "search.modules.channels",
+        {
+          module: "channels",
+          query: "",
+          page: "0",
+          client_req_id: randomUUID(),
+          browse_session_id: browseSessionId,
+          extracts: "0",
+          highlight: "0",
+          cursor: cursor ?? "*",
+          extra_message_data: "0",
+          no_user_profile: "1",
+          count: String(Math.max(1, Math.min(500, count))),
+          file_title_only: "false",
+          query_rewrite_disabled: "false",
+          include_files_shares: "1",
+          browse: "standard",
+          search_context: "desktop_channel_browser",
+          max_filter_suggestions: "10",
+          sort: "name",
+          sort_dir: "asc",
+          channel_type: "",
+          exclude_my_channels: "0",
+          search_only_my_channels: "false",
+          recommend_source: "channel-browser",
+          _x_reason: "browser-query",
+          _x_mode: "online",
+          _x_sonic: "true",
+          _x_app_name: "client",
+        },
+        workspaceKey
+      );
+
+      result.push(...asArray(payload.items));
+      const pagination = asRecord(payload.pagination);
+      const nextCursor = asString(pagination?.next_cursor);
+      if (!nextCursor) {
+        break;
+      }
+      cursor = nextCursor;
+    }
+
+    return result;
+  }
+
   private async collectPaginated(
     endpoint: string,
     field: string,
-    baseParams: Record<string, string>
+    baseParams: Record<string, string>,
+    workspaceKey?: string
   ): Promise<unknown[]> {
     const result: unknown[] = [];
     let cursor: string | undefined;
     for (let index = 0; index < 50; index += 1) {
-      const payload = await this.call(endpoint, {
-        ...baseParams,
-        cursor,
-      });
+      const payload = await this.call(
+        endpoint,
+        {
+          ...baseParams,
+          cursor,
+        },
+        workspaceKey
+      );
       result.push(...asArray(payload[field]));
       const metadata = asRecord(payload.response_metadata);
       const nextCursor = asString(metadata?.next_cursor);
@@ -362,9 +748,17 @@ export class SlackRouteClient {
 
   private async call(
     endpoint: string,
-    params: Record<string, string | undefined>
+    params: Record<string, string | undefined>,
+    workspaceKey?: string
   ): Promise<JsonRecord> {
-    const auth = this.authProvider.resolve();
+    if (!this.requestEnabled) {
+      throw new SlackRouteError({
+        kind: "not_supported",
+        mode: this.mode,
+        message: `slack api request is disabled (${this.mode})`,
+      });
+    }
+    const auth = this.authProvider.resolve(workspaceKey);
     if (!auth) {
       throw new SlackRouteError({
         kind: "auth_invalid",
@@ -373,31 +767,14 @@ export class SlackRouteClient {
       });
     }
 
-    const form = new URLSearchParams();
-    form.set("token", auth.xoxcToken);
-    for (const [key, value] of Object.entries(params)) {
-      if (value === undefined) {
-        continue;
-      }
-      form.set(key, value);
-    }
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => {
-      controller.abort();
-    }, this.timeoutMs);
-
-    const url = joinUrl(this.apiBaseUrl, endpoint);
     try {
-      const response = await this.fetchFn(url, {
-        method: "POST",
-        headers: {
-          ...auth.defaultHeaders,
-          "Content-Type": "application/x-www-form-urlencoded",
-          "x-slack-route-mode": this.mode,
-        },
-        body: form.toString(),
-        signal: controller.signal,
+      const response = await this.browserInvoker({
+        mode: this.mode,
+        endpoint,
+        params,
+        workspaceKey,
+        auth,
+        timeoutMs: this.timeoutMs,
       });
 
       if (response.status === 429) {
@@ -408,8 +785,7 @@ export class SlackRouteClient {
         });
       }
 
-      const parsed = (await response.json().catch(() => null)) as unknown;
-      const payload = asRecord(parsed);
+      const payload = asRecord(response.payload);
       if (!payload) {
         throw toRouteError({
           mode: this.mode,
@@ -444,8 +820,6 @@ export class SlackRouteClient {
         mode: this.mode,
         message: error instanceof Error ? error.message : `network error (${this.mode})`,
       });
-    } finally {
-      clearTimeout(timeout);
     }
   }
 }

@@ -3,6 +3,7 @@ import {
   type SlackApiError,
   type SlackAuthResolved,
   type SlackAuthState,
+  type SlackAuthTestResult,
 } from "./types.js";
 
 const DEFAULT_USER_AGENT =
@@ -16,13 +17,30 @@ function normalizeNonEmptyString(value: unknown): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
+function normalizeAuthTest(value: SlackAuthTestResult | undefined): SlackAuthTestResult | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const normalized: SlackAuthTestResult = {
+    teamId: normalizeNonEmptyString(value.teamId),
+    enterpriseId: normalizeNonEmptyString(value.enterpriseId),
+    url: normalizeNonEmptyString(value.url),
+    userId: normalizeNonEmptyString(value.userId),
+  };
+  if (!normalized.teamId && !normalized.enterpriseId && !normalized.url && !normalized.userId) {
+    return undefined;
+  }
+  return normalized;
+}
+
 export type SlackAuthProviderOptions = {
   xoxcToken?: string;
   xoxdToken?: string;
+  workspaceKey?: string;
   userAgent?: string;
   acceptLanguage?: string;
   cookieName?: string;
-  tokenStateProvider?: () => SlackAuthState | null;
+  tokenStateProvider?: (workspaceKey?: string) => SlackAuthState | null;
 };
 
 export class SlackAuthProvider {
@@ -30,12 +48,14 @@ export class SlackAuthProvider {
   private readonly userAgent: string;
   private readonly acceptLanguage: string;
   private readonly cookieName: string;
-  private readonly tokenStateProvider?: () => SlackAuthState | null;
+  private readonly tokenStateProvider?: (workspaceKey?: string) => SlackAuthState | null;
 
   constructor(options: SlackAuthProviderOptions = {}) {
     this.state = {
       xoxcToken: normalizeNonEmptyString(options.xoxcToken),
       xoxdToken: normalizeNonEmptyString(options.xoxdToken),
+      workspaceKey: normalizeNonEmptyString(options.workspaceKey),
+      authTest: undefined,
     };
     this.userAgent = normalizeNonEmptyString(options.userAgent) ?? DEFAULT_USER_AGENT;
     this.acceptLanguage = normalizeNonEmptyString(options.acceptLanguage) ?? "en-US,en;q=0.9";
@@ -43,16 +63,34 @@ export class SlackAuthProvider {
     this.tokenStateProvider = options.tokenStateProvider;
   }
 
-  private readEffectiveState(): SlackAuthState {
-    const cached = this.tokenStateProvider?.() ?? null;
+  private readEffectiveState(workspaceKey?: string): SlackAuthState {
+    const requestedWorkspace = normalizeNonEmptyString(workspaceKey);
+    const cachedByWorkspace = this.tokenStateProvider?.(requestedWorkspace) ?? null;
+    const cachedDefault = requestedWorkspace ? (this.tokenStateProvider?.() ?? null) : null;
     return {
-      xoxcToken: this.state.xoxcToken ?? normalizeNonEmptyString(cached?.xoxcToken),
-      xoxdToken: this.state.xoxdToken ?? normalizeNonEmptyString(cached?.xoxdToken),
+      xoxcToken:
+        this.state.xoxcToken ??
+        normalizeNonEmptyString(cachedByWorkspace?.xoxcToken) ??
+        normalizeNonEmptyString(cachedDefault?.xoxcToken),
+      xoxdToken:
+        this.state.xoxdToken ??
+        normalizeNonEmptyString(cachedByWorkspace?.xoxdToken) ??
+        normalizeNonEmptyString(cachedDefault?.xoxdToken),
+      workspaceKey:
+        requestedWorkspace ??
+        this.state.workspaceKey ??
+        normalizeNonEmptyString(cachedByWorkspace?.workspaceKey) ??
+        normalizeNonEmptyString(cachedDefault?.workspaceKey) ??
+        "global",
+      authTest:
+        normalizeAuthTest(this.state.authTest) ??
+        normalizeAuthTest(cachedByWorkspace?.authTest) ??
+        normalizeAuthTest(cachedDefault?.authTest),
     };
   }
 
-  validate(): SlackApiError | null {
-    const effective = this.readEffectiveState();
+  validate(workspaceKey?: string): SlackApiError | null {
+    const effective = this.readEffectiveState(workspaceKey);
     if (!effective.xoxcToken || !effective.xoxdToken) {
       return createSlackApiError({
         code: "auth_invalid",
@@ -62,17 +100,19 @@ export class SlackAuthProvider {
     return null;
   }
 
-  resolve(): SlackAuthResolved | null {
-    const invalid = this.validate();
+  resolve(workspaceKey?: string): SlackAuthResolved | null {
+    const invalid = this.validate(workspaceKey);
     if (invalid) {
       return null;
     }
-    const effective = this.readEffectiveState();
+    const effective = this.readEffectiveState(workspaceKey);
     const xoxcToken = effective.xoxcToken as string;
     const xoxdToken = effective.xoxdToken as string;
     return {
       xoxcToken,
       xoxdToken,
+      workspaceKey: effective.workspaceKey ?? "global",
+      authTest: normalizeAuthTest(effective.authTest),
       defaultHeaders: {
         Authorization: `Bearer ${xoxcToken}`,
         Cookie: `${this.cookieName}=${xoxdToken}`,

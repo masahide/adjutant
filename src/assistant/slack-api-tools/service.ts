@@ -94,13 +94,21 @@ function normalizeWorkspaceKey(value: string | undefined): string {
 }
 
 export type SlackRouteClientLike = {
-  authTest: () => Promise<SlackAuthTestResult>;
-  listUsers: () => Promise<SlackUser[]>;
-  listChannels: () => Promise<SlackChannel[]>;
-  getUserInfo: (userId: string) => Promise<SlackUser | null>;
-  getChannelInfo: (channelId: string) => Promise<SlackChannel | null>;
-  searchMessages: (query: string, limit?: number) => Promise<{ messages: SlackSearchMessage[] }>;
-  postMessage: (channelId: string, text: string) => Promise<SlackPostMessageResult>;
+  authTest: (workspaceKey?: string) => Promise<SlackAuthTestResult>;
+  listUsers: (workspaceKey?: string) => Promise<SlackUser[]>;
+  listChannels: (workspaceKey?: string) => Promise<SlackChannel[]>;
+  getUserInfo: (userId: string, workspaceKey?: string) => Promise<SlackUser | null>;
+  getChannelInfo: (channelId: string, workspaceKey?: string) => Promise<SlackChannel | null>;
+  searchMessages: (
+    query: string,
+    limit?: number,
+    workspaceKey?: string
+  ) => Promise<{ messages: SlackSearchMessage[] }>;
+  postMessage: (
+    channelId: string,
+    text: string,
+    workspaceKey?: string
+  ) => Promise<SlackPostMessageResult>;
 };
 
 export type SlackApiServiceOptions = {
@@ -145,11 +153,6 @@ export class SlackApiService {
   }): Promise<
     SlackApiResult<{ user_id: string; name: string; source: "memory_cache" | "api_refresh" }>
   > {
-    const authError = this.authProvider.validate();
-    if (authError) {
-      return authError;
-    }
-
     const userId = asString(args.user_id);
     if (!userId) {
       return createSlackApiError({
@@ -174,7 +177,11 @@ export class SlackApiService {
     }
 
     const routingMode = this.resolveRoutingMode(args.routing_mode);
-    const workspaceKey = await this.resolveWorkspaceKey(asString(args.workspace_key));
+    const workspaceKey = this.resolveWorkspaceKey(asString(args.workspace_key));
+    const authError = this.authProvider.validate(workspaceKey);
+    if (authError) {
+      return authError;
+    }
     const modeResult = await this.resolveModeForRead(routingMode, workspaceKey);
     if (!modeResult.ok) {
       return modeResult;
@@ -182,7 +189,7 @@ export class SlackApiService {
 
     const client = this.clientForMode(modeResult.data);
     try {
-      const user = await client.getUserInfo(userId);
+      const user = await client.getUserInfo(userId, workspaceKey);
       if (!user) {
         return createSlackApiError({
           code: "not_found",
@@ -236,11 +243,6 @@ export class SlackApiService {
   }): Promise<
     SlackApiResult<{ channel_id: string; name: string; source: "memory_cache" | "api_refresh" }>
   > {
-    const authError = this.authProvider.validate();
-    if (authError) {
-      return authError;
-    }
-
     const channelId = asString(args.channel_id);
     if (!channelId) {
       return createSlackApiError({
@@ -264,7 +266,11 @@ export class SlackApiService {
     }
 
     const routingMode = this.resolveRoutingMode(args.routing_mode);
-    const workspaceKey = await this.resolveWorkspaceKey(asString(args.workspace_key));
+    const workspaceKey = this.resolveWorkspaceKey(asString(args.workspace_key));
+    const authError = this.authProvider.validate(workspaceKey);
+    if (authError) {
+      return authError;
+    }
     const modeResult = await this.resolveModeForRead(routingMode, workspaceKey);
     if (!modeResult.ok) {
       return modeResult;
@@ -272,7 +278,7 @@ export class SlackApiService {
 
     const client = this.clientForMode(modeResult.data);
     try {
-      const channel = await client.getChannelInfo(channelId);
+      const channel = await client.getChannelInfo(channelId, workspaceKey);
       if (!channel) {
         return createSlackApiError({
           code: "not_found",
@@ -322,14 +328,13 @@ export class SlackApiService {
     routing_mode?: unknown;
     workspace_key?: unknown;
   }): Promise<SlackApiResult<{ users: SlackUser[] }>> {
-    const authError = this.authProvider.validate();
+    await this.ensureCacheLoaded();
+    const routingMode = this.resolveRoutingMode(args.routing_mode);
+    const workspaceKey = this.resolveWorkspaceKey(asString(args.workspace_key));
+    const authError = this.authProvider.validate(workspaceKey);
     if (authError) {
       return authError;
     }
-
-    await this.ensureCacheLoaded();
-    const routingMode = this.resolveRoutingMode(args.routing_mode);
-    const workspaceKey = await this.resolveWorkspaceKey(asString(args.workspace_key));
     const modeResult = await this.resolveModeForRead(routingMode, workspaceKey);
     if (!modeResult.ok) {
       return modeResult;
@@ -338,7 +343,7 @@ export class SlackApiService {
     const mode = modeResult.data;
     const client = this.clientForMode(mode);
     try {
-      const users = await client.listUsers();
+      const users = await client.listUsers(workspaceKey);
       await this.nameCacheRepository.updateUsers(
         users.map((user) => ({
           teamId: user.teamId,
@@ -369,14 +374,13 @@ export class SlackApiService {
     routing_mode?: unknown;
     workspace_key?: unknown;
   }): Promise<SlackApiResult<{ channels: SlackChannel[] }>> {
-    const authError = this.authProvider.validate();
+    await this.ensureCacheLoaded();
+    const routingMode = this.resolveRoutingMode(args.routing_mode);
+    const workspaceKey = this.resolveWorkspaceKey(asString(args.workspace_key));
+    const authError = this.authProvider.validate(workspaceKey);
     if (authError) {
       return authError;
     }
-
-    await this.ensureCacheLoaded();
-    const routingMode = this.resolveRoutingMode(args.routing_mode);
-    const workspaceKey = await this.resolveWorkspaceKey(asString(args.workspace_key));
     const modeResult = await this.resolveModeForRead(routingMode, workspaceKey);
     if (!modeResult.ok) {
       return modeResult;
@@ -385,7 +389,7 @@ export class SlackApiService {
     const mode = modeResult.data;
     const client = this.clientForMode(mode);
     try {
-      const channels = await client.listChannels();
+      const channels = await client.listChannels(workspaceKey);
       await this.nameCacheRepository.updateChannels(
         channels.map((channel) => ({
           teamId: channel.teamId,
@@ -418,11 +422,6 @@ export class SlackApiService {
     routing_mode?: unknown;
     workspace_key?: unknown;
   }): Promise<SlackApiResult<{ messages: SlackSearchMessage[] }>> {
-    const authError = this.authProvider.validate();
-    if (authError) {
-      return authError;
-    }
-
     const query = asString(args.query);
     if (!query) {
       return createSlackApiError({
@@ -433,13 +432,17 @@ export class SlackApiService {
 
     const limit = asPositiveInt(args.limit) ?? 20;
     const routingMode = this.resolveRoutingMode(args.routing_mode);
-    const workspaceKey = await this.resolveWorkspaceKey(asString(args.workspace_key));
+    const workspaceKey = this.resolveWorkspaceKey(asString(args.workspace_key));
+    const authError = this.authProvider.validate(workspaceKey);
+    if (authError) {
+      return authError;
+    }
     const executed = await this.fallbackExecutor.runWithFallback({
       routingMode,
       workspaceKey,
       operationName: "search_messages",
       probeMode: async () => this.probeMode(workspaceKey),
-      execute: async (mode) => this.clientForMode(mode).searchMessages(query, limit),
+      execute: async (mode) => this.clientForMode(mode).searchMessages(query, limit, workspaceKey),
     });
 
     if (!executed.ok) {
@@ -459,11 +462,6 @@ export class SlackApiService {
     routing_mode?: unknown;
     workspace_key?: unknown;
   }): Promise<SlackApiResult<SlackPostMessageResult>> {
-    const authError = this.authProvider.validate();
-    if (authError) {
-      return authError;
-    }
-
     const channelId = asString(args.channel_id);
     if (!channelId) {
       return createSlackApiError({
@@ -481,13 +479,17 @@ export class SlackApiService {
     }
 
     const routingMode = this.resolveRoutingMode(args.routing_mode);
-    const workspaceKey = await this.resolveWorkspaceKey(asString(args.workspace_key));
+    const workspaceKey = this.resolveWorkspaceKey(asString(args.workspace_key));
+    const authError = this.authProvider.validate(workspaceKey);
+    if (authError) {
+      return authError;
+    }
     const executed = await this.fallbackExecutor.runWithFallback({
       routingMode,
       workspaceKey,
       operationName: "post_message",
       probeMode: async () => this.probeMode(workspaceKey),
-      execute: async (mode) => this.clientForMode(mode).postMessage(channelId, text),
+      execute: async (mode) => this.clientForMode(mode).postMessage(channelId, text, workspaceKey),
     });
 
     if (!executed.ok) {
@@ -516,55 +518,20 @@ export class SlackApiService {
     await this.loadPromise;
   }
 
-  private async resolveWorkspaceKey(inputWorkspaceKey: string | undefined): Promise<string> {
+  private resolveWorkspaceKey(inputWorkspaceKey: string | undefined): string {
     const explicit = asString(inputWorkspaceKey);
     if (explicit) {
       return explicit;
     }
-
-    try {
-      const teamInfo = await this.teamClient.authTest();
-      return (
-        asString(teamInfo.enterpriseId) ??
-        asString(teamInfo.teamId) ??
-        normalizeWorkspaceKey(undefined)
-      );
-    } catch {
-      try {
-        const enterpriseInfo = await this.enterpriseClient.authTest();
-        return (
-          asString(enterpriseInfo.enterpriseId) ??
-          asString(enterpriseInfo.teamId) ??
-          normalizeWorkspaceKey(undefined)
-        );
-      } catch {
-        return normalizeWorkspaceKey(undefined);
-      }
-    }
+    const resolved = this.authProvider.resolve();
+    return normalizeWorkspaceKey(asString(resolved?.workspaceKey));
   }
 
   private async probeMode(workspaceKey: string): Promise<SlackMode> {
-    try {
-      await this.teamClient.authTest();
-      await this.routeStore.set({ workspaceKey, mode: "team", decidedAt: this.now() });
-      return "team";
-    } catch (teamError) {
-      const teamRouteError =
-        teamError instanceof SlackRouteError
-          ? teamError
-          : new SlackRouteError({
-              kind: "api_error",
-              mode: "team",
-              message: teamError instanceof Error ? teamError.message : String(teamError),
-            });
-      if (teamRouteError.kind === "auth_invalid" || teamRouteError.kind === "rate_limited") {
-        throw teamRouteError;
-      }
-
-      await this.enterpriseClient.authTest();
-      await this.routeStore.set({ workspaceKey, mode: "enterprise", decidedAt: this.now() });
-      return "enterprise";
-    }
+    const auth = await this.teamClient.authTest(workspaceKey);
+    const mode: SlackMode = auth.enterpriseId ? "enterprise" : "team";
+    await this.routeStore.set({ workspaceKey, mode, decidedAt: this.now() });
+    return mode;
   }
 
   private async resolveModeForRead(

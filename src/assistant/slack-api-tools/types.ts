@@ -42,11 +42,15 @@ export type SlackApiResult<T> = SlackApiSuccess<T> | SlackApiError;
 export type SlackAuthState = {
   xoxcToken?: string;
   xoxdToken?: string;
+  workspaceKey?: string;
+  authTest?: SlackAuthTestResult;
 };
 
 export type SlackAuthResolved = {
   xoxcToken: string;
   xoxdToken: string;
+  workspaceKey: string;
+  authTest?: SlackAuthTestResult;
   defaultHeaders: Record<string, string>;
 };
 

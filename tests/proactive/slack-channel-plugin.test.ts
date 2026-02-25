@@ -112,7 +112,7 @@ describe("slack-channel-plugin", () => {
     assert.equal(emitted[0]?.channelId, "slack");
     assert.equal(emitted[0]?.accountId, "acc-1");
     assert.equal(emitted[0]?.event.meta?.account_id, "acc-1");
-    assert.equal(written[0]?.meta?.account_id, "acc-1");
+    assert.equal(written[0]?.meta?.account_id, "_pending");
     assert.equal(
       statusHistory.some((snapshot) => snapshot.connected === true),
       true

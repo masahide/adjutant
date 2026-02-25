@@ -459,48 +459,48 @@ sequenceDiagram
 
 ### Phase 1 永続化ストアと auth.test ワーカー実装
 
-- [ ] Test `SlackAuthTokenStore` の失敗テスト作成（read/write/破損JSON/merge）
-- [ ] Impl `SlackAuthTokenStore` 実装（`_pending`/account load/save/merge/promote/permissions）
-- [ ] Test account_id 決定ロジック（`enterprise_id` 優先、`team_id` fallback、両方欠落時エラー）を追加
-- [ ] Test `_pending` から account ストアへの昇格と再起動後再昇格のテストを追加
-- [ ] Test pair揃い時 enqueue、in-flight抑止、backoff の失敗テスト作成
-- [ ] Impl `SlackAuthProbeWorker` 実装と registry 連携
-- [ ] Refactor status遷移（pending/ok/invalid_auth/...）と registry の重複ロジックを統一
-- [ ] Integration 起動時 load・snapshot 同期・probe 成功/失敗反映テスト追加
-- [ ] Docs `doc/spec.md` と `README.md` の保存仕様/再試行契約更新
+- [x] Test `SlackAuthTokenStore` の失敗テスト作成（read/write/破損JSON/merge）
+- [x] Impl `SlackAuthTokenStore` 実装（`_pending`/account load/save/merge/promote/permissions）
+- [x] Test account_id 決定ロジック（`enterprise_id` 優先、`team_id` fallback、両方欠落時エラー）を追加
+- [x] Test `_pending` から account ストアへの昇格と再起動後再昇格のテストを追加
+- [x] Test pair揃い時 enqueue、in-flight抑止、backoff の失敗テスト作成
+- [x] Impl `SlackAuthProbeWorker` 実装と registry 連携
+- [x] Refactor status遷移（pending/ok/invalid_auth/...）と registry の重複ロジックを統一
+- [x] Integration 起動時 load・snapshot 同期・probe 成功/失敗反映テスト追加
+- [x] Docs `doc/spec.md` と `README.md` の保存仕様/再試行契約更新
 
 ### Phase 2 tool_hub 連携と workspace_key 解決
 
-- [ ] Test `workspace_key` 指定時の token 解決テスト作成（auth-provider/service）
-- [ ] Impl `SlackAuthProvider`/`SlackRouteClient`/`SlackApiService` を workspace対応
-- [ ] Refactor CDP由来 token のみを前提とした resolve 責務分離
-- [ ] Integration `search_messages/post_message` の workspace 指定あり/なしテスト追加
-- [ ] Docs `workspace_key` の意味（route pin + token解決）を明文化
+- [x] Test `workspace_key` 指定時の token 解決テスト作成（auth-provider/service）
+- [x] Impl `SlackAuthProvider`/`SlackRouteClient`/`SlackApiService` を workspace対応
+- [x] Refactor CDP由来 token のみを前提とした resolve 責務分離
+- [x] Integration `search_messages/post_message` の workspace 指定あり/なしテスト追加
+- [x] Docs `workspace_key` の意味（route pin + token解決）を明文化
 
 ### Phase 3 統合と検証
 
-- [ ] 全体テスト実行（`pnpm check`）
-- [ ] エッジケース確認（store破損、token失効、network断）
-- [ ] ログ監査（token 生値非出力、error code 可観測性）
-- [ ] 最終ドキュメント整合（spec/README/plan）
+- [x] 全体テスト実行（`pnpm check`）
+- [x] エッジケース確認（store破損、token失効、network断）
+- [x] ログ監査（token 生値非出力、error code 可観測性）
+- [x] 最終ドキュメント整合（spec/README/plan）
 
 ## 8. 完了の定義 Definition of Done
 
 ### 8.1 機能DoD Functional DoD
 
-- [ ] 受け入れ条件がすべて満たされている
-- [ ] 再起動後の token 復元と `workspace_key` 解決が機能する
-- [ ] `auth.test` 結果が永続化され、alias 更新が反映される
-- [ ] account_id が `enterprise_id ?? team_id` ルールで決定される
-- [ ] `_pending` 保存と account 昇格が期待どおり動作する
-- [ ] 既知の制約がドキュメント化されている
+- [x] 受け入れ条件がすべて満たされている
+- [x] 再起動後の token 復元と `workspace_key` 解決が機能する
+- [x] `auth.test` 結果が永続化され、alias 更新が反映される
+- [x] account_id が `enterprise_id ?? team_id` ルールで決定される
+- [x] `_pending` 保存と account 昇格が期待どおり動作する
+- [x] 既知の制約がドキュメント化されている
 
 ### 8.2 品質DoD Quality DoD
 
-- [ ] 追加/更新した全テストがパスしている
-- [ ] `pnpm check` が成功している
-- [ ] token 生値のログ出力が発生しない
-- [ ] 主要変更が `doc/spec.md` と `README.md` に反映されている
+- [x] 追加/更新した全テストがパスしている
+- [x] `pnpm check` が成功している
+- [x] token 生値のログ出力が発生しない
+- [x] 主要変更が `doc/spec.md` と `README.md` に反映されている
 
 ## 9. 懸念事項と未確定事項 Concerns and Questions
 

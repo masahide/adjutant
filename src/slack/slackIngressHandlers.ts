@@ -7,6 +7,7 @@ import type { ResponseBodyReader } from "./responseBodyReader.js";
 import type { SlackResponseProjector } from "./responseProjector.js";
 import type { SlackDebug } from "./slackDebug.js";
 import type { SlackAuthTokenCacheSnapshot } from "./slackAuthTokenCache.js";
+import { resolveSlackWorkspaceKey } from "./slackAuthTokenCache.js";
 import { SlackIngressRequestParser } from "./slackIngressRequestParser.js";
 import { SlackResponseCacheUpdater } from "./slackResponseCacheUpdater.js";
 import { SlackWsNormalizer } from "./slackWsNormalizer.js";
@@ -171,11 +172,11 @@ export class SlackIngressHandlers {
     const { url, payload } = parsed;
 
     if (url.pathname.endsWith("/api/chat.postMessage")) {
-      return this.handlePostMessageRequest(payload, event.frameId);
+      return this.handlePostMessageRequest(payload, url.toString(), event.frameId);
     }
 
     if (url.pathname.startsWith("/api/reactions.")) {
-      return this.handleReactionRequest(payload, url.pathname, event.frameId);
+      return this.handleReactionRequest(payload, url.pathname, url.toString(), event.frameId);
     }
 
     return [];
@@ -210,6 +211,7 @@ export class SlackIngressHandlers {
 
   private async handlePostMessageRequest(
     payload: Record<string, unknown>,
+    requestUrl: string,
     frameId?: string
   ): Promise<NormalizedEvent[]> {
     const channelId = typeof payload.channel === "string" ? payload.channel : "";
@@ -271,12 +273,18 @@ export class SlackIngressHandlers {
       }
     }
 
-    return [messageEvent];
+    return [
+      this.attachWorkspaceMeta(messageEvent, {
+        teamId,
+        workspaceKey: resolveSlackWorkspaceKey(requestUrl),
+      }),
+    ];
   }
 
   private async handleReactionRequest(
     payload: Record<string, unknown>,
     pathname: string,
+    requestUrl: string,
     frameId?: string
   ): Promise<NormalizedEvent[]> {
     const item = this.asRecord(payload.item);
@@ -353,7 +361,12 @@ export class SlackIngressHandlers {
       },
       { now: this.deps.now(), timezone: this.deps.timezone }
     );
-    return [reactionEvent];
+    return [
+      this.attachWorkspaceMeta(reactionEvent, {
+        teamId,
+        workspaceKey: resolveSlackWorkspaceKey(requestUrl),
+      }),
+    ];
   }
 
   private buildReactionDomCandidate(value: Record<string, unknown>): ReactionDomCandidate | null {
@@ -411,6 +424,24 @@ export class SlackIngressHandlers {
     const epochSeconds = Math.floor(now.getTime() / 1000);
     const millis = now.getMilliseconds();
     return `${epochSeconds}.${String(millis).padStart(3, "0")}000`;
+  }
+
+  private attachWorkspaceMeta(
+    event: NormalizedEvent,
+    input: { teamId?: string; workspaceKey?: string }
+  ): NormalizedEvent {
+    const teamId = this.asString(input.teamId);
+    const workspaceKeyFromInput = this.asString(input.workspaceKey);
+    const workspaceKey =
+      workspaceKeyFromInput && workspaceKeyFromInput !== "global" ? workspaceKeyFromInput : teamId;
+    return {
+      ...event,
+      meta: {
+        ...(event.meta ?? {}),
+        ...(workspaceKey ? { workspace_key: workspaceKey } : {}),
+        ...(teamId ? { team_id: teamId } : {}),
+      },
+    };
   }
 
   private asString(value: unknown): string | undefined {

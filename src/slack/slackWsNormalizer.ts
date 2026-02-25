@@ -162,7 +162,14 @@ export class SlackWsNormalizer {
         title,
       });
     }
-    return normalized;
+    return {
+      ...normalized,
+      meta: {
+        ...(normalized.meta ?? {}),
+        ...(teamId ? { team_id: teamId } : {}),
+        ...(teamId ? { workspace_key: teamId } : {}),
+      },
+    };
   }
 
   private collectNotificationCandidates(value: unknown): Record<string, unknown>[] {

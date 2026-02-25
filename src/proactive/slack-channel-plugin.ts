@@ -6,8 +6,13 @@ import { resolveEndpoint, type CdpEndpoint } from "../runtime/config.js";
 import { computeFullJitterDelayMs } from "../runtime/retry-policy.js";
 import { connectToSlackPage, type SlackCdpClient } from "../runtime/slackConnection.js";
 import { SlackAdapter } from "../slack/adapter.js";
-import { syncSlackAuthTokenSnapshots } from "../slack/slackAuthTokenRegistry.js";
+import {
+  configureSlackAuthTokenRegistry,
+  syncSlackAuthTokenSnapshots,
+} from "../slack/slackAuthTokenRegistry.js";
 import type { SlackAuthTokenCacheSnapshot } from "../slack/slackAuthTokenCache.js";
+import { PendingDataPromoter } from "../slack/pendingDataPromoter.js";
+import { SLACK_PENDING_ACCOUNT_ID } from "../slack/slackAuthTokenStore.js";
 import type { ChannelGatewayContext, ChannelIngestionPlugin } from "./channel-plugin.js";
 import { join } from "node:path";
 
@@ -43,6 +48,7 @@ type SlackChannelPluginOptions = {
   sleep?: (ms: number) => Promise<void>;
   nowMs?: () => number;
   random?: () => number;
+  authTestEnabled?: boolean;
   onWarn?: (message: string, meta?: Record<string, unknown>) => void;
 };
 
@@ -157,8 +163,8 @@ function createDefaultAdapterFactory(
   return (input) => {
     const cacheBase = resolveSlackCacheBaseDir({
       dataDir: options.dataDir,
-      accountId: input.accountId,
-      fallbackAccountId: options.defaultAccountId ?? "default",
+      accountId: SLACK_PENDING_ACCOUNT_ID,
+      fallbackAccountId: SLACK_PENDING_ACCOUNT_ID,
     });
     return new SlackAdapter({
       client: input.client,
@@ -174,6 +180,24 @@ function createDefaultAdapterFactory(
 export function createSlackChannelPlugin(
   options: SlackChannelPluginOptions
 ): ChannelIngestionPlugin<unknown> {
+  const pendingPromoter = new PendingDataPromoter({
+    dataDir: options.dataDir,
+    onWarn: options.onWarn,
+  });
+  configureSlackAuthTokenRegistry({
+    dataDir: options.dataDir,
+    authTestEnabled: options.authTestEnabled === true,
+    onWarn: options.onWarn,
+    onWorkspacePromoted: async (event) => {
+      await pendingPromoter.promoteByWorkspace({
+        workspaceKey: event.workspaceKey,
+        aliases: event.aliases,
+        accountId: event.accountId,
+        teamId: event.teamId,
+      });
+    },
+  });
+
   const pluginId = options.id?.trim() || "slack";
   const channelId = options.channelId?.trim() || "slack";
   const timezone = options.timezone?.trim() || "Asia/Tokyo";
@@ -189,7 +213,7 @@ export function createSlackChannelPlugin(
   const writer = (
     options.createWriter ??
     ((dataDir, defaultAccountId) => new JsonlWriter({ dataDir, defaultAccountId }))
-  )(options.dataDir, normalizeAccountId(options.defaultAccountId, "default"));
+  )(options.dataDir, SLACK_PENDING_ACCOUNT_ID);
   const sleep =
     options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const nowMs = options.nowMs ?? (() => Date.now());
@@ -243,16 +267,16 @@ export function createSlackChannelPlugin(
           const snapshots = readTokenSnapshots(adapter);
           if (snapshots.length > 0) {
             syncSlackAuthTokenSnapshots({
-              accountId: ctx.accountId,
               snapshots,
             });
           }
-          const withAccount = attachAccountId(event, ctx.accountId);
-          await writer.append(withAccount);
+          const forStorage = attachAccountId(event, SLACK_PENDING_ACCOUNT_ID);
+          await writer.append(forStorage);
+          const forEmit = attachAccountId(event, ctx.accountId);
           await ctx.emit({
             accountId: ctx.accountId,
             channelId,
-            event: withAccount,
+            event: forEmit,
           });
         });
         retryCount = 0;

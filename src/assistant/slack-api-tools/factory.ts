@@ -1,25 +1,21 @@
 import { join, resolve } from "node:path";
 import { parseBooleanEnv } from "../../runtime/env-parsers.js";
-import {
-  normalizeAccountId,
-  resolveDefaultDataDir,
-  resolveSlackCacheBaseDir,
-} from "../../runtime/data-paths.js";
+import { resolveDefaultDataDir, resolveSlackCacheBaseDir } from "../../runtime/data-paths.js";
+import { resolveEndpoint } from "../../runtime/config.js";
 import { resolveAdjutantStateDir } from "../session-paths.js";
 import { SlackNameCacheRepository } from "../../slack/nameCacheRepository.js";
-import { resolveSlackAuthTokensFromCache } from "../../slack/slackAuthTokenRegistry.js";
+import {
+  configureSlackAuthTokenRegistry,
+  resolveSlackAuthTokensFromCache,
+} from "../../slack/slackAuthTokenRegistry.js";
+import { SLACK_PENDING_ACCOUNT_ID } from "../../slack/slackAuthTokenStore.js";
 import { SlackAuthProvider } from "./auth-provider.js";
-import { SlackRouteClient } from "./route-client.js";
+import { SlackRouteClient, type SlackBrowserApiInvoker } from "./route-client.js";
 import { WorkspaceRoutePinStore } from "./workspace-route-pin-store.js";
 import { SlackFallbackExecutor } from "./fallback-executor.js";
 import { createSlackDynamicProvider } from "./provider.js";
-import { normalizeSlackRoutingMode } from "./types.js";
+import { normalizeSlackRoutingMode, type SlackRouteStore } from "./types.js";
 import { SlackApiService } from "./service.js";
-
-function readString(value: string | undefined, fallback: string): string {
-  const trimmed = value?.trim();
-  return trimmed && trimmed.length > 0 ? trimmed : fallback;
-}
 
 export function isSlackApiToolsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return parseBooleanEnv(env.ADJUTANT_SLACK_API_ENABLED, true);
@@ -30,26 +26,42 @@ export type CreateSlackDynamicProviderFromEnvOptions = {
   fetchFn?: typeof fetch;
   dataDir?: string;
   now?: () => Date;
+  browserInvoker?: SlackBrowserApiInvoker;
 };
 
 export function createSlackDynamicProviderFromEnv(
   options: CreateSlackDynamicProviderFromEnvOptions = {}
 ) {
   const env = options.env ?? process.env;
+  const slackApiRequestEnabled = parseBooleanEnv(env.ADJUTANT_SLACK_API_REQUEST_ENABLED, true);
+  const slackAuthTestEnabled = parseBooleanEnv(env.ADJUTANT_SLACK_AUTH_TEST_ENABLED, true);
+  const endpoint = resolveEndpoint();
+  const cdpHost = env.ADJUTANT_SLACK_CDP_HOST?.trim() || endpoint.host;
+  const cdpPortRaw = env.ADJUTANT_SLACK_CDP_PORT?.trim();
+  const cdpPort = Number.isFinite(Number(cdpPortRaw))
+    ? Math.max(1, Math.floor(Number(cdpPortRaw)))
+    : endpoint.port;
   const dataDir =
     options.dataDir?.trim() ??
     (env.DATA_DIR?.trim()
       ? resolve(env.DATA_DIR)
       : resolveDefaultDataDir(resolveAdjutantStateDir({ env })));
-  const accountId = normalizeAccountId(env.ADJUTANT_SLACK_ACCOUNT_ID, "default");
-  const slackCacheBaseDir = resolveSlackCacheBaseDir({ dataDir, accountId });
+  const slackCacheBaseDir = resolveSlackCacheBaseDir({
+    dataDir,
+    accountId: SLACK_PENDING_ACCOUNT_ID,
+    fallbackAccountId: SLACK_PENDING_ACCOUNT_ID,
+  });
+
+  configureSlackAuthTokenRegistry({
+    dataDir,
+    authTestEnabled: slackAuthTestEnabled,
+    fetchFn: options.fetchFn,
+  });
 
   const authProvider = new SlackAuthProvider({
-    xoxcToken: env.ADJUTANT_SLACK_XOXC_TOKEN,
-    xoxdToken: env.ADJUTANT_SLACK_XOXD_TOKEN,
-    tokenStateProvider: () => {
+    tokenStateProvider: (workspaceKey) => {
       const cached = resolveSlackAuthTokensFromCache({
-        accountId,
+        workspaceKey,
       });
       if (!cached) {
         return null;
@@ -57,40 +69,40 @@ export function createSlackDynamicProviderFromEnv(
       return {
         xoxcToken: cached.xoxcToken,
         xoxdToken: cached.xoxdToken,
+        workspaceKey: cached.workspaceKey,
+        authTest: cached.authTest,
       };
     },
   });
 
-  const requestTimeoutMs = Math.max(
-    1,
-    Number.isFinite(Number(env.ADJUTANT_SLACK_API_TIMEOUT_MS))
-      ? Math.floor(Number(env.ADJUTANT_SLACK_API_TIMEOUT_MS))
-      : 10_000
-  );
-
   const teamClient = new SlackRouteClient({
     mode: "team",
-    apiBaseUrl: readString(env.ADJUTANT_SLACK_TEAM_API_BASE_URL, "https://slack.com/api"),
     authProvider,
-    fetchFn: options.fetchFn,
-    timeoutMs: requestTimeoutMs,
+    requestEnabled: slackApiRequestEnabled,
+    browserInvoker: options.browserInvoker,
+    cdpHost,
+    cdpPort,
   });
 
   const enterpriseClient = new SlackRouteClient({
     mode: "enterprise",
-    apiBaseUrl: readString(env.ADJUTANT_SLACK_ENTERPRISE_API_BASE_URL, "https://slack.com/api"),
     authProvider,
-    fetchFn: options.fetchFn,
-    timeoutMs: requestTimeoutMs,
+    requestEnabled: slackApiRequestEnabled,
+    browserInvoker: options.browserInvoker,
+    cdpHost,
+    cdpPort,
   });
 
-  const routeStore = new WorkspaceRoutePinStore({
-    filePath: readString(
-      env.ADJUTANT_SLACK_ROUTE_PIN_PATH,
-      join(slackCacheBaseDir, "workspace-route-pins.json")
-    ),
-    now: options.now,
-  });
+  const routePinPathOverride = asNonEmptyString(env.ADJUTANT_SLACK_ROUTE_PIN_PATH);
+  const routeStore = routePinPathOverride
+    ? new WorkspaceRoutePinStore({
+        filePath: routePinPathOverride,
+        now: options.now,
+      })
+    : createCompositeRouteStore({
+        dataDir,
+        now: options.now,
+      });
 
   const fallbackExecutor = new SlackFallbackExecutor({
     routeStore,
@@ -118,4 +130,71 @@ export function createSlackDynamicProviderFromEnv(
   });
 
   return createSlackDynamicProvider(service);
+}
+
+function asNonEmptyString(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : undefined;
+}
+
+function resolveRoutePinPath(dataDir: string, accountId: string): string {
+  return join(
+    resolveSlackCacheBaseDir({
+      dataDir,
+      accountId,
+      fallbackAccountId: SLACK_PENDING_ACCOUNT_ID,
+    }),
+    "workspace-route-pins.json"
+  );
+}
+
+function createCompositeRouteStore(input: { dataDir: string; now?: () => Date }): SlackRouteStore {
+  const pendingStore = new WorkspaceRoutePinStore({
+    filePath: resolveRoutePinPath(input.dataDir, SLACK_PENDING_ACCOUNT_ID),
+    now: input.now,
+  });
+  const byAccount = new Map<string, WorkspaceRoutePinStore>();
+
+  const accountStoreFor = (accountId: string): WorkspaceRoutePinStore => {
+    const key = accountId.trim();
+    const cached = byAccount.get(key);
+    if (cached) {
+      return cached;
+    }
+    const created = new WorkspaceRoutePinStore({
+      filePath: resolveRoutePinPath(input.dataDir, key),
+      now: input.now,
+    });
+    byAccount.set(key, created);
+    return created;
+  };
+
+  const resolveAccountStore = (workspaceKey: string): WorkspaceRoutePinStore | null => {
+    const accountId = resolveSlackAuthTokensFromCache({ workspaceKey })?.accountId;
+    if (!accountId) {
+      return null;
+    }
+    return accountStoreFor(accountId);
+  };
+
+  return {
+    get: async (workspaceKey) => {
+      const accountStore = resolveAccountStore(workspaceKey);
+      if (accountStore) {
+        const fromAccount = await accountStore.get(workspaceKey);
+        if (fromAccount) {
+          return fromAccount;
+        }
+      }
+      return pendingStore.get(workspaceKey);
+    },
+    set: async (pin) => {
+      const accountStore = resolveAccountStore(pin.workspaceKey);
+      if (accountStore) {
+        await accountStore.set(pin);
+        return;
+      }
+      await pendingStore.set(pin);
+    },
+  };
 }

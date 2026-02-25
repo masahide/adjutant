@@ -42,6 +42,7 @@ describe("SlackAuthProvider", () => {
       tokenStateProvider: () => ({
         xoxcToken: "xoxc-from-cache",
         xoxdToken: "xoxd-from-cache",
+        workspaceKey: "T123",
       }),
     });
 
@@ -50,5 +51,52 @@ describe("SlackAuthProvider", () => {
     assert.ok(resolved);
     assert.equal(resolved?.defaultHeaders.Authorization, "Bearer xoxc-from-cache");
     assert.equal(resolved?.defaultHeaders.Cookie, "d=xoxd-from-cache");
+    assert.equal(resolved?.workspaceKey, "T123");
+  });
+
+  it("workspace_key 指定時は tokenStateProvider(workspaceKey) を優先する", () => {
+    const provider = new SlackAuthProvider({
+      tokenStateProvider: (workspaceKey) => {
+        if (workspaceKey === "TTEAM") {
+          return {
+            xoxcToken: "xoxc-team",
+            xoxdToken: "xoxd-team",
+            workspaceKey: "TTEAM",
+          };
+        }
+        return {
+          xoxcToken: "xoxc-default",
+          xoxdToken: "xoxd-default",
+          workspaceKey: "TDEFAULT",
+        };
+      },
+    });
+
+    assert.equal(provider.validate("TTEAM"), null);
+    const resolved = provider.resolve("TTEAM");
+    assert.ok(resolved);
+    assert.equal(resolved?.defaultHeaders.Authorization, "Bearer xoxc-team");
+    assert.equal(resolved?.defaultHeaders.Cookie, "d=xoxd-team");
+    assert.equal(resolved?.workspaceKey, "TTEAM");
+  });
+
+  it("tokenStateProvider から authTest 情報を引き継ぐ", () => {
+    const provider = new SlackAuthProvider({
+      tokenStateProvider: () => ({
+        xoxcToken: "xoxc-from-cache",
+        xoxdToken: "xoxd-from-cache",
+        workspaceKey: "T123",
+        authTest: {
+          teamId: "T123",
+          enterpriseId: "E999",
+          url: "https://example.slack.com/",
+          userId: "U111",
+        },
+      }),
+    });
+
+    const resolved = provider.resolve();
+    assert.equal(resolved?.authTest?.teamId, "T123");
+    assert.equal(resolved?.authTest?.enterpriseId, "E999");
   });
 });

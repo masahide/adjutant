@@ -9,7 +9,14 @@ export {
   type SlackApiServiceOptions,
   type SlackRouteClientLike,
 } from "./service.js";
-export { SlackRouteClient, SlackRouteError, type SlackRouteClientOptions } from "./route-client.js";
+export {
+  SlackRouteClient,
+  SlackRouteError,
+  type SlackRouteClientOptions,
+  type SlackBrowserApiInvoker,
+  type SlackBrowserApiCallInput,
+  type SlackBrowserApiCallResult,
+} from "./route-client.js";
 export { SlackFallbackExecutor, type SlackFallbackExecutorOptions } from "./fallback-executor.js";
 export {
   WorkspaceRoutePinStore,
