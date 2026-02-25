@@ -15,20 +15,29 @@ import type {
   SlackSearchMessage,
   SlackUser,
 } from "./types.js";
+import {
+  type JsonRecord,
+  SlackApiSchemaError,
+  parseClientCounts,
+  parseClientUserBoot,
+  parseConversationInfo,
+  parseConversationsGenericInfo,
+  parseConversationsList,
+  parseImList,
+  parsePostMessage,
+  parseSearchMessages,
+  parseSearchModulesChannels,
+  parseUserInfo,
+  parseUsersList,
+} from "./response-parsers.js";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
-
-type JsonRecord = Record<string, unknown>;
 
 function asRecord(value: unknown): JsonRecord | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return null;
   }
   return value as JsonRecord;
-}
-
-function asArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
 }
 
 function asString(value: unknown): string | undefined {
@@ -148,6 +157,20 @@ function toRouteError(input: {
   });
 }
 
+function toSchemaRouteError(
+  mode: SlackMode,
+  error: SlackApiSchemaError,
+  status?: number
+): SlackRouteError {
+  return new SlackRouteError({
+    kind: "api_error",
+    mode,
+    status,
+    slackError: "schema_mismatch",
+    message: `schema mismatch (${mode}) endpoint=${error.endpoint} key=${error.requiredKey} actual=${error.actualType}`,
+  });
+}
+
 function toUser(item: unknown, teamId: string): SlackUser | null {
   const record = asRecord(item);
   if (!record) {
@@ -179,23 +202,33 @@ function toUser(item: unknown, teamId: string): SlackUser | null {
   };
 }
 
-function toChannel(item: unknown, teamId: string): SlackChannel | null {
+type ParsedChannel = {
+  channel: SlackChannel;
+  isArchived: boolean;
+};
+
+function toChannel(item: unknown, teamId: string): ParsedChannel | null {
   const record = asRecord(item);
   if (!record) {
     return null;
   }
   const id = asString(record.id);
-  const name = asString(record.name);
-  if (!id || !name) {
+  if (!id) {
     return null;
   }
+  const name =
+    asString(record.name) ?? asString(record.name_normalized) ?? asString(record.user) ?? id;
+
   return {
-    id,
-    name,
-    teamId,
-    isPrivate: Boolean(record.is_private) || Boolean(record.isPrivate),
-    isIm: Boolean(record.is_im) || Boolean(record.isIm),
-    isMpIm: Boolean(record.is_mpim) || Boolean(record.isMpim),
+    channel: {
+      id,
+      name,
+      teamId,
+      isPrivate: Boolean(record.is_private) || Boolean(record.isPrivate),
+      isIm: Boolean(record.is_im) || Boolean(record.isIm),
+      isMpIm: Boolean(record.is_mpim) || Boolean(record.isMpim),
+    },
+    isArchived: Boolean(record.is_archived) || Boolean(record.isArchived),
   };
 }
 
@@ -364,8 +397,12 @@ function createDefaultBrowserApiInvoker(input: {
       });
 
       const contextIds = runtimeRegistry.resolveContextIds();
-      let firstFailure: { status?: number; payload?: unknown; timeout?: boolean; error?: string } | null =
-        null;
+      let firstFailure: {
+        status?: number;
+        payload?: unknown;
+        timeout?: boolean;
+        error?: string;
+      } | null = null;
 
       for (const contextId of contextIds) {
         const evaluateParams: Record<string, unknown> = {
@@ -520,15 +557,21 @@ export class SlackRouteClient {
   async listUsers(workspaceKey?: string): Promise<SlackUser[]> {
     const info = await this.authTest(workspaceKey);
     const teamId = info.teamId ?? info.enterpriseId ?? "global";
-    const members = await this.collectPaginated(
-      "users.list",
-      "members",
-      {
+    const members = await this.collectPaginated({
+      endpoint: "users.list",
+      baseParams: {
         limit: "200",
         include_locale: "false",
       },
-      workspaceKey
-    );
+      workspaceKey,
+      parsePage: (payload) => {
+        const parsed = this.parseContract(() => parseUsersList(payload));
+        return {
+          items: parsed.members,
+          nextCursor: parsed.nextCursor,
+        };
+      },
+    });
     const users: SlackUser[] = [];
     for (const member of members) {
       const parsed = toUser(member, teamId);
@@ -544,33 +587,36 @@ export class SlackRouteClient {
     const teamId = info.teamId ?? info.enterpriseId ?? "global";
     const shouldUseEnterpriseRoute = this.mode === "enterprise" || Boolean(info.enterpriseId);
 
-    const result: SlackChannel[] = [];
     if (shouldUseEnterpriseRoute) {
-      const items = await this.collectSearchModuleChannels(workspaceKey, 200);
-      for (const channel of items) {
-        const parsed = toChannel(channel, teamId);
-        if (parsed) {
-          result.push(parsed);
-        }
-      }
-      return result;
+      return this.collectEnterpriseChannels({
+        workspaceKey,
+        teamId,
+      });
     }
 
-    const channels = await this.collectPaginated(
-      "conversations.list",
-      "channels",
-      {
+    const channels = await this.collectPaginated({
+      endpoint: "conversations.list",
+      baseParams: {
         limit: "200",
         exclude_archived: "true",
         types: "public_channel,private_channel,im,mpim",
       },
-      workspaceKey
-    );
+      workspaceKey,
+      parsePage: (payload) => {
+        const parsed = this.parseContract(() => parseConversationsList(payload));
+        return {
+          items: parsed.channels,
+          nextCursor: parsed.nextCursor,
+        };
+      },
+    });
+    const result: SlackChannel[] = [];
     for (const channel of channels) {
       const parsed = toChannel(channel, teamId);
-      if (parsed) {
-        result.push(parsed);
+      if (!parsed || parsed.isArchived) {
+        continue;
       }
+      result.push(parsed.channel);
     }
     return result;
   }
@@ -579,7 +625,8 @@ export class SlackRouteClient {
     const info = await this.authTest(workspaceKey);
     const teamId = info.teamId ?? info.enterpriseId ?? "global";
     const payload = await this.call("users.info", { user: userId }, workspaceKey);
-    return toUser(payload.user, teamId);
+    const parsed = this.parseContract(() => parseUserInfo(payload));
+    return toUser(parsed.user, teamId);
   }
 
   async getChannelInfo(channelId: string, workspaceKey?: string): Promise<SlackChannel | null> {
@@ -598,12 +645,21 @@ export class SlackRouteClient {
         },
         workspaceKey
       );
-      const channels = asArray(payload.channels);
-      return toChannel(channels[0], teamId);
+      const parsedPayload = this.parseContract(() => parseConversationsGenericInfo(payload));
+      const channel = toChannel(parsedPayload.channels[0], teamId);
+      if (!channel || channel.isArchived) {
+        return null;
+      }
+      return channel.channel;
     }
 
     const payload = await this.call("conversations.info", { channel: channelId }, workspaceKey);
-    return toChannel(payload.channel, teamId);
+    const parsedPayload = this.parseContract(() => parseConversationInfo(payload));
+    const channel = toChannel(parsedPayload.channel, teamId);
+    if (!channel || channel.isArchived) {
+      return null;
+    }
+    return channel.channel;
   }
 
   async searchMessages(
@@ -616,15 +672,13 @@ export class SlackRouteClient {
       {
         query,
         count: String(Math.max(1, Math.min(200, Math.floor(limit)))),
-        sort: "timestamp",
-        sort_dir: "desc",
+        page: "1",
       },
       workspaceKey
     );
-    const messagesObject = asRecord(payload.messages);
-    const matches = asArray(messagesObject?.matches);
+    const parsedPayload = this.parseContract(() => parseSearchMessages(payload));
     const messages: SlackSearchMessage[] = [];
-    for (const entry of matches) {
+    for (const entry of parsedPayload.matches) {
       const parsed = toSearchMessage(entry);
       if (parsed) {
         messages.push(parsed);
@@ -643,24 +697,117 @@ export class SlackRouteClient {
       {
         channel: channelId,
         text,
-        as_user: "true",
       },
       workspaceKey
     );
+    const parsedPayload = this.parseContract(() => parsePostMessage(payload));
     const responseMessage = asRecord(payload.message);
-    const resolvedChannelId = asString(payload.channel) ?? channelId;
-    const ts = asString(payload.ts) ?? asString(responseMessage?.ts);
-    if (!ts) {
-      throw toRouteError({
-        mode: this.mode,
-        message: `missing ts in postMessage response (${this.mode})`,
-      });
-    }
     return {
-      channelId: resolvedChannelId,
-      ts,
+      channelId: parsedPayload.channel,
+      ts: parsedPayload.ts,
       text: asString(responseMessage?.text) ?? text,
     };
+  }
+
+  private async collectEnterpriseChannels(input: {
+    workspaceKey?: string;
+    teamId: string;
+  }): Promise<SlackChannel[]> {
+    const channels: SlackChannel[] = [];
+    const seen = new Set<string>();
+
+    const appendChannels = (items: unknown[]): void => {
+      for (const item of items) {
+        const parsed = toChannel(item, input.teamId);
+        if (!parsed || parsed.isArchived || seen.has(parsed.channel.id)) {
+          continue;
+        }
+        seen.add(parsed.channel.id);
+        channels.push(parsed.channel);
+      }
+    };
+
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const userBootPayload = await this.call(
+      "client.userBoot",
+      {
+        include_min_version_bump_check: "1",
+        version_ts: String(nowSeconds + 86_400),
+        build_version_ts: String(nowSeconds + 86_400),
+        _x_reason: "initial-data",
+        _x_mode: "online",
+        _x_sonic: "true",
+        _x_app_name: "client",
+      },
+      input.workspaceKey
+    );
+    const userBoot = this.parseContract(() => parseClientUserBoot(userBootPayload));
+    appendChannels(userBoot.channels);
+    appendChannels(userBoot.ims);
+
+    const ims = await this.collectPaginated({
+      endpoint: "im.list",
+      baseParams: {
+        get_latest: "true",
+        get_read_state: "true",
+        _x_reason: "guided-search-people-empty-state",
+        _x_mode: "online",
+        _x_sonic: "true",
+        _x_app_name: "client",
+      },
+      workspaceKey: input.workspaceKey,
+      parsePage: (payload) => {
+        const parsed = this.parseContract(() => parseImList(payload));
+        return {
+          items: parsed.ims,
+          nextCursor: parsed.nextCursor,
+        };
+      },
+      initialCursor: "",
+    });
+    appendChannels(ims);
+
+    const searched = await this.collectSearchModuleChannels(input.workspaceKey, 100);
+    appendChannels(searched);
+
+    const countsPayload = await this.call(
+      "client.counts",
+      {
+        thread_counts_by_channel: "true",
+        org_wide_aware: "true",
+        include_file_channels: "true",
+        _x_reason: "client-counts-api/fetchClientCounts",
+        _x_mode: "online",
+        _x_sonic: "true",
+        _x_app_name: "client",
+      },
+      input.workspaceKey
+    );
+    const counts = this.parseContract(() => parseClientCounts(countsPayload));
+    appendChannels(counts.channels);
+    appendChannels(counts.ims);
+
+    const updatedChannels = Object.fromEntries(
+      counts.mpims
+        .map((item) => asRecord(item))
+        .map((record) => asString(record?.id))
+        .filter((id): id is string => typeof id === "string" && id.length > 0 && !seen.has(id))
+        .map((id) => [id, 0])
+    );
+    const genericPayload = await this.call(
+      "conversations.genericInfo",
+      {
+        updated_channels: JSON.stringify(updatedChannels),
+        _x_reason: "fallback:UnknownFetchManager",
+        _x_mode: "online",
+        _x_sonic: "true",
+        _x_app_name: "client",
+      },
+      input.workspaceKey
+    );
+    const generic = this.parseContract(() => parseConversationsGenericInfo(genericPayload));
+    appendChannels(generic.channels);
+    return channels;
   }
 
   private async collectSearchModuleChannels(
@@ -705,10 +852,9 @@ export class SlackRouteClient {
         },
         workspaceKey
       );
-
-      result.push(...asArray(payload.items));
-      const pagination = asRecord(payload.pagination);
-      const nextCursor = asString(pagination?.next_cursor);
+      const parsed = this.parseContract(() => parseSearchModulesChannels(payload));
+      result.push(...parsed.items);
+      const nextCursor = parsed.nextCursor;
       if (!nextCursor) {
         break;
       }
@@ -718,32 +864,44 @@ export class SlackRouteClient {
     return result;
   }
 
-  private async collectPaginated(
-    endpoint: string,
-    field: string,
-    baseParams: Record<string, string>,
-    workspaceKey?: string
-  ): Promise<unknown[]> {
+  private async collectPaginated(input: {
+    endpoint: string;
+    baseParams: Record<string, string>;
+    workspaceKey?: string;
+    parsePage: (payload: JsonRecord) => { items: unknown[]; nextCursor?: string };
+    initialCursor?: string;
+  }): Promise<unknown[]> {
     const result: unknown[] = [];
-    let cursor: string | undefined;
+    let cursor: string | undefined = input.initialCursor;
     for (let index = 0; index < 50; index += 1) {
       const payload = await this.call(
-        endpoint,
+        input.endpoint,
         {
-          ...baseParams,
+          ...input.baseParams,
           cursor,
         },
-        workspaceKey
+        input.workspaceKey
       );
-      result.push(...asArray(payload[field]));
-      const metadata = asRecord(payload.response_metadata);
-      const nextCursor = asString(metadata?.next_cursor);
+      const parsed = input.parsePage(payload);
+      result.push(...parsed.items);
+      const nextCursor = parsed.nextCursor;
       if (!nextCursor) {
         break;
       }
       cursor = nextCursor;
     }
     return result;
+  }
+
+  private parseContract<T>(execute: () => T): T {
+    try {
+      return execute();
+    } catch (error) {
+      if (error instanceof SlackApiSchemaError) {
+        throw toSchemaRouteError(this.mode, error);
+      }
+      throw error;
+    }
   }
 
   private async call(

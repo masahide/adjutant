@@ -24,8 +24,9 @@ type BrowserCall = {
 };
 
 type BrowserScenario = {
-  teamSearchError?: "not_allowed_token_type";
+  teamSearchError?: "not_allowed_token_type" | "enterprise_is_restricted" | "invalid_auth";
   teamSearchRateLimited?: boolean;
+  usersListSchemaMismatch?: boolean;
 };
 
 function createAuthProbeFetchStub(): typeof fetch {
@@ -74,6 +75,15 @@ function createBrowserInvokerStub(scenario: BrowserScenario = {}) {
     }
 
     if (input.endpoint === "users.list") {
+      if (scenario.usersListSchemaMismatch) {
+        return {
+          status: 200,
+          payload: {
+            ok: true,
+            response_metadata: { next_cursor: "" },
+          },
+        };
+      }
       return {
         status: 200,
         payload: {
@@ -110,6 +120,44 @@ function createBrowserInvokerStub(scenario: BrowserScenario = {}) {
       };
     }
 
+    if (input.endpoint === "client.userBoot") {
+      return {
+        status: 200,
+        payload: {
+          ok: true,
+          channels: [
+            {
+              id: "C123",
+              name: "general",
+              is_private: false,
+              is_im: false,
+              is_mpim: false,
+              is_archived: false,
+            },
+          ],
+          ims: [],
+        },
+      };
+    }
+
+    if (input.endpoint === "im.list") {
+      return {
+        status: 200,
+        payload: {
+          ok: true,
+          ims: [
+            {
+              id: "D123",
+              user: "U123",
+              is_im: true,
+              is_archived: false,
+            },
+          ],
+          response_metadata: { next_cursor: "" },
+        },
+      };
+    }
+
     if (input.endpoint === "search.modules.channels") {
       return {
         status: 200,
@@ -125,6 +173,18 @@ function createBrowserInvokerStub(scenario: BrowserScenario = {}) {
             },
           ],
           pagination: { next_cursor: "" },
+        },
+      };
+    }
+
+    if (input.endpoint === "client.counts") {
+      return {
+        status: 200,
+        payload: {
+          ok: true,
+          channels: [],
+          ims: [],
+          mpims: [{ id: "G123" }],
         },
       };
     }
@@ -205,6 +265,13 @@ function createBrowserInvokerStub(scenario: BrowserScenario = {}) {
               is_private: false,
               is_im: false,
               is_mpim: false,
+            },
+            {
+              id: "G123",
+              name: "mpim-group",
+              is_private: true,
+              is_im: false,
+              is_mpim: true,
             },
           ],
         },
@@ -324,6 +391,52 @@ describe("Slack provider integration", () => {
     }
   });
 
+  it("workspaces_list は token 非公開の workspace 一覧を返し API を呼ばない", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "adjutant-slack-workspaces-list-"));
+    const fetchFn = createAuthProbeFetchStub();
+    const { browserInvoker, calls } = createBrowserInvokerStub();
+    const env = createEnv(dataDir, {});
+
+    resetSlackAuthTokenCacheForTest();
+    await seedAuthTokenCache({ dataDir, fetchFn });
+
+    try {
+      const result = await runTool(env, fetchFn, browserInvoker, {
+        provider: "slack",
+        action: "workspaces_list",
+        args: {},
+      });
+
+      assert.equal(result.ok, true);
+      if (!result.ok) {
+        return;
+      }
+      const executeData = result.data as {
+        ok?: boolean;
+        data?: {
+          workspaces?: Array<{
+            workspace_key?: string;
+            aliases?: string[];
+            has_tokens?: boolean;
+            xoxc_token?: string;
+            xoxd_token?: string;
+          }>;
+        };
+      };
+      assert.equal(executeData.ok, true);
+      const first = executeData.data?.workspaces?.[0];
+      assert.equal(typeof first?.workspace_key, "string");
+      assert.equal(Array.isArray(first?.aliases), true);
+      assert.equal(first?.has_tokens, true);
+      assert.equal(first?.xoxc_token, undefined);
+      assert.equal(first?.xoxd_token, undefined);
+      assert.equal(calls.length, 0);
+    } finally {
+      resetSlackAuthTokenCacheForTest();
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it("users_list で既存 user-names-by-team キャッシュを更新する", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "adjutant-slack-users-cache-"));
     const fetchFn = createAuthProbeFetchStub();
@@ -393,6 +506,85 @@ describe("Slack provider integration", () => {
       );
       assert.equal(teamSearchCalls.length, 1);
       assert.equal(enterpriseSearchCalls.length, 1);
+    } finally {
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("search_messages(auto_probe) は enterprise_is_restricted でも enterprise へ fallback する", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "adjutant-slack-restricted-fallback-"));
+    const fetchFn = createAuthProbeFetchStub();
+    const { browserInvoker, calls } = createBrowserInvokerStub({
+      teamSearchError: "enterprise_is_restricted",
+    });
+    const env = createEnv(dataDir);
+    await seedAuthTokenCache({ dataDir, fetchFn });
+
+    try {
+      const result = await runTool(env, fetchFn, browserInvoker, {
+        provider: "slack",
+        action: "search_messages",
+        args: { query: "hello", routing_mode: "auto_probe" },
+      });
+
+      assert.equal(result.ok, true);
+      if (!result.ok) {
+        return;
+      }
+      const executeData = result.data as {
+        ok?: boolean;
+        modeUsed?: string;
+        fallbackTried?: boolean;
+      };
+      assert.equal(executeData.ok, true);
+      assert.equal(executeData.modeUsed, "enterprise");
+      assert.equal(executeData.fallbackTried, true);
+
+      const teamSearchCalls = calls.filter(
+        (call) => call.endpoint === "search.messages" && call.mode === "team"
+      );
+      const enterpriseSearchCalls = calls.filter(
+        (call) => call.endpoint === "search.messages" && call.mode === "enterprise"
+      );
+      assert.equal(teamSearchCalls.length, 1);
+      assert.equal(enterpriseSearchCalls.length, 1);
+    } finally {
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("search_messages(auto_probe) で invalid_auth は fallback せず auth_invalid を返す", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "adjutant-slack-invalid-auth-primary-"));
+    const fetchFn = createAuthProbeFetchStub();
+    const { browserInvoker, calls } = createBrowserInvokerStub({
+      teamSearchError: "invalid_auth",
+    });
+    const env = createEnv(dataDir);
+    await seedAuthTokenCache({ dataDir, fetchFn });
+
+    try {
+      const result = await runTool(env, fetchFn, browserInvoker, {
+        provider: "slack",
+        action: "search_messages",
+        args: { query: "hello", routing_mode: "auto_probe" },
+      });
+
+      assert.equal(result.ok, true);
+      if (!result.ok) {
+        return;
+      }
+      const executeData = result.data as { ok?: boolean; code?: string };
+      assert.equal(executeData.ok, false);
+      assert.equal(executeData.code, "auth_invalid");
+
+      const teamSearchCalls = calls.filter(
+        (call) => call.endpoint === "search.messages" && call.mode === "team"
+      );
+      const enterpriseSearchCalls = calls.filter(
+        (call) => call.endpoint === "search.messages" && call.mode === "enterprise"
+      );
+      assert.equal(teamSearchCalls.length, 1);
+      assert.equal(enterpriseSearchCalls.length, 0);
     } finally {
       await rm(dataDir, { recursive: true, force: true });
     }
@@ -497,6 +689,39 @@ describe("Slack provider integration", () => {
       const authTestCalls = calls.filter((call) => call.endpoint === "auth.test");
       assert.equal(enterpriseSearchCalls.length > 0, true);
       assert.equal(authTestCalls.length, 0);
+    } finally {
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("schema mismatch 時は endpoint/key/type を含む primaryError で返す", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "adjutant-slack-schema-mismatch-msg-"));
+    const fetchFn = createAuthProbeFetchStub();
+    const { browserInvoker } = createBrowserInvokerStub({ usersListSchemaMismatch: true });
+    const env = createEnv(dataDir, {});
+    await seedAuthTokenCache({ dataDir, fetchFn });
+
+    try {
+      const result = await runTool(env, fetchFn, browserInvoker, {
+        provider: "slack",
+        action: "users_list",
+        args: {},
+      });
+
+      assert.equal(result.ok, true);
+      if (!result.ok) {
+        return;
+      }
+      const executeData = result.data as {
+        ok?: boolean;
+        code?: string;
+        primaryError?: string;
+      };
+      assert.equal(executeData.ok, false);
+      assert.equal(executeData.code, "primary_failed");
+      assert.equal(executeData.primaryError?.includes("schema_mismatch"), true);
+      assert.equal(executeData.primaryError?.includes("endpoint=users.list"), true);
+      assert.equal(executeData.primaryError?.includes("key=members"), true);
     } finally {
       await rm(dataDir, { recursive: true, force: true });
     }

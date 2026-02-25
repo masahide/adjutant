@@ -7,6 +7,7 @@ import {
   configureSlackAuthTokenRegistry,
   flushSlackAuthTokenRegistryForTest,
   getSlackAuthTokenRegistrySnapshotForTest,
+  listSlackAuthWorkspacesFromCache,
   resetSlackAuthTokenCacheForTest,
   resolveSlackAuthTokensFromCache,
   syncSlackAuthTokenSnapshots,
@@ -303,6 +304,182 @@ describe("slackAuthTokenRegistry", () => {
       assert.equal(promoted[0]?.enterpriseId, "E77777");
       assert.equal(promoted[0]?.aliases.includes("workspace-c"), true);
       assert.equal(promoted[0]?.aliases.includes("T77777"), true);
+    } finally {
+      resetSlackAuthTokenCacheForTest();
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("auth.test ログに token を含めない", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "adjutant-auth-registry-log-safety-"));
+    const xoxcSecret = "xoxc-secret-token-value";
+    const xoxdSecret = "xoxd-secret-token-value";
+    const logged: string[] = [];
+    const originalInfo = console.info;
+
+    try {
+      const fetchFn: typeof fetch = (async () => {
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            team_id: "TSAFE",
+            enterprise_id: "ESAFE",
+            user_id: "USAFE",
+            url: "https://workspace-safe.slack.com/",
+          }),
+          { status: 200 }
+        );
+      }) as typeof fetch;
+
+      console.info = (...args: unknown[]) => {
+        logged.push(args.map((arg) => String(arg)).join(" "));
+      };
+
+      resetSlackAuthTokenCacheForTest();
+      configureSlackAuthTokenRegistry({
+        dataDir,
+        authTestEnabled: true,
+        fetchFn,
+        authTestRetryDelaysMs: [1, 1, 1],
+      });
+
+      syncSlackAuthTokenSnapshots({
+        snapshots: [
+          {
+            workspaceKey: "workspace-safe",
+            tokens: {
+              xoxc: {
+                value: xoxcSecret,
+                firstSeenAt: 1,
+                lastSeenAt: 2,
+                hits: 1,
+                sourceStage: "requestWillBeSent",
+              },
+              xoxd: {
+                value: xoxdSecret,
+                firstSeenAt: 1,
+                lastSeenAt: 2,
+                hits: 1,
+                sourceStage: "requestWillBeSentExtraInfo",
+              },
+            },
+          },
+        ],
+      });
+      await flushSlackAuthTokenRegistryForTest();
+
+      const serialized = logged.join("\n");
+      assert.equal(serialized.includes("[SlackAuthTest]"), true);
+      assert.equal(serialized.includes(xoxcSecret), false);
+      assert.equal(serialized.includes(xoxdSecret), false);
+    } finally {
+      console.info = originalInfo;
+      resetSlackAuthTokenCacheForTest();
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("workspace 一覧は token 非公開で取得できる", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "adjutant-auth-registry-list-"));
+    const nowA = Date.now();
+    const nowB = nowA + 1000;
+    try {
+      const fetchFn: typeof fetch = (async () => {
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            team_id: "T-LIST",
+            enterprise_id: "E-LIST",
+            user_id: "U-LIST",
+            url: "https://workspace-list.slack.com/",
+          }),
+          { status: 200 }
+        );
+      }) as typeof fetch;
+
+      resetSlackAuthTokenCacheForTest();
+      configureSlackAuthTokenRegistry({
+        dataDir,
+        authTestEnabled: true,
+        fetchFn,
+        authTestRetryDelaysMs: [1, 1, 1],
+      });
+
+      syncSlackAuthTokenSnapshots({
+        snapshots: [
+          {
+            workspaceKey: "workspace-account",
+            tokens: {
+              xoxc: {
+                value: "xoxc-account",
+                firstSeenAt: 1,
+                lastSeenAt: nowA,
+                hits: 1,
+                sourceStage: "requestWillBeSent",
+              },
+              xoxd: {
+                value: "xoxd-account",
+                firstSeenAt: 1,
+                lastSeenAt: nowA,
+                hits: 1,
+                sourceStage: "requestWillBeSentExtraInfo",
+              },
+            },
+          },
+        ],
+      });
+      await flushSlackAuthTokenRegistryForTest();
+
+      configureSlackAuthTokenRegistry({
+        dataDir,
+        authTestEnabled: false,
+        fetchFn,
+      });
+      syncSlackAuthTokenSnapshots({
+        snapshots: [
+          {
+            workspaceKey: "workspace-pending",
+            tokens: {
+              xoxc: {
+                value: "xoxc-pending",
+                firstSeenAt: 1,
+                lastSeenAt: nowB,
+                hits: 1,
+                sourceStage: "requestWillBeSent",
+              },
+              xoxd: {
+                value: "xoxd-pending",
+                firstSeenAt: 1,
+                lastSeenAt: nowB,
+                hits: 1,
+                sourceStage: "requestWillBeSentExtraInfo",
+              },
+            },
+          },
+        ],
+      });
+      await flushSlackAuthTokenRegistryForTest();
+
+      const listed = listSlackAuthWorkspacesFromCache();
+      assert.equal(listed.length >= 2, true);
+      assert.equal(listed[0]?.workspaceKey, "workspace-pending");
+      assert.equal(
+        listed.some((item) => item.workspaceKey === "workspace-account"),
+        true
+      );
+      assert.equal(
+        listed.some((item) => Object.prototype.hasOwnProperty.call(item, "xoxcToken")),
+        false
+      );
+
+      const byAccountOnly = listSlackAuthWorkspacesFromCache({
+        accountId: "E-LIST",
+        includePending: false,
+      });
+      assert.equal(byAccountOnly.length, 1);
+      assert.equal(byAccountOnly[0]?.workspaceKey, "workspace-account");
+      assert.equal(byAccountOnly[0]?.accountId, "E-LIST");
+      assert.equal(byAccountOnly[0]?.authTestStatus, "ok");
     } finally {
       resetSlackAuthTokenCacheForTest();
       await rm(dataDir, { recursive: true, force: true });

@@ -135,6 +135,32 @@ export function createSlackDynamicProvider(service: SlackApiService): DynamicPro
     },
   };
 
+  const workspacesListAction: DynamicAction = {
+    descriptor: {
+      name: "workspaces_list",
+      description: "List cached Slack workspaces resolved from xoxc/xoxd registry",
+      argsSchema: {
+        type: "object",
+        properties: {
+          account_id: { type: "string", minLength: 1 },
+        },
+        additionalProperties: false,
+      },
+    },
+    validate: (rawArgs) => {
+      const args = asRecord(rawArgs);
+      if (
+        Object.prototype.hasOwnProperty.call(args, "account_id") &&
+        !readString(args, "account_id")
+      ) {
+        throw new Error("account_id must be a non-empty string");
+      }
+    },
+    execute: async (rawArgs) => {
+      return await service.listWorkspaces(asRecord(rawArgs));
+    },
+  };
+
   const channelsListAction: DynamicAction = {
     descriptor: {
       name: "channels_list",
@@ -212,6 +238,7 @@ export function createSlackDynamicProvider(service: SlackApiService): DynamicPro
 
   actions.set(getUserNameByIdAction.descriptor.name, getUserNameByIdAction);
   actions.set(getChannelNameByIdAction.descriptor.name, getChannelNameByIdAction);
+  actions.set(workspacesListAction.descriptor.name, workspacesListAction);
   actions.set(usersListAction.descriptor.name, usersListAction);
   actions.set(channelsListAction.descriptor.name, channelsListAction);
   actions.set(searchMessagesAction.descriptor.name, searchMessagesAction);

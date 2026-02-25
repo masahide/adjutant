@@ -21,6 +21,9 @@ function formatRouteError(error: SlackRouteError): string {
   const mode = error.mode;
   const kind = error.kind;
   const slackError = error.slackError;
+  if (slackError === "schema_mismatch") {
+    return `${mode}:${kind}:${slackError}:${error.message}`;
+  }
   if (slackError) {
     return `${mode}:${kind}:${slackError}`;
   }

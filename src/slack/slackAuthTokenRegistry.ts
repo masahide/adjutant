@@ -42,6 +42,23 @@ type ResolveCandidate = {
   entry: CachedTokenPair;
 };
 
+export type ResolvedSlackAuthTest = {
+  teamId?: string;
+  enterpriseId?: string;
+  url?: string;
+  userId?: string;
+};
+
+export type SlackAuthWorkspaceSummary = {
+  workspaceKey: string;
+  aliases: string[];
+  accountId?: string;
+  hasTokens: boolean;
+  authTestStatus?: PersistedAuthTest["status"];
+  authTest?: ResolvedSlackAuthTest;
+  lastSeenAt: number;
+};
+
 export type SlackWorkspacePromotionEvent = {
   workspaceKey: string;
   aliases: string[];
@@ -305,12 +322,7 @@ function toWorkspacePromotionEvent(
   };
 }
 
-function toResolvedAuthTest(authTest: PersistedAuthTest | undefined): {
-  teamId?: string;
-  enterpriseId?: string;
-  url?: string;
-  userId?: string;
-} | null {
+function toResolvedAuthTest(authTest: PersistedAuthTest | undefined): ResolvedSlackAuthTest | null {
   if (!authTest || authTest.status !== "ok") {
     return null;
   }
@@ -322,6 +334,18 @@ function toResolvedAuthTest(authTest: PersistedAuthTest | undefined): {
     return null;
   }
   return { teamId, enterpriseId, url, userId };
+}
+
+function toWorkspaceSummary(entry: CachedTokenPair, accountId?: string): SlackAuthWorkspaceSummary {
+  return {
+    workspaceKey: entry.workspaceKey,
+    aliases: dedupeAliases(entry.workspaceKey, entry.aliases),
+    accountId,
+    hasTokens: hasTokenPair(entry),
+    authTestStatus: entry.authTest?.status,
+    authTest: toResolvedAuthTest(entry.authTest) ?? undefined,
+    lastSeenAt: toLastSeenAt(entry),
+  };
 }
 
 function emitAuthTestResultLog(meta: {
@@ -769,6 +793,48 @@ export function resolveSlackAuthTokensFromCache(params?: {
     accountId: candidate.accountId,
     authTest: authTest ?? undefined,
   };
+}
+
+export function listSlackAuthWorkspacesFromCache(params?: {
+  accountId?: string;
+  includePending?: boolean;
+}): SlackAuthWorkspaceSummary[] {
+  const normalizedAccountId = normalizeString(params?.accountId)
+    ? normalizeAccountId(params?.accountId, "default")
+    : undefined;
+  const includePending = params?.includePending !== false;
+
+  const entries: SlackAuthWorkspaceSummary[] = [];
+  const collect = (map: CachedAccountTokens, accountId?: string) => {
+    for (const entry of map.values()) {
+      entries.push(toWorkspaceSummary(entry, accountId));
+    }
+  };
+
+  if (normalizedAccountId) {
+    const accountMap = byAccount.get(normalizedAccountId);
+    if (accountMap) {
+      collect(accountMap, normalizedAccountId);
+    }
+  } else {
+    for (const [accountId, accountMap] of byAccount.entries()) {
+      collect(accountMap, accountId);
+    }
+  }
+
+  if (includePending) {
+    collect(pending);
+  }
+
+  return entries.sort((left, right) => {
+    if (right.lastSeenAt !== left.lastSeenAt) {
+      return right.lastSeenAt - left.lastSeenAt;
+    }
+    if (left.workspaceKey !== right.workspaceKey) {
+      return left.workspaceKey.localeCompare(right.workspaceKey);
+    }
+    return (left.accountId ?? "").localeCompare(right.accountId ?? "");
+  });
 }
 
 export async function flushSlackAuthTokenRegistryForTest(): Promise<void> {

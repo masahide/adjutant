@@ -6,6 +6,7 @@ import { resolveAdjutantStateDir } from "../session-paths.js";
 import { SlackNameCacheRepository } from "../../slack/nameCacheRepository.js";
 import {
   configureSlackAuthTokenRegistry,
+  listSlackAuthWorkspacesFromCache,
   resolveSlackAuthTokensFromCache,
 } from "../../slack/slackAuthTokenRegistry.js";
 import { SLACK_PENDING_ACCOUNT_ID } from "../../slack/slackAuthTokenStore.js";
@@ -119,6 +120,7 @@ export function createSlackDynamicProviderFromEnv(
     authProvider,
     teamClient,
     enterpriseClient,
+    workspaceListProvider: listSlackAuthWorkspacesFromCache,
     nameCacheRepository,
     routeStore,
     fallbackExecutor,

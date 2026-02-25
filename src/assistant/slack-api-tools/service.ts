@@ -41,6 +41,9 @@ function modeFromRoutingMode(routingMode: SlackRoutingMode): SlackMode {
 
 function formatRouteError(error: SlackRouteError): string {
   const slackError = error.slackError;
+  if (slackError === "schema_mismatch") {
+    return `${error.mode}:${error.kind}:${slackError}:${error.message}`;
+  }
   if (slackError) {
     return `${error.mode}:${error.kind}:${slackError}`;
   }
@@ -111,10 +114,32 @@ export type SlackRouteClientLike = {
   ) => Promise<SlackPostMessageResult>;
 };
 
+export type SlackWorkspaceSummary = {
+  workspaceKey: string;
+  aliases: string[];
+  accountId?: string;
+  hasTokens: boolean;
+  authTestStatus?:
+    | "pending"
+    | "ok"
+    | "invalid_auth"
+    | "rate_limited"
+    | "network_error"
+    | "api_error";
+  authTest?: SlackAuthTestResult;
+  lastSeenAt: number;
+};
+
+export type SlackWorkspaceListProvider = (params?: {
+  accountId?: string;
+  includePending?: boolean;
+}) => SlackWorkspaceSummary[];
+
 export type SlackApiServiceOptions = {
   authProvider: SlackAuthProvider;
   teamClient: SlackRouteClientLike;
   enterpriseClient: SlackRouteClientLike;
+  workspaceListProvider: SlackWorkspaceListProvider;
   nameCacheRepository: SlackNameCacheRepository;
   routeStore: SlackRouteStore;
   fallbackExecutor: SlackFallbackExecutor;
@@ -126,6 +151,7 @@ export class SlackApiService {
   private readonly authProvider: SlackAuthProvider;
   private readonly teamClient: SlackRouteClientLike;
   private readonly enterpriseClient: SlackRouteClientLike;
+  private readonly workspaceListProvider: SlackWorkspaceListProvider;
   private readonly nameCacheRepository: SlackNameCacheRepository;
   private readonly routeStore: SlackRouteStore;
   private readonly fallbackExecutor: SlackFallbackExecutor;
@@ -137,6 +163,7 @@ export class SlackApiService {
     this.authProvider = options.authProvider;
     this.teamClient = options.teamClient;
     this.enterpriseClient = options.enterpriseClient;
+    this.workspaceListProvider = options.workspaceListProvider;
     this.nameCacheRepository = options.nameCacheRepository;
     this.routeStore = options.routeStore;
     this.fallbackExecutor = options.fallbackExecutor;
@@ -414,6 +441,51 @@ export class SlackApiService {
             });
       return toOperationError("channels_list", routeError);
     }
+  }
+
+  async listWorkspaces(args: { account_id?: unknown }): Promise<
+    SlackApiResult<{
+      workspaces: Array<{
+        workspace_key: string;
+        aliases: string[];
+        account_id?: string;
+        has_tokens: boolean;
+        auth_test_status?: string;
+        auth_test?: {
+          team_id?: string;
+          enterprise_id?: string;
+          url?: string;
+          user_id?: string;
+        };
+        last_seen_at: number;
+      }>;
+    }>
+  > {
+    const accountId = asString(args.account_id);
+    const workspaces = this.workspaceListProvider({
+      accountId,
+      includePending: true,
+    });
+    return createSlackApiSuccess({
+      data: {
+        workspaces: workspaces.map((workspace) => ({
+          workspace_key: workspace.workspaceKey,
+          aliases: [...workspace.aliases],
+          account_id: workspace.accountId,
+          has_tokens: workspace.hasTokens,
+          auth_test_status: workspace.authTestStatus,
+          auth_test: workspace.authTest
+            ? {
+                team_id: workspace.authTest.teamId,
+                enterprise_id: workspace.authTest.enterpriseId,
+                url: workspace.authTest.url,
+                user_id: workspace.authTest.userId,
+              }
+            : undefined,
+          last_seen_at: workspace.lastSeenAt,
+        })),
+      },
+    });
   }
 
   async searchMessages(args: {

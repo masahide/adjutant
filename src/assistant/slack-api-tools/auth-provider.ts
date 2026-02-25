@@ -17,7 +17,9 @@ function normalizeNonEmptyString(value: unknown): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function normalizeAuthTest(value: SlackAuthTestResult | undefined): SlackAuthTestResult | undefined {
+function normalizeAuthTest(
+  value: SlackAuthTestResult | undefined
+): SlackAuthTestResult | undefined {
   if (!value) {
     return undefined;
   }
