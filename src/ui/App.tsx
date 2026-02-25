@@ -1,4 +1,4 @@
-import React from "react";
+import { useState } from "react";
 import { AssistantRuntimeProvider } from "@assistant-ui/react";
 import { useAdjutantThread } from "./hooks/useAdjutantThread.js";
 import { useSidePanel } from "./hooks/useSidePanel.js";
@@ -8,8 +8,12 @@ import { HeartbeatIndicator } from "./components/HeartbeatIndicator.js";
 import { SidePanel } from "./components/SidePanel.js";
 import { HeartbeatHistoryTab } from "./components/HeartbeatHistoryTab.js";
 import { AuditDetailTab } from "./components/AuditDetailTab.js";
+import { ToolDebugPage } from "./components/ToolDebugPage.js";
+
+type Page = "chat" | "tools";
 
 export function App() {
+  const [page, setPage] = useState<Page>("chat");
   const { assistantRuntime, heartbeat, error } = useAdjutantThread();
   const { state: panelState, actions: panelActions } = useSidePanel();
 
@@ -18,18 +22,46 @@ export function App() {
       <SidePanelContext.Provider value={panelActions}>
         <div className="flex flex-col h-screen bg-background text-foreground font-[system-ui,sans-serif]">
           <header className="flex justify-between items-center px-4 py-2 border-b border-border bg-background">
-            <span className="font-bold">Adjutant Assistant</span>
+            <div className="flex items-center gap-4">
+              <span className="font-bold">Adjutant</span>
+              <nav className="flex gap-1">
+                <button
+                  onClick={() => setPage("chat")}
+                  className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+                    page === "chat"
+                      ? "bg-foreground text-background"
+                      : "text-muted-foreground hover:bg-accent/50"
+                  }`}
+                >
+                  Chat
+                </button>
+                <button
+                  onClick={() => setPage("tools")}
+                  className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+                    page === "tools"
+                      ? "bg-foreground text-background"
+                      : "text-muted-foreground hover:bg-accent/50"
+                  }`}
+                >
+                  Tools
+                </button>
+              </nav>
+            </div>
             <HeartbeatIndicator heartbeat={heartbeat} />
           </header>
-          <div className="flex flex-1 min-h-0">
-            <Thread />
-            <SidePanel
-              state={panelState}
-              actions={panelActions}
-              heartbeatContent={<HeartbeatHistoryTab heartbeatTs={heartbeat?.ts ?? null} />}
-              auditContent={<AuditDetailTab runId={panelState.auditRunId} />}
-            />
-          </div>
+          {page === "chat" ? (
+            <div className="flex flex-1 min-h-0">
+              <Thread />
+              <SidePanel
+                state={panelState}
+                actions={panelActions}
+                heartbeatContent={<HeartbeatHistoryTab heartbeatTs={heartbeat?.ts ?? null} />}
+                auditContent={<AuditDetailTab runId={panelState.auditRunId} />}
+              />
+            </div>
+          ) : (
+            <ToolDebugPage />
+          )}
           {error && (
             <div className="px-4 py-2 text-xs text-destructive bg-background border-t border-border">
               Error: {error}

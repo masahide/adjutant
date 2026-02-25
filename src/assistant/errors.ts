@@ -3,6 +3,7 @@ export type ApiErrorCode =
   | "INVALID_REQUEST"
   | "IDEMPOTENCY_PAYLOAD_MISMATCH"
   | "LAST_EVENT_ID_EXPIRED"
+  | "NOT_IMPLEMENTED"
   | "INTERNAL_ERROR";
 
 export class ApiError extends Error {

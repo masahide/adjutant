@@ -28,6 +28,7 @@ export type CreateSlackDynamicProviderFromEnvOptions = {
   dataDir?: string;
   now?: () => Date;
   browserInvoker?: SlackBrowserApiInvoker;
+  skipRegistryConfigure?: boolean;
 };
 
 export function createSlackDynamicProviderFromEnv(
@@ -53,11 +54,13 @@ export function createSlackDynamicProviderFromEnv(
     fallbackAccountId: SLACK_PENDING_ACCOUNT_ID,
   });
 
-  configureSlackAuthTokenRegistry({
-    dataDir,
-    authTestEnabled: slackAuthTestEnabled,
-    fetchFn: options.fetchFn,
-  });
+  if (!options.skipRegistryConfigure) {
+    configureSlackAuthTokenRegistry({
+      dataDir,
+      authTestEnabled: slackAuthTestEnabled,
+      fetchFn: options.fetchFn,
+    });
+  }
 
   const authProvider = new SlackAuthProvider({
     tokenStateProvider: (workspaceKey) => {

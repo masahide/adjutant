@@ -1,4 +1,11 @@
 import { createApiServer } from "./api-server.js";
+import { ProviderRegistry } from "./dynamic-tool/registry.js";
+import { ToolHub } from "./dynamic-tool/hub.js";
+import {
+  createSlackDynamicProviderFromEnv,
+  isSlackApiToolsEnabled,
+} from "./slack-api-tools/index.js";
+import { listSlackAuthWorkspacesFromCache } from "../slack/slackAuthTokenRegistry.js";
 import * as ChatHandler from "./chat-handler.js";
 import * as StreamEventBridge from "./stream-event-bridge.js";
 import { configureAgentAuditLogger } from "./agent-audit.js";
@@ -625,6 +632,16 @@ const markdownSummaryBatchTimer =
       }, MARKDOWN_SUMMARY_BATCH.intervalMs)
     : null;
 
+const debugProviderRegistry = new ProviderRegistry();
+if (isSlackApiToolsEnabled(process.env)) {
+  // Skip configureSlackAuthTokenRegistry — already configured by createSlackChannelPlugin.
+  // Re-calling it would reset the probeWorker and disrupt token promotion.
+  debugProviderRegistry.register(
+    createSlackDynamicProviderFromEnv({ env: process.env, skipRegistryConfigure: true })
+  );
+}
+const debugToolHub = new ToolHub(debugProviderRegistry);
+
 const api = createApiServer({
   port: PORT,
   host: HOST,
@@ -634,6 +651,9 @@ const api = createApiServer({
     getLastHeartbeatEvent,
     runOnce: (opts) => runOnce(heartbeatConfig, opts),
   },
+  toolHub: debugToolHub,
+  providerRegistry: debugProviderRegistry,
+  workspaceListProvider: () => listSlackAuthWorkspacesFromCache({ includePending: true }),
 });
 
 let viteChild: ChildProcess | null = null;
