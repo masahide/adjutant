@@ -3,6 +3,9 @@ import { createWriteStream, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { ChildProcess } from "node:child_process";
 import { ensureSlackWithCdp } from "./lib/slackCdp.js";
+import { loadEnvFileIfPresent } from "../src/runtime/env-file-loader.js";
+
+loadEnvFileIfPresent();
 
 type ProcessConfig = {
   name: string;

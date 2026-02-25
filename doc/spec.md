@@ -48,7 +48,7 @@ Adjutant は Slack Desktop の CDP イベントを収集し、`NormalizedEvent` 
 - Timeline v1.5 (`<stateDir>/timeline.jsonl`) と sessionKey 必須化
 - Pending Flusher + Watermark store (`<stateDir>/watermarks.json`)
 - Agent 終端レコード（`assistant_final` / `assistant_aborted` / `assistant_error`）
-- bash ツールの Docker サンドボックス実行（`ADJUTANT_SANDBOX_MODE=non-main|all`）
+- `bash` / `read` / `write` / `edit` / `grep` / `find` / `ls` の Docker サンドボックス実行（`ADJUTANT_SANDBOX_MODE=non-main|all`）
 - 初回実行リチュアル（workspace bootstrap / BOOTSTRAP context 注入）
 - Pre-compaction memory flush + context compaction 連動制御
 - `memory_search` / `memory_get`（main セッション限定）
@@ -302,6 +302,7 @@ flowchart LR
 | `ADJUTANT_ROUTE_LLM_MODEL`                    | `gpt-5-mini`                                                            | Route LLM モデル                                    |
 | `ADJUTANT_ROUTE_LLM_TIMEOUT_MS`               | `1000`                                                                  | Route LLM / batch classifier timeout                |
 | `ADJUTANT_ROUTE_LLM_MAX_CONCURRENT`           | `1`                                                                     | Route LLM 同時実行上限                              |
+| `ADJUTANT_ASSISTANT_LOG_PATH`                 | `<stateDir>/logs/assistant.log`                                         | `pnpm run assistant` の標準ログ出力先               |
 | `ADJUTANT_DYNAMIC_TOOL_ENABLED`               | `true`                                                                  | `tool_hub` 公開の有効/無効                          |
 | `ADJUTANT_SLACK_API_ENABLED`                  | `true`                                                                  | `tool_hub` Slack provider 有効/無効                 |
 | `ADJUTANT_SLACK_API_ROUTING_MODE`             | `auto_probe`                                                            | Slack API routing mode                              |
@@ -339,7 +340,7 @@ flowchart LR
 | `ADJUTANT_MEMORY_SEARCH_CANDIDATE_MULTIPLIER` | `3`                                                                     | 候補拡張倍率                                        |
 | `ADJUTANT_MEMORY_SEARCH_VECTOR_WEIGHT`        | `0.7`                                                                   | hybrid score の vector 重み                         |
 | `ADJUTANT_MEMORY_SEARCH_TEXT_WEIGHT`          | `0.3`                                                                   | hybrid score の text 重み                           |
-| `ADJUTANT_SANDBOX_MODE`                       | `off`                                                                   | bash sandbox mode（`off` / `non-main` / `all`）     |
+| `ADJUTANT_SANDBOX_MODE`                       | `all`                                                                   | agent sandbox mode（`off` / `non-main` / `all`）    |
 | `ADJUTANT_SANDBOX_IMAGE`                      | `adjutant-sandbox:trixie-slim`                                          | sandbox Docker image                                |
 | `ADJUTANT_SANDBOX_AUTO_BUILD_IMAGE`           | `true`                                                                  | 未存在時に sandbox image を自動 build する          |
 | `ADJUTANT_SANDBOX_CONTAINER_PREFIX`           | `adjutant-sandbox`                                                      | sandbox container 名の prefix                       |
@@ -487,16 +488,39 @@ flowchart LR
 - `memory_get` は allowlist（`MEMORY.md`, `memory/*.md`）+ workspace 内 + symlink 拒否で path を検証する。
 - 例外は throw せず、`disabled/error` を含む tool 契約レスポンスへ正規化する。
 
-### 13.7 Bash Sandbox（Docker）
+### 13.7 Agent Sandbox（Docker）
 
-- `ADJUTANT_SANDBOX_MODE=off`（既定）では従来どおりホスト実行。
-- `ADJUTANT_SANDBOX_MODE=non-main` では `memoryScope=main` 以外（spoke）の bash 実行のみをコンテナ化。
-- `ADJUTANT_SANDBOX_MODE=all` では heartbeat を除く全セッションの bash 実行をコンテナ化。
+- `ADJUTANT_SANDBOX_MODE=all`（既定）では heartbeat を除く全セッションの `bash` / `read` / `write` / `edit` / `grep` / `find` / `ls` をコンテナ化。
+- `ADJUTANT_SANDBOX_MODE=non-main` では `memoryScope=main` 以外（spoke）の同ツール実行のみをコンテナ化。
+- `ADJUTANT_SANDBOX_MODE=off` では従来どおりホスト実行。
 - 起動時 (`src/assistant/main.ts`) は以下順で fail-safe 初期化する。
   1. Docker daemon 可用性確認（不可なら起動中断）
   2. sandbox image 存在確認（未存在時は `ADJUTANT_SANDBOX_AUTO_BUILD_IMAGE=true` なら自動 build）
   3. owner nonce 付きコンテナ確保（`{prefix}-{nonce}`）
   4. `configureSandbox()` でセッションファクトリへ注入
 - コンテナ生成時は `adjutant.sandbox.owner=<nonce>` を付与し、shutdown 時は owner 一致時のみ `docker rm -f` を実行する（他プロセスのコンテナは破壊しない）。
-- bash 実行は `docker exec -i -w <mappedCwd> <container> bash -lc "<command>"` を使用し、ホスト workspace は bind mount で共有する。
+- `bash` は `docker exec -i -w <mappedCwd> <container> bash -lc "<command>"` を使用し、ホスト workspace は bind mount で共有する。
+- `read` / `write` / `edit` / `grep` / `find` / `ls` も sandbox 対象時はコンテナ内実行へ差し替える。
 - sandbox イメージには `bash` / `git` / `curl` / `jq` / `rg`（ripgrep）を同梱する。
+
+### 13.8 Heartbeat 実行契約（OpenClaw alignment）
+
+- heartbeat 判定は tool 呼び出しではなく assistant 最終テキストで行う。
+  - `HEARTBEAT_OK`（前後空白許容、行頭/行末トークン）: OK 扱いで通知抑制（`ok-empty` / `ok-token`）
+  - それ以外: alert 本文として配信対象（`sent`）
+  - `HEARTBEAT_OK` の文中混在は ACK とみなさない。
+- `report_heartbeat_status` ツール契約は廃止し、未呼び出しを失敗理由にしない。
+- heartbeat ターンの prompt には `HEARTBEAT_META` ブロックを付与する。
+  - `source`, `session_key`, `trigger_reason`, `run_at`
+- heartbeat ターンの custom message details には `adjutant.heartbeat.turn.v1` を付与する。
+- heartbeat 結果は `<stateDir>/heartbeat-runs.jsonl` に記録する。
+  - `result.status`（`ran|skipped|failed`）
+  - `eventStatus`（`sent|ok-empty|ok-token|skipped|failed`）
+  - `eventReason` / `preview` / `triggerReason` / `modelId`
+- UI サイドバーの Heartbeat タブは `/api/heartbeat/history` を使用し、実行結果を履歴表示する。
+
+### 13.9 通常ターンと heartbeat ターンの指示スコープ
+
+- Project Context に `HEARTBEAT.md` が含まれる場合でも、通常ユーザーターンでは heartbeat 指示を実行しない。
+- `AGENTS.md` と Project Context ヘッダの両方で、`HEARTBEAT.md` の適用範囲を heartbeat ターン限定として明示する。
+- heartbeat 実行ターンの識別は `isHeartbeat=true` と `HEARTBEAT_META` / custom details で機械判定できる。

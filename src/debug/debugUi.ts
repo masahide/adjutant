@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { SlackIdentityProbe, type SlackRequestWillBeSentPayload } from "./slackIdentityProbe.js";
 
 export type DebugUiEvent = {
   source: string;
@@ -11,6 +12,8 @@ type DebugUiServerOptions = {
   port: number;
   host?: string;
   maxEvents?: number;
+  channelCachePath?: string;
+  userCachePath?: string;
 };
 
 type SseClient = {
@@ -19,12 +22,14 @@ type SseClient = {
 };
 
 const DEFAULT_MAX_EVENTS = 500;
+const MAX_JSON_BODY_BYTES = 1_000_000;
 
 export class DebugUiServer {
   private readonly port: number;
   private readonly host: string;
   private readonly maxEvents: number;
   private readonly events: DebugUiEvent[] = [];
+  private readonly slackIdentityProbe: SlackIdentityProbe;
   private readonly clients = new Map<number, SseClient>();
   private nextClientId = 1;
   private server = createServer((req, res) => this.handleRequest(req, res));
@@ -33,6 +38,10 @@ export class DebugUiServer {
     this.port = options.port;
     this.host = options.host ?? "127.0.0.1";
     this.maxEvents = options.maxEvents ?? DEFAULT_MAX_EVENTS;
+    this.slackIdentityProbe = new SlackIdentityProbe({
+      channelCachePath: options.channelCachePath,
+      userCachePath: options.userCachePath,
+    });
   }
 
   async start(): Promise<void> {
@@ -68,6 +77,15 @@ export class DebugUiServer {
 
   private handleRequest(req: IncomingMessage, res: ServerResponse<IncomingMessage>): void {
     const url = new URL(req.url ?? "/", `http://${this.host}:${this.port}`);
+    if (url.pathname === "/api/slack/resolve-identities") {
+      if (req.method !== "POST") {
+        res.writeHead(405, { "content-type": "application/json; charset=utf-8" });
+        res.end(JSON.stringify({ ok: false, error: "method_not_allowed" }));
+        return;
+      }
+      void this.handleSlackIdentityProbeRequest(req, res);
+      return;
+    }
     if (url.pathname === "/events") {
       this.handleEvents(res);
       return;
@@ -111,9 +129,91 @@ export class DebugUiServer {
     return `event: debug\ndata: ${JSON.stringify(event)}\n\n`;
   }
 
+  private async handleSlackIdentityProbeRequest(
+    req: IncomingMessage,
+    res: ServerResponse<IncomingMessage>
+  ): Promise<void> {
+    try {
+      const raw = await this.readRequestBody(req, MAX_JSON_BODY_BYTES);
+      const parsed = this.parseJsonObject(raw);
+      if (!parsed) {
+        this.writeJsonWithStatus(res, 400, { ok: false, error: "invalid_json" });
+        return;
+      }
+      const requestPayload = this.asRecord(parsed.request);
+      if (!requestPayload) {
+        this.writeJsonWithStatus(res, 400, { ok: false, error: "request_required" });
+        return;
+      }
+
+      const probeInput: SlackRequestWillBeSentPayload = {
+        requestId: this.asString(requestPayload.requestId),
+        method: this.asString(requestPayload.method),
+        url: this.asString(requestPayload.url),
+        contentType: this.asString(requestPayload.contentType),
+        body: requestPayload.body,
+      };
+      const result = await this.slackIdentityProbe.resolve(probeInput);
+      this.writeJsonWithStatus(res, 200, { ok: true, result });
+    } catch (error) {
+      this.writeJsonWithStatus(res, 500, {
+        ok: false,
+        error: error instanceof Error ? error.message : "probe_failed",
+      });
+    }
+  }
+
   private writeJson(res: ServerResponse<IncomingMessage>, value: unknown): void {
     res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
     res.end(JSON.stringify(value));
+  }
+
+  private writeJsonWithStatus(
+    res: ServerResponse<IncomingMessage>,
+    status: number,
+    value: unknown
+  ): void {
+    res.writeHead(status, { "content-type": "application/json; charset=utf-8" });
+    res.end(JSON.stringify(value));
+  }
+
+  private async readRequestBody(req: IncomingMessage, maxBytes: number): Promise<string> {
+    let size = 0;
+    const chunks: Buffer[] = [];
+    await new Promise<void>((resolve, reject) => {
+      req.on("data", (chunk) => {
+        const part = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+        size += part.length;
+        if (size > maxBytes) {
+          reject(new Error("payload_too_large"));
+          req.destroy();
+          return;
+        }
+        chunks.push(part);
+      });
+      req.on("end", () => resolve());
+      req.on("error", reject);
+    });
+    return Buffer.concat(chunks).toString("utf8");
+  }
+
+  private parseJsonObject(value: string): Record<string, unknown> | null {
+    try {
+      const parsed = JSON.parse(value);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+      return parsed as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+  }
+
+  private asRecord(value: unknown): Record<string, unknown> | null {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    return value as Record<string, unknown>;
+  }
+
+  private asString(value: unknown): string | undefined {
+    return typeof value === "string" ? value : undefined;
   }
 
   private renderHtml(): string {
@@ -134,6 +234,21 @@ export class DebugUiServer {
     .row { display:flex; gap:8px; align-items:center; margin-bottom:10px; flex-wrap:wrap; }
     input, select, button { background:#101833; color:var(--fg); border:1px solid var(--line); padding:6px 8px; border-radius:6px; }
     button { cursor:pointer; }
+    .layout { flex:1; min-height:0; display:grid; grid-template-columns:minmax(0,1fr) 420px; gap:10px; overflow:hidden; }
+    .left-pane { min-height:0; display:flex; flex-direction:column; overflow:hidden; }
+    .right-pane { min-height:0; display:flex; flex-direction:column; border:1px solid var(--line); border-radius:8px; background:#101833; overflow:hidden; }
+    .probe-head { display:flex; align-items:center; gap:8px; padding:8px 10px; border-bottom:1px solid var(--line); background:#121c3f; font-size:12px; }
+    .probe-list { min-height:0; overflow:auto; display:flex; flex-direction:column; gap:8px; padding:10px; }
+    .probe-item { border:1px solid var(--line); border-radius:6px; overflow:hidden; }
+    .probe-meta { display:flex; gap:8px; align-items:center; padding:6px 8px; border-bottom:1px solid var(--line); background:#0f1737; font-size:12px; }
+    .probe-body { padding:8px; display:flex; flex-direction:column; gap:6px; }
+    .probe-pre { margin:0; padding:8px; white-space:pre-wrap; word-break:break-word; max-height:220px; overflow:auto; background:#0b1020; border:1px solid var(--line); border-radius:4px; }
+    .probe-call { border:1px solid var(--line); border-radius:4px; padding:6px; background:#0d1430; }
+    .probe-call-title { font-size:12px; margin-bottom:4px; }
+    .status-ok { color:var(--ok); }
+    .status-warn { color:var(--warn); }
+    .status-error { color:var(--danger); }
+    .probe-empty { color:var(--muted); padding:8px; }
     .list { display:flex; flex-direction:column; gap:8px; flex:1; min-height:0; overflow:auto; padding-right:4px; }
     .item { flex:0 0 auto; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
     .meta { display:flex; gap:10px; padding:8px 10px; background:#121c3f; border-bottom:1px solid var(--line); font-size:12px; align-items:center; }
@@ -148,6 +263,10 @@ export class DebugUiServer {
     .tag-auth-off { color: var(--muted); border-color: rgba(147,164,209,.5); }
     mark { background: #f6d365; color: #111; padding: 0 1px; border-radius: 2px; }
     pre { margin:0; padding:10px; white-space:pre-wrap; word-break:break-word; max-height:none; overflow:visible; }
+    @media (max-width: 1280px) {
+      .layout { grid-template-columns:minmax(0,1fr); }
+      .right-pane { max-height:260px; }
+    }
   </style>
 </head>
 <body>
@@ -178,7 +297,19 @@ export class DebugUiServer {
       <button id="clearBtn" type="button">clear</button>
     </div>
     <div class="hint" id="filterState"></div>
-    <div class="list" id="eventList"></div>
+    <div class="layout">
+      <div class="left-pane">
+        <div class="list" id="eventList"></div>
+      </div>
+      <aside class="right-pane">
+        <div class="probe-head">
+          <strong>Probe Results</strong>
+          <span class="muted" id="probeState">0 entries</span>
+          <button id="clearProbeBtn" type="button">clear</button>
+        </div>
+        <div class="probe-list" id="probeList"></div>
+      </aside>
+    </div>
   </main>
   <script>
     const statusEl = document.getElementById("status");
@@ -195,14 +326,18 @@ export class DebugUiServer {
     const resetBtnEl = document.getElementById("resetBtn");
     const clearBtnEl = document.getElementById("clearBtn");
     const filterStateEl = document.getElementById("filterState");
+    const probeListEl = document.getElementById("probeList");
+    const probeStateEl = document.getElementById("probeState");
+    const clearProbeBtnEl = document.getElementById("clearProbeBtn");
     const events = [];
+    const probeResults = [];
     const collapsedByRaw = new Set();
     let defaultCollapsed = false;
     let paused = false;
     let connected = false;
     let bufferedWhilePaused = 0;
 
-    const escapeHtml = (s) => s.replace(/[&<>]/g, (ch) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;" }[ch]));
+    const escapeHtml = (s) => String(s ?? "").replace(/[&<>]/g, (ch) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;" }[ch]));
     const normalize = (s) => String(s ?? "").trim().toLowerCase();
     const parseSearchTerms = (value) =>
       String(value ?? "")
@@ -351,6 +486,54 @@ export class DebugUiServer {
       updateStatus();
     };
 
+    function renderProbeResults() {
+      if (!probeListEl || !probeStateEl) return;
+      const shown = probeResults.slice(0, 50);
+      probeStateEl.textContent = probeResults.length + " entries";
+      if (shown.length === 0) {
+        probeListEl.innerHTML = '<div class="probe-empty">No probe results yet.</div>';
+        return;
+      }
+      probeListEl.innerHTML = shown.map((entry) => {
+        const statusClass =
+          entry.status === "ok" ? "status-ok" : (entry.status === "warn" ? "status-warn" : "status-error");
+        const callBlocks =
+          Array.isArray(entry.calls) && entry.calls.length > 0
+            ? entry.calls
+                .map((call) => {
+                  return '<div class="probe-call">' +
+                    '<div class="probe-call-title">' + escapeHtml(call.endpoint) + " status=" + escapeHtml(call.status) + '</div>' +
+                    '<pre class="probe-pre">request: ' + escapeHtml(JSON.stringify(call.request, null, 2)) + '\\nresponse: ' + escapeHtml(JSON.stringify(call.response, null, 2)) + '</pre>' +
+                  '</div>';
+                })
+                .join("")
+            : '<div class="muted">API call trace: none</div>';
+        const warnings =
+          entry.warnings && entry.warnings.length > 0
+            ? '<div class="muted">warnings: ' + escapeHtml(entry.warnings.join(" | ")) + '</div>'
+            : "";
+        return '<article class="probe-item">' +
+          '<div class="probe-meta">' +
+          '<span class="tag ' + statusClass + '">' + escapeHtml(entry.status) + '</span>' +
+          '<span class="muted">' + escapeHtml(entry.at) + '</span>' +
+          '</div>' +
+          '<div class="probe-body">' +
+          '<div>' + escapeHtml(entry.title) + '</div>' +
+          '<div class="muted">' + escapeHtml(entry.subtitle) + '</div>' +
+          warnings +
+          callBlocks +
+          '<pre class="probe-pre">' + escapeHtml(entry.detail) + '</pre>' +
+          '</div>' +
+        '</article>';
+      }).join("");
+    }
+
+    function addProbeResult(entry) {
+      probeResults.unshift(entry);
+      if (probeResults.length > 200) probeResults.splice(200);
+      renderProbeResults();
+    }
+
     function render() {
       const kindFilter = kindFilterEl.value;
       const stageFilter = stageFilterEl.value.trim().toLowerCase();
@@ -382,6 +565,8 @@ export class DebugUiServer {
         const stage = normalize(ev?.payload?.stage);
         const authTags = buildAuthTags(ev);
         const isCollapsed = defaultCollapsed || collapsedByRaw.has(raw);
+        const canProbe = ev.kind === "raw_fetch" && stage === "requestwillbesent";
+        const payloadRaw = encodeURIComponent(JSON.stringify(ev.payload ?? {}));
         return '<article class="item">' +
           '<div class="meta">' +
           '<span class="tag kind-' + ev.kind + '">' + escapeHtml(ev.kind) + '</span>' +
@@ -389,6 +574,7 @@ export class DebugUiServer {
           authTags +
           '<span>' + escapeHtml(ev.source) + '</span>' +
           '<span class="muted">' + escapeHtml(ev.at) + '</span>' +
+          (canProbe ? '<button class="probe-btn" data-payload="' + payloadRaw + '" type="button">resolve names</button>' : '') +
           '<button class="toggle-btn" data-copy="' + raw + '" type="button">' + (isCollapsed ? "expand" : "collapse") + '</button>' +
           '<button class="copy-btn" data-copy="' + raw + '" data-idx="' + idx + '" type="button">copy</button>' +
           '</div>' +
@@ -411,6 +597,10 @@ export class DebugUiServer {
     clearBtnEl.addEventListener("click", () => {
       events.length = 0;
       render();
+    });
+    clearProbeBtnEl.addEventListener("click", () => {
+      probeResults.length = 0;
+      renderProbeResults();
     });
     kindFilterEl.addEventListener("change", render);
     stageFilterEl.addEventListener("input", render);
@@ -445,6 +635,68 @@ export class DebugUiServer {
       if (!t || !(t instanceof HTMLElement)) return;
       const btn = t.closest(".copy-btn");
       const toggleBtn = t.closest(".toggle-btn");
+      const probeBtn = t.closest(".probe-btn");
+      if (probeBtn) {
+        const encodedPayload = probeBtn.getAttribute("data-payload");
+        if (!encodedPayload) return;
+        const originalText = probeBtn.textContent;
+        probeBtn.setAttribute("disabled", "true");
+        probeBtn.textContent = "resolving...";
+        try {
+          const payload = JSON.parse(decodeURIComponent(encodedPayload));
+          const response = await fetch("/api/slack/resolve-identities", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ request: payload }),
+          });
+          const responseJson = await response.json();
+          if (!response.ok || !responseJson?.ok) {
+            addProbeResult({
+              at: new Date().toISOString(),
+              status: "error",
+              title: "probe request failed",
+              subtitle: String(payload.url ?? ""),
+              warnings: [],
+              calls: [],
+              detail: JSON.stringify(responseJson, null, 2),
+            });
+          } else {
+            const probe = responseJson.result ?? {};
+            const userName = probe?.usersInfo?.name ?? "(unknown)";
+            const channelName = probe?.conversationsInfo?.name ?? "(unknown)";
+            addProbeResult({
+              at: new Date().toISOString(),
+              status: probe?.ok ? "ok" : "warn",
+              title: "user: " + userName + " / channel: " + channelName,
+              subtitle:
+                (probe?.requestId ? "requestId=" + probe.requestId + " " : "") +
+                String(probe?.url ?? ""),
+              warnings: Array.isArray(probe?.warnings) ? probe.warnings : [],
+              calls: Array.isArray(probe?.apiCalls) ? probe.apiCalls.map((call) => ({
+                endpoint: String(call?.endpoint ?? ""),
+                status: String(call?.response?.status ?? ""),
+                request: call?.request ?? {},
+                response: call?.response ?? {},
+              })) : [],
+              detail: JSON.stringify(probe, null, 2),
+            });
+          }
+        } catch (error) {
+          addProbeResult({
+            at: new Date().toISOString(),
+            status: "error",
+            title: "probe execution error",
+            subtitle: "debug-ui",
+            warnings: [],
+            calls: [],
+            detail: String(error ?? "unknown_error"),
+          });
+        } finally {
+          probeBtn.removeAttribute("disabled");
+          probeBtn.textContent = originalText || "resolve names";
+        }
+        return;
+      }
       if (toggleBtn) {
         const encodedToggle = toggleBtn.getAttribute("data-copy");
         if (!encodedToggle) return;
@@ -488,6 +740,7 @@ export class DebugUiServer {
         }
       })
       .catch(() => {});
+    renderProbeResults();
 
     const es = new EventSource("/events");
     es.addEventListener("open", () => { connected = true; updateStatus(); });

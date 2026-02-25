@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { SessionManager } from "@mariozechner/pi-coding-agent";
@@ -29,6 +29,13 @@ function getTool(session: AgentSessionLike, name: string): ToolLike {
 
 function getBashTool(session: AgentSessionLike): ToolLike {
   return getTool(session, "bash");
+}
+
+function getFileTool(
+  session: AgentSessionLike,
+  name: "read" | "write" | "edit" | "grep" | "find" | "ls"
+): ToolLike {
+  return getTool(session, name);
 }
 
 async function createTestSession(params: {
@@ -101,7 +108,95 @@ describe("agent-session-factory sandbox bash", () => {
     }
   });
 
-  it("heartbeat セッションでは report_heartbeat_status ツールが利用できる", async () => {
+  it("sandbox 有効時は read/write/edit/grep/find/ls が docker 経由になる", async () => {
+    const workspaceDir = await mkdtemp(join(tmpdir(), "adjutant-session-file-tool-sandbox-"));
+    const containerName = `adjutant-missing-${Date.now()}`;
+    configureSandbox({
+      containerName,
+      hostWorkspaceDir: workspaceDir,
+      workdir: "/workspace",
+      mode: "all",
+    });
+
+    try {
+      const session = await createTestSession({
+        workspaceDir,
+        memoryScope: "spoke",
+        isHeartbeat: false,
+      });
+
+      const readTool = getFileTool(session, "read");
+      const writeTool = getFileTool(session, "write");
+      const editTool = getFileTool(session, "edit");
+      const grepTool = getFileTool(session, "grep");
+      const findTool = getFileTool(session, "find");
+      const lsTool = getFileTool(session, "ls");
+
+      await assert.rejects(
+        readTool.execute("tool-read", { path: "/workspace/test.txt" } as unknown),
+        /docker|container|not found|No such container|Command exited with code/i
+      );
+      await assert.rejects(
+        writeTool.execute("tool-write", { path: "/workspace/test.txt", content: "x" } as unknown),
+        /docker|container|not found|No such container|Command exited with code/i
+      );
+      await assert.rejects(
+        editTool.execute("tool-edit", {
+          path: "/workspace/test.txt",
+          oldText: "a",
+          newText: "b",
+        } as unknown),
+        /docker|container|not found|No such container|Command exited with code/i
+      );
+      await assert.rejects(
+        grepTool.execute("tool-grep", { pattern: "TODO", path: "/workspace" } as unknown),
+        /docker|container|not found|No such container|Command exited with code/i
+      );
+      await assert.rejects(
+        findTool.execute("tool-find", { pattern: "*.ts", path: "/workspace" } as unknown),
+        /docker|container|not found|No such container|Command exited with code/i
+      );
+      await assert.rejects(
+        lsTool.execute("tool-ls", { path: "/workspace" } as unknown),
+        /docker|container|not found|No such container|Command exited with code/i
+      );
+
+      session.dispose();
+    } finally {
+      configureSandbox(null);
+      await rm(workspaceDir, { recursive: true, force: true });
+    }
+  });
+
+  it("sandbox 非対象（non-main + main scope）では file tools がローカル実行される", async () => {
+    const workspaceDir = await mkdtemp(join(tmpdir(), "adjutant-session-file-tool-local-"));
+    await writeFile(join(workspaceDir, "note.txt"), "local-file-check\n", "utf-8");
+    configureSandbox({
+      containerName: `adjutant-missing-${Date.now()}`,
+      hostWorkspaceDir: workspaceDir,
+      workdir: "/workspace",
+      mode: "non-main",
+    });
+    try {
+      const session = await createTestSession({
+        workspaceDir,
+        memoryScope: "main",
+        isHeartbeat: false,
+      });
+      const readTool = getFileTool(session, "read");
+      const result = (await readTool.execute("tool-call-read-local", {
+        path: "note.txt",
+      } as unknown)) as { content?: Array<{ type: string; text?: string }> };
+      const text = result.content?.[0]?.text ?? "";
+      assert.match(text, /local-file-check/);
+      session.dispose();
+    } finally {
+      configureSandbox(null);
+      await rm(workspaceDir, { recursive: true, force: true });
+    }
+  });
+
+  it("heartbeat セッションでは report_heartbeat_status ツールを登録しない", async () => {
     const workspaceDir = await mkdtemp(join(tmpdir(), "adjutant-session-heartbeat-"));
     configureSandbox(null);
     try {
@@ -111,23 +206,10 @@ describe("agent-session-factory sandbox bash", () => {
         isHeartbeat: true,
       });
       assert.equal(typeof session.sendCustomMessage, "function");
-      const reportTool = getTool(session, "report_heartbeat_status");
-      const result = (await reportTool.execute("tool-call-heartbeat", {
-        status: "no_action_needed",
-        notify: false,
-        reason: "no urgent items",
-      })) as {
-        details?: {
-          status?: string;
-          notify?: boolean;
-          reason?: string;
-        };
-      };
-      assert.deepEqual(result.details, {
-        status: "no_action_needed",
-        notify: false,
-        reason: "no urgent items",
-      });
+      const tools =
+        (session as AgentSessionLike & { state: { tools: ToolLike[] } }).state?.tools ?? [];
+      const reportTool = tools.find((tool) => tool.name === "report_heartbeat_status");
+      assert.equal(reportTool, undefined);
       session.dispose();
     } finally {
       await rm(workspaceDir, { recursive: true, force: true });

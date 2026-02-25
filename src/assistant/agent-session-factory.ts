@@ -12,16 +12,13 @@ import type { AgentAuditScope } from "./agent-audit.js";
 import { createMemoryToolDefinitions } from "./memory-search/index.js";
 import { createDockerBashOperations, shouldSandbox } from "../sandbox/docker-bash-operations.js";
 import type { SandboxMode } from "../sandbox/types.js";
-import {
-  REPORT_HEARTBEAT_STATUS_TOOL,
-  validateReportHeartbeatStatusInput,
-} from "../proactive/routing-tools.js";
 import { parseBooleanEnv } from "../runtime/env-parsers.js";
 import { createToolHubToolDefinition, ProviderRegistry, ToolHub } from "./dynamic-tool/index.js";
 import {
   createSlackDynamicProviderFromEnv,
   isSlackApiToolsEnabled,
 } from "./slack-api-tools/index.js";
+import { createContainerizedFileTools } from "./containerized-file-tool-operations.js";
 
 export type AgentSessionLike = {
   subscribe: (listener: (event: unknown) => void) => () => void;
@@ -161,33 +158,6 @@ function createMemoryWriteToolDefinition(): ToolDefinition {
   };
 }
 
-function createReportHeartbeatStatusToolDefinition(): ToolDefinition {
-  return {
-    name: REPORT_HEARTBEAT_STATUS_TOOL.name,
-    label: "Heartbeat Status",
-    description: REPORT_HEARTBEAT_STATUS_TOOL.description,
-    parameters: {
-      type: "object",
-      properties: {
-        status: {
-          enum: ["no_action_needed", "needs_attention", "task_completed"],
-        },
-        notify: { type: "boolean" },
-        reason: { type: "string", minLength: 1 },
-      },
-      required: ["status", "notify", "reason"],
-      additionalProperties: false,
-    } as never,
-    execute: async (_toolCallId, params) => {
-      const accepted = validateReportHeartbeatStatusInput(params);
-      return {
-        content: [{ type: "text", text: "heartbeat status accepted" }],
-        details: accepted,
-      };
-    },
-  };
-}
-
 export async function createAgentSessionFromSdk(
   params: CreateAgentSessionParams
 ): Promise<{ session: AgentSessionLike }> {
@@ -215,9 +185,6 @@ export async function createAgentSessionFromSdk(
     }
     const toolHub = new ToolHub(providerRegistry);
     customTools.push(createToolHubToolDefinition(toolHub));
-  }
-  if (params.isHeartbeat) {
-    customTools.push(createReportHeartbeatStatusToolDefinition());
   }
   if (params.memoryScope === "main") {
     customTools.push(
@@ -255,6 +222,12 @@ export async function createAgentSessionFromSdk(
       }),
     });
     customTools.push(sandboxedBash as unknown as ToolDefinition);
+    customTools.push(
+      ...createContainerizedFileTools({
+        containerName: currentSandbox.containerName,
+        containerWorkdir: currentSandbox.workdir,
+      })
+    );
   }
 
   const created = await createAgentSession({
