@@ -1,6 +1,5 @@
 import type { FetchPausedEvent } from "./slackIngressHandlers.js";
 import type { SlackDebug } from "./slackDebug.js";
-import { extractSlackAuthDebugInfo } from "./slackAuthDebug.js";
 
 const JSONISH_PAYLOAD_KEYS = new Set(["blocks", "item", "attachments", "metadata", "message"]);
 
@@ -30,117 +29,6 @@ export type SlackIngressRequestParserDeps = {
   truncateForDebug: (value: string, max: number) => string;
 };
 
-type ParseSlackRequestBodyOptions = {
-  onError?: (message: string) => void;
-};
-
-export function parseSlackRequestBody(
-  body: string,
-  contentType: string,
-  options?: ParseSlackRequestBodyOptions
-): Record<string, unknown> | null {
-  if (!body) return {};
-  if (/application\/json|text\/json/i.test(contentType) || body.trim().startsWith("{")) {
-    try {
-      return JSON.parse(body);
-    } catch {
-      options?.onError?.("failed to parse JSON body");
-      return null;
-    }
-  }
-
-  if (/application\/x-www-form-urlencoded/i.test(contentType)) {
-    try {
-      const params = new URLSearchParams(body);
-      const result: Record<string, unknown> = {};
-      for (const [key, value] of params.entries()) {
-        result[key] = value;
-        if (key === "payload") {
-          try {
-            const parsed = JSON.parse(value);
-            Object.assign(result, parsed);
-          } catch {
-            options?.onError?.("failed to parse nested payload JSON");
-          }
-        }
-      }
-      return result;
-    } catch {
-      options?.onError?.("failed to parse form body");
-      return null;
-    }
-  }
-
-  if (/multipart\/form-data/i.test(contentType)) {
-    const boundaryMatch = contentType.match(/boundary=([^;]+)/i);
-    if (!boundaryMatch) {
-      options?.onError?.("missing multipart boundary");
-      return null;
-    }
-
-    const boundary = `--${boundaryMatch[1].replace(/^["']|["']$/g, "")}`;
-    const segments = body.split(boundary);
-    const result: Record<string, unknown> = {};
-
-    for (const segment of segments) {
-      const trimmed = segment.trim();
-      if (!trimmed || trimmed === "--") continue;
-
-      const [headerSection, ...valueSections] = trimmed.split("\r\n\r\n");
-      if (!headerSection || valueSections.length === 0) continue;
-
-      const headers = headerSection.split("\r\n");
-      const disposition = headers.find((line) => /content-disposition/i.test(line)) ?? "";
-      const nameMatch = disposition.match(/name="([^"]+)"/i);
-      if (!nameMatch) continue;
-
-      let value = valueSections.join("\r\n\r\n");
-      value = value.replace(/\r\n--$/, "");
-      const normalizedValue = value.trim();
-
-      result[nameMatch[1]] = normalizedValue;
-      if (nameMatch[1] === "payload") {
-        try {
-          const parsed = JSON.parse(normalizedValue);
-          Object.assign(result, parsed);
-        } catch {
-          options?.onError?.("failed to parse multipart payload JSON");
-        }
-      }
-    }
-
-    return result;
-  }
-
-  if (/^text\//i.test(contentType)) {
-    const trimmed = body.trim();
-    if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
-      try {
-        const parsed = JSON.parse(trimmed);
-        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-          return parsed as Record<string, unknown>;
-        }
-      } catch {
-        options?.onError?.("failed to parse text/* JSON body");
-        return null;
-      }
-    }
-  }
-
-  return null;
-}
-
-export function normalizeSlackParsedPayload(
-  payload: Record<string, unknown>
-): Record<string, unknown> {
-  const normalized: Record<string, unknown> = { ...payload };
-  for (const [key, value] of Object.entries(normalized)) {
-    if (!JSONISH_PAYLOAD_KEYS.has(key)) continue;
-    normalized[key] = parseJsonIfString(value);
-  }
-  return normalized;
-}
-
 export class SlackIngressRequestParser {
   constructor(private readonly deps: SlackIngressRequestParserDeps) {}
 
@@ -150,25 +38,17 @@ export class SlackIngressRequestParser {
 
     const body = event.request.postData ?? "";
     const contentType = this.normalizeHeader(event.request.headers, "content-type");
-    const authDebug = extractSlackAuthDebugInfo({
-      headers: event.request.headers,
-      body,
-    });
     this.deps.pushDebugEvent("raw_fetch", {
-      stage: "requestPaused",
       method: event.request.method,
       url: event.request.url,
       urlInfo: this.parseUrlInfo(event.request.url),
       contentType,
-      authDebug,
       body: this.deps.truncateForDebug(body, 4000),
     });
 
     const url = new URL(event.request.url);
-    const parsedPayload = parseSlackRequestBody(body, contentType, {
-      onError: (message) => this.deps.slackDebug.debug(message),
-    });
-    const payload = parsedPayload ? normalizeSlackParsedPayload(parsedPayload) : null;
+    const parsedPayload = this.parseBody(body, contentType);
+    const payload = parsedPayload ? this.normalizeParsedPayload(parsedPayload) : null;
     if (!payload) {
       this.deps.slackDebug.debug("parseBody returned null", {
         url: event.request.url,
@@ -225,17 +105,103 @@ export class SlackIngressRequestParser {
       return null;
     }
   }
-}
 
-function parseJsonIfString(value: unknown): unknown {
-  if (typeof value !== "string") return value;
-  const trimmed = value.trim();
-  if (!trimmed) return value;
-  const prefix = trimmed[0];
-  if (prefix !== "{" && prefix !== "[") return value;
-  try {
-    return JSON.parse(trimmed);
-  } catch {
-    return value;
+  private parseBody(body: string, contentType: string): Record<string, unknown> | null {
+    if (!body) return {};
+    if (/application\/json|text\/json/i.test(contentType) || body.trim().startsWith("{")) {
+      try {
+        return JSON.parse(body);
+      } catch {
+        this.deps.slackDebug.debug("failed to parse JSON body");
+        return null;
+      }
+    }
+
+    if (/application\/x-www-form-urlencoded/i.test(contentType)) {
+      try {
+        const params = new URLSearchParams(body);
+        const result: Record<string, unknown> = {};
+        for (const [key, value] of params.entries()) {
+          result[key] = value;
+          if (key === "payload") {
+            try {
+              const parsed = JSON.parse(value);
+              Object.assign(result, parsed);
+            } catch {
+              this.deps.slackDebug.debug("failed to parse nested payload JSON");
+            }
+          }
+        }
+        return result;
+      } catch {
+        this.deps.slackDebug.debug("failed to parse form body");
+        return null;
+      }
+    }
+
+    if (/multipart\/form-data/i.test(contentType)) {
+      const boundaryMatch = contentType.match(/boundary=([^;]+)/i);
+      if (!boundaryMatch) {
+        this.deps.slackDebug.debug("missing multipart boundary");
+        return null;
+      }
+
+      const boundary = `--${boundaryMatch[1].replace(/^["']|["']$/g, "")}`;
+      const segments = body.split(boundary);
+      const result: Record<string, unknown> = {};
+
+      for (const segment of segments) {
+        const trimmed = segment.trim();
+        if (!trimmed || trimmed === "--") continue;
+
+        const [headerSection, ...valueSections] = trimmed.split("\r\n\r\n");
+        if (!headerSection || valueSections.length === 0) continue;
+
+        const headers = headerSection.split("\r\n");
+        const disposition = headers.find((line) => /content-disposition/i.test(line)) ?? "";
+        const nameMatch = disposition.match(/name="([^"]+)"/i);
+        if (!nameMatch) continue;
+
+        let value = valueSections.join("\r\n\r\n");
+        value = value.replace(/\r\n--$/, "");
+        const normalizedValue = value.trim();
+
+        result[nameMatch[1]] = normalizedValue;
+        if (nameMatch[1] === "payload") {
+          try {
+            const parsed = JSON.parse(normalizedValue);
+            Object.assign(result, parsed);
+          } catch {
+            this.deps.slackDebug.debug("failed to parse multipart payload JSON");
+          }
+        }
+      }
+
+      return result;
+    }
+
+    return null;
+  }
+
+  private normalizeParsedPayload(payload: Record<string, unknown>): Record<string, unknown> {
+    const normalized: Record<string, unknown> = { ...payload };
+    for (const [key, value] of Object.entries(normalized)) {
+      if (!JSONISH_PAYLOAD_KEYS.has(key)) continue;
+      normalized[key] = this.parseJsonIfString(value);
+    }
+    return normalized;
+  }
+
+  private parseJsonIfString(value: unknown): unknown {
+    if (typeof value !== "string") return value;
+    const trimmed = value.trim();
+    if (!trimmed) return value;
+    const prefix = trimmed[0];
+    if (prefix !== "{" && prefix !== "[") return value;
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      return value;
+    }
   }
 }

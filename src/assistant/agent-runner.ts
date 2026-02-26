@@ -40,7 +40,6 @@ import {
   resolveAgentRunContext,
   shouldInjectBootstrapContext,
 } from "./agent-prompt-builder.js";
-import type { HeartbeatTurnMetadata } from "./agent-run-context.js";
 import { AgentRunExecutor } from "./agent-run-executor.js";
 import {
   createSessionWithRecovery as createSessionWithRecoveryFromPersistence,
@@ -69,7 +68,6 @@ export type AgentRunOptions = {
   onTextDelta?: (delta: string) => void;
   onToolCall?: (name: string, params: unknown) => void;
   isAborted?: () => boolean;
-  heartbeatMeta?: HeartbeatTurnMetadata;
   onTerminalRecord?: (input: {
     runId: string;
     sessionKey: string;
@@ -395,9 +393,7 @@ async function promptWithRetry(params: {
   session: SessionLike;
   prompt: string;
   runId: string;
-  sessionKey: string;
   isHeartbeat: boolean;
-  heartbeatMeta?: HeartbeatTurnMetadata;
   runtime: AgentRunnerRuntime;
   compactionEnabled: boolean;
   onCompactionCompleted?: () => void;
@@ -409,22 +405,12 @@ async function promptWithRetry(params: {
   for (;;) {
     try {
       if (params.isHeartbeat && typeof params.session.sendCustomMessage === "function") {
-        const heartbeatDetails = {
-          schema: "adjutant.heartbeat.turn.v1",
-          runId: params.runId,
-          sessionKey: params.sessionKey,
-          source: "heartbeat" as const,
-          ...(params.heartbeatMeta?.triggerReason
-            ? { triggerReason: params.heartbeatMeta.triggerReason }
-            : {}),
-          ...(params.heartbeatMeta?.runAt ? { runAt: params.heartbeatMeta.runAt } : {}),
-        };
         await params.session.sendCustomMessage(
           {
             customType: HEARTBEAT_CUSTOM_MESSAGE_TYPE,
             content: prompt,
             display: false,
-            details: heartbeatDetails,
+            details: { runId: params.runId },
           },
           { triggerTurn: true }
         );
@@ -646,8 +632,6 @@ async function runAgentInternal(opts: AgentRunOptions): Promise<AgentRunResult> 
         runId: context.runId,
         origin: context.origin,
         sessionKey: context.sessionKey,
-        isHeartbeat: context.isHeartbeat,
-        ...(context.heartbeatMeta ? { heartbeatMeta: context.heartbeatMeta } : {}),
       },
       context
     );
@@ -672,9 +656,7 @@ async function runAgentInternal(opts: AgentRunOptions): Promise<AgentRunResult> 
       session: created.session,
       prompt,
       runId: context.runId,
-      sessionKey: context.sessionKey,
       isHeartbeat: context.isHeartbeat,
-      heartbeatMeta: context.heartbeatMeta,
       runtime,
       compactionEnabled: compactionSettings.compactionEnabled,
       onCompactionCompleted: () => {
@@ -699,8 +681,6 @@ async function runAgentInternal(opts: AgentRunOptions): Promise<AgentRunResult> 
         runId: context.runId,
         ...(assistantMessageId ? { assistantMessageId } : {}),
         origin: context.origin,
-        isHeartbeat: context.isHeartbeat,
-        ...(context.heartbeatMeta ? { heartbeatMeta: context.heartbeatMeta } : {}),
         durationMs,
         modelId: sessionMetadata?.modelId ?? context.model,
         toolCount: toolDetails.length,

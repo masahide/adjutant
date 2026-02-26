@@ -177,7 +177,6 @@ describe("AgentRunner", () => {
       runId: "run-custom-entry-order",
       origin: "system",
       sessionKey: "main",
-      isHeartbeat: false,
     });
 
     assert.equal(appended[1]?.customType, "adjutant:run-summary");
@@ -806,11 +805,6 @@ describe("AgentRunner", () => {
       prompt: "heartbeat payload",
       sessionKey: "thread:C1",
       isHeartbeat: true,
-      heartbeatMeta: {
-        source: "heartbeat",
-        triggerReason: "periodic",
-        runAt: "2026-02-24T03:00:00.000Z",
-      },
     });
 
     assert.equal(prompts.length, 0);
@@ -819,12 +813,7 @@ describe("AgentRunner", () => {
     assert.equal(customMessages[0]?.message.display, false);
     assert.equal(customMessages[0]?.message.content, "heartbeat payload");
     assert.deepEqual(customMessages[0]?.message.details, {
-      schema: "adjutant.heartbeat.turn.v1",
       runId: "run-heartbeat-custom-message",
-      sessionKey: "thread:C1",
-      source: "heartbeat",
-      triggerReason: "periodic",
-      runAt: "2026-02-24T03:00:00.000Z",
     });
     assert.equal(customMessages[0]?.options?.triggerTurn, true);
   });
@@ -1821,14 +1810,6 @@ describe("AgentRunner", () => {
 
       assert.equal(capturedPrompt.includes("# Project Context"), true);
       assert.equal(capturedPrompt.includes("## BOOTSTRAP.md"), true);
-      assert.equal(
-        capturedPrompt.includes("HEARTBEAT.md instructions apply only during heartbeat turns"),
-        true
-      );
-      assert.equal(
-        capturedPrompt.includes("For normal user turns, do not execute HEARTBEAT.md instructions."),
-        true
-      );
       assert.equal(await pathExists(join(workspaceDir, "AGENTS.md")), true);
       assert.equal(await pathExists(join(workspaceDir, "SOUL.md")), true);
       assert.equal(await pathExists(join(workspaceDir, "TOOLS.md")), true);

@@ -118,6 +118,16 @@ describe("heartbeat-e2e", () => {
           return {
             text: "ALERT: follow-up required",
             modelId: "gpt-4o-mini",
+            toolCalls: [
+              {
+                name: "report_heartbeat_status",
+                result: {
+                  status: "needs_attention",
+                  notify: true,
+                  reason: "ALERT: follow-up required",
+                },
+              },
+            ],
           };
         },
       });
@@ -167,8 +177,18 @@ describe("heartbeat-e2e", () => {
         runAgent: async () => {
           runAgentCount += 1;
           return {
-            text: "HEARTBEAT_OK",
+            text: "ok",
             modelId: "gpt-4o-mini",
+            toolCalls: [
+              {
+                name: "report_heartbeat_status",
+                result: {
+                  status: "no_action_needed",
+                  notify: false,
+                  reason: "ok",
+                },
+              },
+            ],
           };
         },
       });
@@ -192,12 +212,7 @@ describe("heartbeat-e2e", () => {
 
       const lastEvent = getLastHeartbeatEvent();
       assert.notEqual(lastEvent, null);
-      assert.equal(
-        lastEvent?.status === "ok-empty" ||
-          lastEvent?.status === "ok-token" ||
-          lastEvent?.status === "sent",
-        true
-      );
+      assert.equal(lastEvent?.status === "ok-empty" || lastEvent?.status === "sent", true);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }

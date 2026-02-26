@@ -44,11 +44,19 @@ function createToolAgentResult(input: {
   reason: string;
   modelId?: string;
 }) {
-  const isAttention = input.status === "needs_attention" && input.notify;
-  const text = isAttention ? input.reason : "HEARTBEAT_OK";
   return {
-    text,
+    text: input.reason,
     modelId: input.modelId ?? "gpt-4o-mini",
+    toolCalls: [
+      {
+        name: "report_heartbeat_status",
+        result: {
+          status: input.status,
+          notify: input.notify,
+          reason: input.reason,
+        },
+      },
+    ],
   };
 }
 
@@ -126,10 +134,8 @@ describe("HeartbeatRunner", () => {
       const lines = raw.trim().split(/\r?\n/);
       const latest = JSON.parse(lines[lines.length - 1] ?? "{}") as {
         triggerReason?: string;
-        eventStatus?: string;
       };
       assert.equal(latest.triggerReason, "manual-run");
-      assert.equal(latest.eventStatus, "sent");
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
@@ -237,7 +243,7 @@ describe("HeartbeatRunner", () => {
     }
   });
 
-  it("旧式 HEARTBEAT.md でも本文をそのまま heartbeat prompt として使う", async () => {
+  it("旧式 HEARTBEAT.md でも report_heartbeat_status 契約を自動追記する", async () => {
     const tempDir = await mkdtemp(`${tmpdir()}/adjutant-heartbeat-`);
     try {
       await preparePromptFiles(
@@ -265,13 +271,13 @@ describe("HeartbeatRunner", () => {
       });
 
       await runOnce(createBaseConfig(tempDir), { reason: "manual" });
-      assert.doesNotMatch(capturedPrompt, /report_heartbeat_status/);
+      assert.match(capturedPrompt, /report_heartbeat_status/);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
   });
 
-  it("HEARTBEAT_OK 以外の本文は alert 扱いで sent になる", async () => {
+  it("report_heartbeat_status ツール呼び出しが無いと failed になる", async () => {
     const tempDir = await mkdtemp(`${tmpdir()}/adjutant-heartbeat-`);
     try {
       await preparePromptFiles(tempDir, "Heartbeat prompt");
@@ -289,44 +295,19 @@ describe("HeartbeatRunner", () => {
       });
 
       const result = await runOnce(createBaseConfig(tempDir));
-      assert.equal(result.status, "ran");
-      const evt = getLastHeartbeatEvent();
-      assert.equal(evt?.status, "sent");
-    } finally {
-      await rm(tempDir, { recursive: true, force: true });
-    }
-  });
-
-  it("HEARTBEAT_OK が文中混在する本文は ack とみなさず sent になる", async () => {
-    const tempDir = await mkdtemp(`${tmpdir()}/adjutant-heartbeat-`);
-    try {
-      await preparePromptFiles(tempDir, "Heartbeat prompt");
-
-      setHeartbeatRuntimeForTest({
-        readEvents: async () => [],
-        readMemoryFiles: async () => ({
-          longTerm: null,
-          daily: null,
-          yesterday: null,
-        }),
-        buildEventContext: () => ({ text: "", truncated: false, eventCount: 0 }),
-        getQueueSize: () => 0,
-        runAgent: async () => ({
-          text: "対応必要です HEARTBEAT_OK ではありません",
-          modelId: "gpt-4o-mini",
-        }),
+      assert.deepEqual(result, {
+        status: "failed",
+        reason: "missing-report-heartbeat-status-tool-call",
       });
-
-      const result = await runOnce(createBaseConfig(tempDir));
-      assert.equal(result.status, "ran");
       const evt = getLastHeartbeatEvent();
-      assert.equal(evt?.status, "sent");
+      assert.equal(evt?.status, "failed");
+      assert.equal(evt?.reason, "missing-report-heartbeat-status-tool-call");
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
   });
 
-  it("通知不要の heartbeat 応答は ok-token/ok-empty 扱いで ran を返す", async () => {
+  it("status=no_action_needed は ok-empty 扱いで ran を返す", async () => {
     const tempDir = await mkdtemp(`${tmpdir()}/adjutant-heartbeat-`);
     try {
       await preparePromptFiles(tempDir, "Heartbeat prompt");
@@ -350,7 +331,7 @@ describe("HeartbeatRunner", () => {
       const result = await runOnce(createBaseConfig(tempDir), { reason: "timer" });
       assert.equal(result.status, "ran");
       const payload = getLastHeartbeatEvent();
-      assert.equal(payload?.status === "ok-empty" || payload?.status === "ok-token", true);
+      assert.equal(payload?.status, "ok-empty");
       assert.equal(payload?.indicatorType, "ok");
     } finally {
       await rm(tempDir, { recursive: true, force: true });
@@ -391,7 +372,7 @@ describe("HeartbeatRunner", () => {
     }
   });
 
-  it("notify=false 相当の heartbeat 応答は ok-token/ok-empty で通知しない", async () => {
+  it("status=needs_attention でも notify=false なら ok-empty で通知しない", async () => {
     const tempDir = await mkdtemp(`${tmpdir()}/adjutant-heartbeat-`);
     try {
       await preparePromptFiles(tempDir, "Heartbeat prompt");
@@ -418,7 +399,7 @@ describe("HeartbeatRunner", () => {
         assert.equal(result.alert, undefined);
       }
       const payload = getLastHeartbeatEvent();
-      assert.equal(payload?.status === "ok-empty" || payload?.status === "ok-token", true);
+      assert.equal(payload?.status, "ok-empty");
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
@@ -507,7 +488,7 @@ describe("HeartbeatRunner", () => {
     }
   });
 
-  it("readiness 失敗（ok path）は ran + ok-token/ok-empty を維持する", async () => {
+  it("readiness 失敗（ok path）は ran + ok-empty を維持する", async () => {
     const tempDir = await mkdtemp(`${tmpdir()}/adjutant-heartbeat-`);
     try {
       await preparePromptFiles(tempDir, "Heartbeat prompt");
@@ -535,7 +516,7 @@ describe("HeartbeatRunner", () => {
 
       assert.equal(result.status, "ran");
       const evt = getLastHeartbeatEvent();
-      assert.equal(evt?.status === "ok-empty" || evt?.status === "ok-token", true);
+      assert.equal(evt?.status, "ok-empty");
       assert.equal(evt?.reason, "readiness-failed");
     } finally {
       await rm(tempDir, { recursive: true, force: true });

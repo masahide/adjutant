@@ -101,55 +101,6 @@ export class SlackNameCacheRepository {
     return found;
   }
 
-  pickAnyChannelId(teamIdHint?: string): string | undefined {
-    const normalizedTeamId = teamIdHint?.trim();
-    if (normalizedTeamId) {
-      const teamMap = this.channelNamesByTeam.get(normalizedTeamId);
-      if (teamMap) {
-        for (const channelId of teamMap.keys()) {
-          return channelId;
-        }
-      }
-    }
-
-    for (const teamMap of this.channelNamesByTeam.values()) {
-      for (const channelId of teamMap.keys()) {
-        return channelId;
-      }
-    }
-    return undefined;
-  }
-
-  pickAnyUserId(teamIdHint?: string): string | undefined {
-    const normalizedTeamId = teamIdHint?.trim();
-    if (normalizedTeamId) {
-      const userNameMap = this.userNamesByTeam.get(normalizedTeamId);
-      if (userNameMap) {
-        for (const userId of userNameMap.keys()) {
-          return userId;
-        }
-      }
-      const userProfileMap = this.userProfilesByTeam.get(normalizedTeamId);
-      if (userProfileMap) {
-        for (const userId of userProfileMap.keys()) {
-          return userId;
-        }
-      }
-    }
-
-    for (const userNameMap of this.userNamesByTeam.values()) {
-      for (const userId of userNameMap.keys()) {
-        return userId;
-      }
-    }
-    for (const userProfileMap of this.userProfilesByTeam.values()) {
-      for (const userId of userProfileMap.keys()) {
-        return userId;
-      }
-    }
-    return undefined;
-  }
-
   async updateChannel(
     teamId: string,
     channelId: string,

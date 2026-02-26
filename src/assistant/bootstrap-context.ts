@@ -119,21 +119,11 @@ export function renderProjectContext(contextFiles: EmbeddedContextFile[]): strin
     return "";
   }
 
-  const hasHeartbeatFile = contextFiles.some(
-    (file) => file.path.trim().toLowerCase() === "heartbeat.md"
-  );
-
   const lines: string[] = [
     "# Project Context",
     "",
-    "The following project context files have been loaded.",
-    "Apply each file only within its intended scope.",
+    "The following project context files have been loaded:",
   ];
-  if (hasHeartbeatFile) {
-    lines.push("HEARTBEAT.md instructions apply only during heartbeat turns (`isHeartbeat=true`).");
-    lines.push("For normal user turns, do not execute HEARTBEAT.md instructions.");
-  }
-  lines.push("", "Attached files:");
   for (const file of contextFiles) {
     lines.push("", `## ${file.path}`, file.content);
   }

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
+import { validateReportHeartbeatStatusInput } from "../proactive/routing-tools.js";
 import type { GlobalConcurrencyQueue } from "../proactive/global-concurrency-queue.js";
 import { resolveAdjutantStateDir } from "./session-paths.js";
 import { buildEventContext } from "./context-builder.js";
@@ -52,12 +53,11 @@ export type HeartbeatConfig = {
   };
   channelsConfigPath?: string;
   readinessCheck?: (kind: "ok" | "alert") => boolean;
-  ackMaxChars?: number;
 };
 
 type ActiveHoursConfig = NonNullable<HeartbeatConfig["activeHours"]>;
 type UnknownRecord = Record<string, unknown>;
-type HeartbeatAgentResult = Pick<AgentRunResult, "text" | "modelId">;
+type HeartbeatAgentResult = Pick<AgentRunResult, "text" | "modelId" | "toolCalls">;
 
 type HeartbeatRuntime = {
   now: () => Date;
@@ -87,10 +87,13 @@ type HeartbeatVisibility = {
 const DEFAULT_INTERVAL_MS = 30 * 60 * 1000;
 const DEFAULT_TIMEOUT_MS = 30 * 1000;
 const DEFAULT_RETRY_DELAY_MS = 1000;
-const HEARTBEAT_TOKEN = "HEARTBEAT_OK";
-const DEFAULT_HEARTBEAT_ACK_MAX_CHARS = 300;
-const DEFAULT_HEARTBEAT_PROMPT =
-  "Read HEARTBEAT.md if it exists (workspace context). Follow it strictly. Do not infer or repeat old tasks from prior chats. If nothing needs attention, reply HEARTBEAT_OK.";
+const HEARTBEAT_TOOL_CONTRACT = [
+  "You must call `report_heartbeat_status` exactly once.",
+  "status は no_action_needed / needs_attention / task_completed のいずれか。",
+  "notify はユーザー通知が必要なら true。",
+  "reason には簡潔な根拠を書く。",
+].join("\n");
+const DEFAULT_HEARTBEAT_PROMPT = ["# HEARTBEAT", "", HEARTBEAT_TOOL_CONTRACT].join("\n");
 const HEARTBEAT_RUN_RECORD_RELATIVE_PATH = "heartbeat-runs.jsonl";
 const HEARTBEAT_DUPLICATE_WINDOW_MS = 24 * 60 * 60 * 1000;
 const SESSION_KEY_PATTERN = /^[A-Za-z0-9:_-]+$/;
@@ -263,84 +266,12 @@ function isEffectivelyEmptyHeartbeatPrompt(text: string): boolean {
   return collapseWhitespace(withoutComments).length === 0;
 }
 
-function resolveAckMaxChars(config: HeartbeatConfig): number {
-  if (!Number.isFinite(config.ackMaxChars)) {
-    return DEFAULT_HEARTBEAT_ACK_MAX_CHARS;
+function ensureHeartbeatToolContract(text: string): string {
+  const normalized = collapseWhitespace(text).toLowerCase();
+  if (normalized.includes("report_heartbeat_status")) {
+    return text;
   }
-  return Math.max(0, Math.floor(config.ackMaxChars as number));
-}
-
-type NormalizedHeartbeatReply = {
-  text: string;
-  shouldSkip: boolean;
-  status: "ok-empty" | "ok-token" | "sent";
-};
-
-function stripTokenAtEdges(text: string): { didStrip: boolean; rest: string } {
-  const trimmed = text.trim();
-  if (!trimmed) {
-    return { didStrip: false, rest: "" };
-  }
-  const normalized = trimmed
-    .replace(/<[^>]*>/g, " ")
-    .replace(/&nbsp;/gi, " ")
-    .trim();
-  const stripEdges = (value: string): string =>
-    value
-      .replace(/^[\s"'`*~_.,!?;:()[\]{}-]+/u, "")
-      .replace(/[\s"'`*~_.,!?;:()[\]{}-]+$/u, "")
-      .trim();
-
-  if (normalized.startsWith(HEARTBEAT_TOKEN)) {
-    const rest = stripEdges(normalized.slice(HEARTBEAT_TOKEN.length));
-    return { didStrip: true, rest };
-  }
-  if (normalized.endsWith(HEARTBEAT_TOKEN)) {
-    const rest = stripEdges(normalized.slice(0, normalized.length - HEARTBEAT_TOKEN.length));
-    return { didStrip: true, rest };
-  }
-  return { didStrip: false, rest: normalized };
-}
-
-function normalizeHeartbeatReply(rawText: string, ackMaxChars: number): NormalizedHeartbeatReply {
-  const trimmed = normalizeText(rawText);
-  if (!trimmed) {
-    return { text: "", shouldSkip: true, status: "ok-empty" };
-  }
-
-  const stripped = stripTokenAtEdges(trimmed);
-  if (!stripped.didStrip) {
-    return { text: trimmed, shouldSkip: false, status: "sent" };
-  }
-  if (!stripped.rest) {
-    return { text: "", shouldSkip: true, status: "ok-token" };
-  }
-  if (stripped.rest.length <= ackMaxChars) {
-    return { text: "", shouldSkip: true, status: "ok-token" };
-  }
-  return { text: stripped.rest, shouldSkip: false, status: "sent" };
-}
-
-function normalizeHeartbeatTriggerReason(reason?: string): string {
-  const trimmed = reason?.trim();
-  if (trimmed) {
-    return trimmed;
-  }
-  return "periodic";
-}
-
-function buildHeartbeatMetaBlock(params: {
-  runAt: Date;
-  sessionKey: string;
-  triggerReason?: string;
-}): string {
-  return [
-    "# HEARTBEAT_META",
-    "source: heartbeat",
-    `session_key: ${params.sessionKey}`,
-    `trigger_reason: ${normalizeHeartbeatTriggerReason(params.triggerReason)}`,
-    `run_at: ${params.runAt.toISOString()}`,
-  ].join("\n");
+  return [text.trim(), HEARTBEAT_TOOL_CONTRACT].filter(Boolean).join("\n\n");
 }
 
 function formatCurrentTimeLine(now: Date, timezone: string): string {
@@ -553,6 +484,34 @@ async function resolvePrecheckSkip(params: {
   return null;
 }
 
+function resolveHeartbeatToolStatus(
+  toolCalls: AgentRunResult["toolCalls"]
+): ReturnType<typeof validateReportHeartbeatStatusInput> | null {
+  if (!Array.isArray(toolCalls)) {
+    return null;
+  }
+  for (let index = toolCalls.length - 1; index >= 0; index -= 1) {
+    const call = toolCalls[index];
+    if (!call || call.name !== "report_heartbeat_status") {
+      continue;
+    }
+    try {
+      return validateReportHeartbeatStatusInput(call.result);
+    } catch {
+      const wrapped = asRecord(call.result);
+      if (!wrapped) {
+        return null;
+      }
+      try {
+        return validateReportHeartbeatStatusInput(wrapped.details);
+      } catch {
+        return null;
+      }
+    }
+  }
+  return null;
+}
+
 function toBoolean(value: unknown, fallback: boolean): boolean {
   if (typeof value === "boolean") {
     return value;
@@ -715,7 +674,7 @@ export async function runOnce(
         },
       });
     }
-    const heartbeatPrompt = heartbeatPromptSource;
+    const heartbeatPrompt = ensureHeartbeatToolContract(heartbeatPromptSource);
 
     const workspaceDir = resolveWorkspaceDir(config);
     const [events, memory, soulPromptRaw, userPromptRaw, agentsPromptRaw] = await Promise.all([
@@ -746,13 +705,8 @@ export async function runOnce(
       .map((part) => (typeof part === "string" ? part.trim() : ""))
       .filter(Boolean)
       .join("\n\n");
-    const heartbeatMetaBlock = buildHeartbeatMetaBlock({
-      runAt,
-      sessionKey,
-      triggerReason: opts?.reason,
-    });
     const body = injectCurrentTimeLine(
-      [heartbeatMetaBlock, heartbeatPrompt, context.text]
+      [heartbeatPrompt, context.text]
         .map((v) => v.trim())
         .filter(Boolean)
         .join("\n\n"),
@@ -779,23 +733,38 @@ export async function runOnce(
           workspaceDir,
           timezone,
           sessionEntriesPath: config.sessionEntriesPath,
-          heartbeatMeta: {
-            source: "heartbeat",
-            triggerReason: normalizeHeartbeatTriggerReason(opts?.reason),
-            runAt: runAt.toISOString(),
-          },
         });
       });
       const durationMs = Math.max(0, runtime.now().getTime() - startedAtMs);
-      const replyText = normalizeText(agentResult.text ?? "");
-      const normalized = normalizeHeartbeatReply(replyText, resolveAckMaxChars(config));
-      if (normalized.shouldSkip) {
+      const toolStatus = resolveHeartbeatToolStatus(agentResult.toolCalls);
+      if (!toolStatus) {
+        const result: HeartbeatRunResult = {
+          status: "failed",
+          reason: "missing-report-heartbeat-status-tool-call",
+        };
+        return await finalizeRun({
+          runtime,
+          stateDir: resolveStateDir(config),
+          runAt,
+          sessionKey,
+          triggerReason: opts?.reason,
+          result,
+          event: {
+            status: "failed",
+            reason: result.reason,
+            indicatorType: "error",
+          },
+        });
+      }
+
+      if (toolStatus.status === "no_action_needed" || toolStatus.status === "task_completed") {
         const result: HeartbeatRunResult = {
           status: "ran",
-          durationMs,
-          ...(replyText ? { contentHash: computeContentHash(replyText) } : {}),
+          durationMs: durationMs,
+          contentHash: computeContentHash(toolStatus.reason),
           modelId: agentResult.modelId ?? config.model,
         };
+
         const readinessOk = isReadinessOk(config, "ok");
         return await finalizeRun({
           runtime,
@@ -805,20 +774,47 @@ export async function runOnce(
           triggerReason: opts?.reason,
           result,
           event: {
-            status: normalized.status,
+            status: "ok-empty",
             durationMs,
             reason: readinessOk ? undefined : "readiness-failed",
             indicatorType: "ok",
-            ...(replyText ? { preview: replyText.slice(0, 240) } : {}),
+            preview: toolStatus.reason.slice(0, 240),
           },
           record: {
             modelId: result.modelId,
-            ...(replyText ? { preview: replyText.slice(0, 240) } : {}),
+            preview: toolStatus.reason.slice(0, 240),
           },
         });
       }
 
-      const alertText = normalized.text.trim();
+      if (!toolStatus.notify) {
+        const result: HeartbeatRunResult = {
+          status: "ran",
+          durationMs,
+          contentHash: computeContentHash(toolStatus.reason),
+          modelId: agentResult.modelId ?? config.model,
+        };
+        return await finalizeRun({
+          runtime,
+          stateDir: resolveStateDir(config),
+          runAt,
+          sessionKey,
+          triggerReason: opts?.reason,
+          result,
+          event: {
+            status: "ok-empty",
+            durationMs,
+            indicatorType: "ok",
+            preview: toolStatus.reason.slice(0, 240),
+          },
+          record: {
+            modelId: result.modelId,
+            preview: toolStatus.reason.slice(0, 240),
+          },
+        });
+      }
+
+      const alertText = toolStatus.reason.trim();
       const readinessOk = isReadinessOk(config, "alert");
       if (!readinessOk) {
         const result: HeartbeatRunResult = { status: "skipped", reason: "readiness-failed" };
@@ -893,7 +889,7 @@ export async function runOnce(
         event: {
           status: "sent",
           durationMs,
-          preview: alertText.slice(0, 240),
+          preview: toolStatus.reason.slice(0, 240),
           indicatorType: "alert",
         },
         record: {

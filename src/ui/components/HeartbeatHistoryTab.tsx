@@ -7,37 +7,11 @@ type HistoryResponse = {
   nextCursor: string | null;
 };
 
-type RenderStatus = "sent" | "ok-empty" | "ok-token" | "skipped" | "failed";
-
-const STATUS_BADGE: Record<RenderStatus, { label: string; className: string }> = {
-  sent: { label: "ALERT", className: "bg-amber-500 text-black" },
-  "ok-empty": { label: "ACK", className: "bg-green-600 text-white" },
-  "ok-token": { label: "ACK", className: "bg-green-600 text-white" },
+const STATUS_BADGE: Record<string, { label: string; className: string }> = {
+  ran: { label: "OK", className: "bg-green-600 text-white" },
   skipped: { label: "SKIP", className: "bg-zinc-600 text-zinc-200" },
   failed: { label: "FAIL", className: "bg-red-600 text-white" },
 };
-
-function resolveRenderStatus(record: HeartbeatRunRecord): RenderStatus {
-  if (
-    record.eventStatus === "sent" ||
-    record.eventStatus === "ok-empty" ||
-    record.eventStatus === "ok-token" ||
-    record.eventStatus === "skipped" ||
-    record.eventStatus === "failed"
-  ) {
-    return record.eventStatus;
-  }
-  if (record.result.status === "skipped" || record.result.status === "failed") {
-    return record.result.status;
-  }
-  if (record.result.status === "ran" && typeof record.result.alert === "string") {
-    return "sent";
-  }
-  if (record.preview?.trim()) {
-    return "ok-token";
-  }
-  return "ok-empty";
-}
 
 function formatTime(iso: string): string {
   try {
@@ -54,47 +28,13 @@ function formatDuration(ms: number | undefined): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
-type Props = {
-  heartbeatTs?: number | null;
-};
-
-function recordKey(record: HeartbeatRunRecord): string {
-  return [
-    record.runAt,
-    record.sessionKey,
-    record.eventStatus ?? "",
-    record.eventReason ?? "",
-    record.preview ?? "",
-    record.result.status,
-    "reason" in record.result ? (record.result.reason ?? "") : "",
-  ].join("|");
-}
-
-function mergeRecords(
-  current: HeartbeatRunRecord[],
-  incoming: HeartbeatRunRecord[],
-  mode: "refresh" | "append"
-): HeartbeatRunRecord[] {
-  const source = mode === "refresh" ? [...incoming, ...current] : [...current, ...incoming];
-  const seen = new Set<string>();
-  const merged: HeartbeatRunRecord[] = [];
-  for (const item of source) {
-    const key = recordKey(item);
-    if (seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    merged.push(item);
-  }
-  return merged;
-}
-
-export function HeartbeatHistoryTab({ heartbeatTs }: Props) {
+export function HeartbeatHistoryTab() {
   const [records, setRecords] = useState<HeartbeatRunRecord[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [initialLoaded, setInitialLoaded] = useState(false);
 
   const fetchPage = useCallback(async (cursorValue: string | null) => {
     setLoading(true);
@@ -108,9 +48,11 @@ export function HeartbeatHistoryTab({ heartbeatTs }: Props) {
         return;
       }
       const data = (await res.json()) as HistoryResponse;
-      setRecords((prev) =>
-        mergeRecords(prev, data.records, cursorValue === null ? "refresh" : "append")
-      );
+      setRecords((prev) => {
+        const existing = new Set(prev.map((r) => r.runAt));
+        const merged = [...prev, ...data.records.filter((r) => !existing.has(r.runAt))];
+        return merged;
+      });
       setHasMore(data.hasMore);
       setCursor(data.nextCursor);
     } catch (err) {
@@ -121,26 +63,13 @@ export function HeartbeatHistoryTab({ heartbeatTs }: Props) {
   }, []);
 
   useEffect(() => {
-    void fetchPage(null);
-  }, [fetchPage]);
-
-  useEffect(() => {
-    if (heartbeatTs == null) {
-      return;
-    }
-    void fetchPage(null);
-  }, [heartbeatTs, fetchPage]);
-
-  useEffect(() => {
-    const timer = setInterval(() => {
+    if (!initialLoaded) {
+      setInitialLoaded(true);
       void fetchPage(null);
-    }, 15000);
-    return () => {
-      clearInterval(timer);
-    };
-  }, [fetchPage]);
+    }
+  }, [initialLoaded, fetchPage]);
 
-  if (loading && records.length === 0) {
+  if (!initialLoaded || (loading && records.length === 0)) {
     return (
       <div className="flex items-center justify-center p-6 text-xs text-muted-foreground">
         読み込み中...
@@ -159,18 +88,16 @@ export function HeartbeatHistoryTab({ heartbeatTs }: Props) {
   return (
     <div className="flex flex-col text-xs">
       {records.map((rec) => {
-        const renderStatus = resolveRenderStatus(rec);
-        const badge = STATUS_BADGE[renderStatus];
+        const badge = STATUS_BADGE[rec.result.status] ?? STATUS_BADGE.ran;
         const duration =
           rec.result.status === "ran" ? formatDuration(rec.result.durationMs) : undefined;
         const reason =
-          rec.eventReason ??
-          (rec.result.status === "skipped" || rec.result.status === "failed"
+          rec.result.status === "skipped" || rec.result.status === "failed"
             ? rec.result.reason
-            : undefined);
+            : undefined;
 
         return (
-          <div key={recordKey(rec)} className="border-b border-border px-3 py-2">
+          <div key={rec.runAt} className="border-b border-border px-3 py-2">
             <div className="flex items-center gap-2">
               <span className="text-muted-foreground">{formatTime(rec.runAt)}</span>
               <span

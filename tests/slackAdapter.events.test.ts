@@ -51,7 +51,6 @@ describe("SlackAdapter event handling", () => {
     assert.equal(reaction.kind, "reaction");
     assert.equal(reaction.action, "added");
     assert.equal(reaction.meta?.emoji, "thumbsup");
-    assert.equal(reaction.meta?.workspace_key, "workspace");
     const detail = reaction.detail;
     assert.ok(detail && "slack" in detail);
     const slackDetail = detail.slack as {
@@ -140,8 +139,6 @@ describe("SlackAdapter event handling", () => {
     assert.equal(notification.kind, "notification");
     assert.equal(notification.meta?.notification_type, "desktop_notification");
     assert.equal(notification.meta?.channel, "#general");
-    assert.equal(notification.meta?.workspace_key, "T1");
-    assert.equal(notification.meta?.team_id, "T1");
     assert.equal(notification.actor, "alice");
     const detail = notification.detail;
     assert.ok(detail && "slack" in detail);
@@ -212,8 +209,6 @@ describe("SlackAdapter event handling", () => {
     assert.equal(notification.kind, "notification");
     assert.equal(notification.meta?.notification_type, "mention_notification");
     assert.equal(notification.meta?.channel, "#random");
-    assert.equal(notification.meta?.workspace_key, "T2");
-    assert.equal(notification.meta?.team_id, "T2");
     const detail = notification.detail;
     assert.ok(detail && "slack" in detail);
     const slackDetail = detail.slack as {
@@ -294,11 +289,7 @@ describe("SlackAdapter event handling", () => {
       request: {
         url: "https://hooks.slack.com/services/T00/B00/XXX",
         method: "POST",
-        headers: {
-          "content-type": "application/json",
-          authorization: "Bearer xoxc-123-456-789-abcdef123456",
-          cookie: "d=xoxd-aaa%2Bbbb; path=/",
-        },
+        headers: { "content-type": "application/json" },
         postData: '{"text":"hello"}',
       },
     });
@@ -313,19 +304,6 @@ describe("SlackAdapter event handling", () => {
             method?: string;
             url?: string;
             urlInfo?: { host?: string; pathname?: string };
-            authDebug?: {
-              xoxc?: { detected?: boolean };
-              xoxd?: { detected?: boolean };
-              cookieD?: { present?: boolean };
-            };
-            cacheUpdate?: {
-              workspaceKey?: string;
-              tokens?: Array<{
-                tokenKind?: string;
-                updated?: boolean;
-                hits?: number;
-              }>;
-            } | null;
           };
         }
       | undefined;
@@ -334,148 +312,6 @@ describe("SlackAdapter event handling", () => {
     assert.equal(rawFetch.payload?.url, "https://hooks.slack.com/services/T00/B00/XXX");
     assert.equal(rawFetch.payload?.urlInfo?.host, "hooks.slack.com");
     assert.equal(rawFetch.payload?.urlInfo?.pathname, "/services/T00/B00/XXX");
-    assert.equal(rawFetch.payload?.authDebug?.xoxc?.detected, true);
-    assert.equal(rawFetch.payload?.authDebug?.xoxd?.detected, true);
-    assert.equal(rawFetch.payload?.authDebug?.cookieD?.present, true);
-    assert.equal(rawFetch.payload?.cacheUpdate?.workspaceKey, "global");
-    assert.equal(rawFetch.payload?.cacheUpdate?.tokens?.[0]?.tokenKind, "xoxc");
-    assert.equal(rawFetch.payload?.cacheUpdate?.tokens?.[1]?.tokenKind, "xoxd");
-  });
-
-  it("requestWillBeSentExtraInfo を raw_fetch として出力し、getCookies 無効時は cookieStoreSnapshot を出さない", async () => {
-    const mock = createMockSlackClient();
-    const debugEvents: unknown[] = [];
-    const requestUrl = "https://workspace.slack.com/api/chat.postMessage";
-    mock.cookieStoreByUrl[requestUrl] = [{ name: "d", value: "xoxd-cookie-store%2Bvalue" }];
-    const adapter = new SlackAdapter({
-      client: mock.client,
-      now: () => new Date("2024-03-22T12:45:00Z"),
-      debugFetchHookEnabled: true,
-      debugCookieStoreEnabled: false,
-      onDebugEvent: (event) => {
-        debugEvents.push(event);
-      },
-    });
-
-    await adapter.start(async () => {});
-
-    await mock.triggerNetwork("requestWillBeSent", {
-      requestId: "req-hook-extra-1",
-      type: "Fetch",
-      request: {
-        url: requestUrl,
-        method: "POST",
-      },
-    });
-    await mock.triggerNetwork("requestWillBeSentExtraInfo", {
-      requestId: "req-hook-extra-1",
-      headers: {},
-      associatedCookies: [{ cookie: { name: "d", value: "xoxd-associated%2Bvalue" } }],
-    });
-
-    const extraInfoEvent = debugEvents.find((event) => {
-      if (!event || typeof event !== "object") return false;
-      const record = event as { kind?: string; payload?: { stage?: string } };
-      return record.kind === "raw_fetch" && record.payload?.stage === "requestWillBeSentExtraInfo";
-    }) as
-      | {
-          payload?: {
-            dCookieFromAssociated?: string | null;
-            authDebug?: { cookieD?: { value?: string | null } };
-            cacheUpdate?: {
-              workspaceKey?: string;
-              sourceStage?: string;
-              tokens?: Array<{
-                tokenKind?: string;
-                updated?: boolean;
-                hits?: number;
-              }>;
-            } | null;
-          };
-        }
-      | undefined;
-    assert.ok(extraInfoEvent, "requestWillBeSentExtraInfo event should be emitted");
-    assert.equal(extraInfoEvent.payload?.dCookieFromAssociated, "xoxd-associated%2Bvalue");
-    assert.equal(extraInfoEvent.payload?.authDebug?.cookieD?.value, "xoxd-associated%2Bvalue");
-    assert.equal(extraInfoEvent.payload?.cacheUpdate?.workspaceKey, "workspace");
-    assert.equal(extraInfoEvent.payload?.cacheUpdate?.sourceStage, "requestWillBeSentExtraInfo");
-    assert.equal(extraInfoEvent.payload?.cacheUpdate?.tokens?.[0]?.tokenKind, "xoxd");
-    assert.equal(extraInfoEvent.payload?.cacheUpdate?.tokens?.[0]?.updated, true);
-
-    const cookieStoreEvent = debugEvents.find((event) => {
-      if (!event || typeof event !== "object") return false;
-      const record = event as { kind?: string; payload?: { stage?: string } };
-      return record.kind === "raw_fetch" && record.payload?.stage === "cookieStoreSnapshot";
-    });
-    assert.equal(cookieStoreEvent, undefined);
-    assert.equal(mock.cookieQueries.length, 0);
-  });
-
-  it("debugCookieStoreEnabled=true の時は getCookies を実行して cookieStoreSnapshot を別途出力する", async () => {
-    const mock = createMockSlackClient();
-    const debugEvents: unknown[] = [];
-    const requestUrl = "https://workspace.slack.com/api/chat.postMessage";
-    mock.cookieStoreByUrl[requestUrl] = [
-      { name: "d", value: "xoxd-cookie-store%2Bvalue" },
-      { name: "other", value: "1" },
-    ];
-    const adapter = new SlackAdapter({
-      client: mock.client,
-      now: () => new Date("2024-03-22T12:45:00Z"),
-      debugFetchHookEnabled: true,
-      debugCookieStoreEnabled: true,
-      onDebugEvent: (event) => {
-        debugEvents.push(event);
-      },
-    });
-
-    await adapter.start(async () => {});
-
-    await mock.triggerNetwork("requestWillBeSent", {
-      requestId: "req-hook-extra-2",
-      type: "Fetch",
-      request: {
-        url: requestUrl,
-        method: "POST",
-      },
-    });
-    await mock.triggerNetwork("requestWillBeSentExtraInfo", {
-      requestId: "req-hook-extra-2",
-      headers: {},
-      associatedCookies: [],
-    });
-
-    const cookieStoreEvent = debugEvents.find((event) => {
-      if (!event || typeof event !== "object") return false;
-      const record = event as { kind?: string; payload?: { stage?: string } };
-      return record.kind === "raw_fetch" && record.payload?.stage === "cookieStoreSnapshot";
-    }) as
-      | {
-          payload?: {
-            dCookieFromStore?: string | null;
-            cookieStoreCookiesCount?: number | null;
-            authDebug?: { cookieD?: { value?: string | null } };
-            cacheUpdate?: {
-              workspaceKey?: string;
-              sourceStage?: string;
-              tokens?: Array<{
-                tokenKind?: string;
-                updated?: boolean;
-                hits?: number;
-              }>;
-            } | null;
-          };
-        }
-      | undefined;
-    assert.ok(cookieStoreEvent, "cookieStoreSnapshot event should be emitted");
-    assert.equal(cookieStoreEvent.payload?.dCookieFromStore, "xoxd-cookie-store%2Bvalue");
-    assert.equal(cookieStoreEvent.payload?.cookieStoreCookiesCount, 2);
-    assert.equal(cookieStoreEvent.payload?.authDebug?.cookieD?.value, "xoxd-cookie-store%2Bvalue");
-    assert.equal(cookieStoreEvent.payload?.cacheUpdate?.workspaceKey, "workspace");
-    assert.equal(cookieStoreEvent.payload?.cacheUpdate?.sourceStage, "cookieStoreSnapshot");
-    assert.equal(cookieStoreEvent.payload?.cacheUpdate?.tokens?.[0]?.tokenKind, "xoxd");
-    assert.equal(cookieStoreEvent.payload?.cacheUpdate?.tokens?.[0]?.updated, true);
-    assert.deepEqual(mock.cookieQueries, [[requestUrl]]);
   });
 
   it("fetch hook有効時にresponseReceivedをraw_fetchとして出力する", async () => {
@@ -964,123 +800,5 @@ describe("SlackAdapter event handling", () => {
       parsed.users?.U0A8ZEXKX27?.profile?.image_original,
       "https://example.com/u0a8zexkx27.png"
     );
-  });
-
-  it("CDP経由 auth.test 実験を実行できる", async () => {
-    const mock = createMockSlackClient();
-    const adapter = new SlackAdapter({
-      client: mock.client,
-      now: () => new Date("2024-03-22T12:45:00Z"),
-    });
-    await adapter.start(async () => {});
-
-    await mock.triggerNetwork("requestWillBeSent", {
-      requestId: "req-auth-1",
-      type: "Fetch",
-      request: {
-        url: "https://workspace.slack.com/api/chat.postMessage",
-        method: "POST",
-        headers: {
-          authorization: "Bearer xoxc-token-for-browser-auth-test",
-        },
-      },
-    });
-
-    mock.setRuntimeEvaluate(async () => ({
-      result: {
-        value: {
-          ok: true,
-          httpStatus: 200,
-          slackOk: true,
-          workspaceKey: "TTEAM",
-          origin: "https://app.slack.com",
-          href: "https://app.slack.com/client/TTEAM/C123",
-          payload: { ok: true, team_id: "TTEAM" },
-        },
-      },
-    }));
-
-    const result = await adapter.runBrowserAuthTest({ workspaceKey: "workspace" });
-    assert.equal(result.ok, true);
-    assert.equal(result.workspaceKey, "workspace");
-    assert.equal(result.tokenSourceWorkspaceKey, "workspace");
-    assert.equal(result.attempts.length >= 1, true);
-    assert.equal(result.attempts[0]?.httpStatus, 200);
-    assert.equal(result.attempts[0]?.slackOk, true);
-  });
-
-  it("xoxc 未観測時は CDP auth.test を実行しない", async () => {
-    const mock = createMockSlackClient();
-    const adapter = new SlackAdapter({
-      client: mock.client,
-      now: () => new Date("2024-03-22T12:45:00Z"),
-    });
-    await adapter.start(async () => {});
-
-    const result = await adapter.runBrowserAuthTest();
-    assert.equal(result.ok, false);
-    assert.equal(result.reason, "xoxc token is not available in auth token cache");
-    assert.equal(result.attempts.length, 0);
-  });
-
-  it("CDP経由 channels.list(10件) 実験を実行できる", async () => {
-    const mock = createMockSlackClient();
-    const adapter = new SlackAdapter({
-      client: mock.client,
-      now: () => new Date("2024-03-22T12:45:00Z"),
-    });
-    await adapter.start(async () => {});
-
-    await mock.triggerNetwork("requestWillBeSent", {
-      requestId: "req-channels-1",
-      type: "Fetch",
-      request: {
-        url: "https://workspace.slack.com/api/chat.postMessage",
-        method: "POST",
-        headers: {
-          authorization: "Bearer xoxc-token-for-browser-channels-list",
-        },
-      },
-    });
-
-    mock.setRuntimeEvaluate(async () => ({
-      result: {
-        value: {
-          ok: true,
-          httpStatus: 200,
-          slackOk: true,
-          workspaceKey: "TTEAM",
-          channels: [
-            { id: "C001", name: "general", isPrivate: false, isIm: false, isMpim: false },
-            { id: "C002", name: "random", isPrivate: false, isIm: false, isMpim: false },
-          ],
-          payload: { ok: true, channels: [{ id: "C001", name: "general" }] },
-        },
-      },
-    }));
-
-    const result = await adapter.runBrowserChannelList({ workspaceKey: "workspace", limit: 10 });
-    assert.equal(result.ok, true);
-    assert.equal(result.workspaceKey, "workspace");
-    assert.equal(result.tokenSourceWorkspaceKey, "workspace");
-    assert.equal(result.attempts.length >= 1, true);
-    assert.equal(result.attempts[0]?.httpStatus, 200);
-    assert.equal(result.attempts[0]?.slackOk, true);
-    assert.equal(result.attempts[0]?.channels?.length, 2);
-    assert.equal(result.attempts[0]?.channels?.[0]?.id, "C001");
-  });
-
-  it("xoxc 未観測時は CDP channels.list を実行しない", async () => {
-    const mock = createMockSlackClient();
-    const adapter = new SlackAdapter({
-      client: mock.client,
-      now: () => new Date("2024-03-22T12:45:00Z"),
-    });
-    await adapter.start(async () => {});
-
-    const result = await adapter.runBrowserChannelList();
-    assert.equal(result.ok, false);
-    assert.equal(result.reason, "xoxc token is not available in auth token cache");
-    assert.equal(result.attempts.length, 0);
   });
 });

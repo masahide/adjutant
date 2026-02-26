@@ -81,28 +81,4 @@ describe("agent-prompt-builder", () => {
       false
     );
   });
-
-  it("通常ターン向け prompt には HEARTBEAT 指示の適用範囲が明示される", () => {
-    const prompt = buildAgentPrompt({
-      basePrompt: "本文",
-      memory: { longTerm: null, daily: null },
-      bootstrapFiles: [
-        {
-          name: "HEARTBEAT.md",
-          path: "/tmp/workspace/HEARTBEAT.md",
-          content: "# HEARTBEAT\n- noop",
-          missing: false,
-        },
-      ],
-    });
-
-    assert.equal(
-      prompt.includes("HEARTBEAT.md instructions apply only during heartbeat turns"),
-      true
-    );
-    assert.equal(
-      prompt.includes("For normal user turns, do not execute HEARTBEAT.md instructions."),
-      true
-    );
-  });
 });

@@ -24,8 +24,6 @@ function buildHeartbeatRunRecord(params: {
   triggerReason?: string;
   modelId?: string;
   preview?: string;
-  eventStatus: HeartbeatEventPayload["status"];
-  eventReason?: string;
 }): HeartbeatRunRecord {
   return {
     schema: "adjutant.heartbeat.result.v1",
@@ -35,8 +33,6 @@ function buildHeartbeatRunRecord(params: {
     triggerReason: params.triggerReason,
     modelId: params.modelId,
     preview: params.preview,
-    eventStatus: params.eventStatus,
-    eventReason: params.eventReason,
   };
 }
 
@@ -62,8 +58,6 @@ export class HeartbeatResultWriter {
       triggerReason: options.triggerReason,
       modelId: options.record?.modelId,
       preview: options.record?.preview,
-      eventStatus: options.event.status,
-      eventReason: options.event.reason,
     });
     try {
       await this.deps.appendRunRecord(options.stateDir, record);

@@ -6,14 +6,6 @@ import { resolveEndpoint, type CdpEndpoint } from "../runtime/config.js";
 import { computeFullJitterDelayMs } from "../runtime/retry-policy.js";
 import { connectToSlackPage, type SlackCdpClient } from "../runtime/slackConnection.js";
 import { SlackAdapter } from "../slack/adapter.js";
-import {
-  configureSlackAuthTokenRegistry,
-  syncSlackAuthTokenSnapshots,
-  type SlackWorkspaceTokenPairReadyEvent,
-} from "../slack/slackAuthTokenRegistry.js";
-import type { SlackAuthTokenCacheSnapshot } from "../slack/slackAuthTokenCache.js";
-import { PendingDataPromoter } from "../slack/pendingDataPromoter.js";
-import { SLACK_PENDING_ACCOUNT_ID } from "../slack/slackAuthTokenStore.js";
 import type { ChannelGatewayContext, ChannelIngestionPlugin } from "./channel-plugin.js";
 import { join } from "node:path";
 
@@ -49,9 +41,6 @@ type SlackChannelPluginOptions = {
   sleep?: (ms: number) => Promise<void>;
   nowMs?: () => number;
   random?: () => number;
-  authTestEnabled?: boolean;
-  authTokenSyncIntervalMs?: number;
-  onTokenPairReady?: (event: SlackWorkspaceTokenPairReadyEvent) => Promise<void> | void;
   onWarn?: (message: string, meta?: Record<string, unknown>) => void;
 };
 
@@ -67,13 +56,8 @@ type ActiveAccountSession = {
   adapter: IngestionAdapter;
 };
 
-type TokenSnapshotReadableAdapter = IngestionAdapter & {
-  listAuthTokenSnapshots?: () => SlackAuthTokenCacheSnapshot[];
-};
-
 const DEFAULT_RETRY_BASE_MS = 1000;
 const DEFAULT_RETRY_MAX_MS = 10000;
-const DEFAULT_AUTH_TOKEN_SYNC_INTERVAL_MS = 1000;
 
 function normalizeRetryMs(value: number | undefined, fallback: number): number {
   if (!Number.isFinite(value)) {
@@ -148,27 +132,14 @@ async function waitForDisconnectOrAbort(
   });
 }
 
-function readTokenSnapshots(adapter: IngestionAdapter): SlackAuthTokenCacheSnapshot[] {
-  const reader = adapter as TokenSnapshotReadableAdapter;
-  if (typeof reader.listAuthTokenSnapshots !== "function") {
-    return [];
-  }
-  try {
-    const snapshots = reader.listAuthTokenSnapshots();
-    return Array.isArray(snapshots) ? snapshots : [];
-  } catch {
-    return [];
-  }
-}
-
 function createDefaultAdapterFactory(
   options: SlackChannelPluginOptions
 ): (input: SlackAdapterFactoryInput) => IngestionAdapter {
   return (input) => {
     const cacheBase = resolveSlackCacheBaseDir({
       dataDir: options.dataDir,
-      accountId: SLACK_PENDING_ACCOUNT_ID,
-      fallbackAccountId: SLACK_PENDING_ACCOUNT_ID,
+      accountId: input.accountId,
+      fallbackAccountId: options.defaultAccountId ?? "default",
     });
     return new SlackAdapter({
       client: input.client,
@@ -184,25 +155,6 @@ function createDefaultAdapterFactory(
 export function createSlackChannelPlugin(
   options: SlackChannelPluginOptions
 ): ChannelIngestionPlugin<unknown> {
-  const pendingPromoter = new PendingDataPromoter({
-    dataDir: options.dataDir,
-    onWarn: options.onWarn,
-  });
-  configureSlackAuthTokenRegistry({
-    dataDir: options.dataDir,
-    authTestEnabled: options.authTestEnabled === true,
-    onWarn: options.onWarn,
-    onWorkspacePromoted: async (event) => {
-      await pendingPromoter.promoteByWorkspace({
-        workspaceKey: event.workspaceKey,
-        aliases: event.aliases,
-        accountId: event.accountId,
-        teamId: event.teamId,
-      });
-    },
-    onTokenPairReady: options.onTokenPairReady,
-  });
-
   const pluginId = options.id?.trim() || "slack";
   const channelId = options.channelId?.trim() || "slack";
   const timezone = options.timezone?.trim() || "Asia/Tokyo";
@@ -211,10 +163,6 @@ export function createSlackChannelPlugin(
     normalizeRetryMs(options.retryMaxMs, DEFAULT_RETRY_MAX_MS),
     retryBaseMs
   );
-  const authTokenSyncIntervalMs = normalizeRetryMs(
-    options.authTokenSyncIntervalMs,
-    DEFAULT_AUTH_TOKEN_SYNC_INTERVAL_MS
-  );
   const domCaptureDisabled = options.domCaptureDisabled ?? false;
   const endpointResolver = options.resolveEndpoint ?? resolveEndpoint;
   const connectFn = options.connectToSlackPage ?? connectToSlackPage;
@@ -222,7 +170,7 @@ export function createSlackChannelPlugin(
   const writer = (
     options.createWriter ??
     ((dataDir, defaultAccountId) => new JsonlWriter({ dataDir, defaultAccountId }))
-  )(options.dataDir, SLACK_PENDING_ACCOUNT_ID);
+  )(options.dataDir, normalizeAccountId(options.defaultAccountId, "default"));
   const sleep =
     options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const nowMs = options.nowMs ?? (() => Date.now());
@@ -253,7 +201,6 @@ export function createSlackChannelPlugin(
   const startAccount = async (ctx: ChannelGatewayContext<unknown>): Promise<void> => {
     let retryCount = 0;
     while (!ctx.abortSignal.aborted) {
-      let authTokenSyncTimer: NodeJS.Timeout | null = null;
       try {
         const endpoint = endpointResolver();
         const { client, slackUrl } = await connectFn(endpoint.host, endpoint.port);
@@ -273,35 +220,15 @@ export function createSlackChannelPlugin(
           lastError: null,
           lastStartAt: nowMs(),
         });
-        const syncTokenSnapshots = () => {
-          try {
-            const snapshots = readTokenSnapshots(adapter);
-            if (snapshots.length === 0) {
-              return;
-            }
-            syncSlackAuthTokenSnapshots({ snapshots });
-          } catch (error) {
-            options.onWarn?.("slack-plugin-token-sync-failed", {
-              accountId: ctx.accountId,
-              reason: toReason(error),
-            });
-          }
-        };
         await adapter.start(async (event) => {
-          syncTokenSnapshots();
-          const forStorage = attachAccountId(event, SLACK_PENDING_ACCOUNT_ID);
-          await writer.append(forStorage);
-          const forEmit = attachAccountId(event, ctx.accountId);
+          const withAccount = attachAccountId(event, ctx.accountId);
+          await writer.append(withAccount);
           await ctx.emit({
             accountId: ctx.accountId,
             channelId,
-            event: forEmit,
+            event: withAccount,
           });
         });
-        syncTokenSnapshots();
-        authTokenSyncTimer = setInterval(() => {
-          syncTokenSnapshots();
-        }, authTokenSyncIntervalMs);
         retryCount = 0;
         const reason = await waitForDisconnectOrAbort(client, ctx.abortSignal);
         if (reason === "disconnect" && !ctx.abortSignal.aborted) {
@@ -324,9 +251,6 @@ export function createSlackChannelPlugin(
           reason,
         });
       } finally {
-        if (authTokenSyncTimer) {
-          clearInterval(authTokenSyncTimer);
-        }
         await stopActiveSession(ctx.accountId);
         ctx.setStatus({
           ...ctx.getStatus(),

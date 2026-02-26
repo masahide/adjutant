@@ -6,8 +6,6 @@ import type { SlackNameCacheRepository } from "./nameCacheRepository.js";
 import type { ResponseBodyReader } from "./responseBodyReader.js";
 import type { SlackResponseProjector } from "./responseProjector.js";
 import type { SlackDebug } from "./slackDebug.js";
-import type { SlackAuthTokenCacheSnapshot } from "./slackAuthTokenCache.js";
-import { resolveSlackWorkspaceKey } from "./slackAuthTokenCache.js";
 import { SlackIngressRequestParser } from "./slackIngressRequestParser.js";
 import { SlackResponseCacheUpdater } from "./slackResponseCacheUpdater.js";
 import { SlackWsNormalizer } from "./slackWsNormalizer.js";
@@ -53,20 +51,6 @@ export type RequestWillBeSentEvent = {
   };
 };
 
-export type RequestWillBeSentExtraInfoEvent = {
-  requestId: string;
-  headers?: Record<string, string>;
-  associatedCookies?: Array<{
-    cookie?: {
-      name?: string;
-      value?: string;
-      domain?: string;
-      path?: string;
-    };
-    blockedReasons?: string[];
-  }>;
-};
-
 type CacheEntry = { text?: string; user?: string; teamId?: string };
 
 type SlackIngressHandlersDeps = {
@@ -74,7 +58,6 @@ type SlackIngressHandlersDeps = {
   timezone: string;
   slackApiRe: RegExp;
   debugFetchHookEnabled: boolean;
-  debugCookieStoreEnabled: boolean;
   debugNotificationEnabled: boolean;
   slackDebug: SlackDebug;
   pushDebugEvent: (kind: "raw_fetch" | "raw_ws" | "normalized", payload: unknown) => void;
@@ -108,9 +91,6 @@ type SlackIngressHandlersDeps = {
   nameCacheRepository: SlackNameCacheRepository;
   responseBodyReader: ResponseBodyReader;
   responseProjector: SlackResponseProjector;
-  readCookieStore?: (
-    requestUrl: string
-  ) => Promise<Array<{ name: string; value: string; domain?: string; path?: string }>>;
 };
 
 const REACTION_PAYLOAD_KEYS = [
@@ -148,7 +128,6 @@ export class SlackIngressHandlers {
     this.responseUpdater = new SlackResponseCacheUpdater({
       slackApiRe: deps.slackApiRe,
       debugFetchHookEnabled: deps.debugFetchHookEnabled,
-      debugCookieStoreEnabled: deps.debugCookieStoreEnabled,
       pushDebugEvent: (kind, payload) => deps.pushDebugEvent(kind, payload),
       truncateForDebug: (value, max) => deps.truncateForDebug(value, max),
       responseBodyReader: deps.responseBodyReader,
@@ -158,7 +137,6 @@ export class SlackIngressHandlers {
       parseUrlInfo: (url) => this.requestParser.parseUrlInfo(url),
       normalizeHeader: (headers, key) => this.requestParser.normalizeHeader(headers, key),
       toTextFromBlocks: (blocks) => fromBlocks(blocks),
-      readCookieStore: deps.readCookieStore,
       logCacheUpdate: (kind, teamId, changed, total) =>
         this.logCacheUpdate(kind, teamId, changed, total),
     });
@@ -172,11 +150,11 @@ export class SlackIngressHandlers {
     const { url, payload } = parsed;
 
     if (url.pathname.endsWith("/api/chat.postMessage")) {
-      return this.handlePostMessageRequest(payload, url.toString(), event.frameId);
+      return this.handlePostMessageRequest(payload, event.frameId);
     }
 
     if (url.pathname.startsWith("/api/reactions.")) {
-      return this.handleReactionRequest(payload, url.pathname, url.toString(), event.frameId);
+      return this.handleReactionRequest(payload, url.pathname, event.frameId);
     }
 
     return [];
@@ -197,21 +175,8 @@ export class SlackIngressHandlers {
     await this.responseUpdater.handleRequestWillBeSent(event);
   }
 
-  async handleRequestWillBeSentExtraInfo(event: RequestWillBeSentExtraInfoEvent): Promise<void> {
-    await this.responseUpdater.handleRequestWillBeSentExtraInfo(event);
-  }
-
-  getAuthTokenSnapshot(workspaceKey: string): SlackAuthTokenCacheSnapshot | null {
-    return this.responseUpdater.getAuthTokenSnapshot(workspaceKey);
-  }
-
-  listAuthTokenSnapshots(): SlackAuthTokenCacheSnapshot[] {
-    return this.responseUpdater.listAuthTokenSnapshots();
-  }
-
   private async handlePostMessageRequest(
     payload: Record<string, unknown>,
-    requestUrl: string,
     frameId?: string
   ): Promise<NormalizedEvent[]> {
     const channelId = typeof payload.channel === "string" ? payload.channel : "";
@@ -273,18 +238,12 @@ export class SlackIngressHandlers {
       }
     }
 
-    return [
-      this.attachWorkspaceMeta(messageEvent, {
-        teamId,
-        workspaceKey: resolveSlackWorkspaceKey(requestUrl),
-      }),
-    ];
+    return [messageEvent];
   }
 
   private async handleReactionRequest(
     payload: Record<string, unknown>,
     pathname: string,
-    requestUrl: string,
     frameId?: string
   ): Promise<NormalizedEvent[]> {
     const item = this.asRecord(payload.item);
@@ -361,12 +320,7 @@ export class SlackIngressHandlers {
       },
       { now: this.deps.now(), timezone: this.deps.timezone }
     );
-    return [
-      this.attachWorkspaceMeta(reactionEvent, {
-        teamId,
-        workspaceKey: resolveSlackWorkspaceKey(requestUrl),
-      }),
-    ];
+    return [reactionEvent];
   }
 
   private buildReactionDomCandidate(value: Record<string, unknown>): ReactionDomCandidate | null {
@@ -424,24 +378,6 @@ export class SlackIngressHandlers {
     const epochSeconds = Math.floor(now.getTime() / 1000);
     const millis = now.getMilliseconds();
     return `${epochSeconds}.${String(millis).padStart(3, "0")}000`;
-  }
-
-  private attachWorkspaceMeta(
-    event: NormalizedEvent,
-    input: { teamId?: string; workspaceKey?: string }
-  ): NormalizedEvent {
-    const teamId = this.asString(input.teamId);
-    const workspaceKeyFromInput = this.asString(input.workspaceKey);
-    const workspaceKey =
-      workspaceKeyFromInput && workspaceKeyFromInput !== "global" ? workspaceKeyFromInput : teamId;
-    return {
-      ...event,
-      meta: {
-        ...(event.meta ?? {}),
-        ...(workspaceKey ? { workspace_key: workspaceKey } : {}),
-        ...(teamId ? { team_id: teamId } : {}),
-      },
-    };
   }
 
   private asString(value: unknown): string | undefined {

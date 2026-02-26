@@ -1,9 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import {
-  buildBootstrapContextFiles,
-  renderProjectContext,
-} from "../../src/assistant/bootstrap-context.js";
+import { buildBootstrapContextFiles } from "../../src/assistant/bootstrap-context.js";
 import type { WorkspaceBootstrapFile } from "../../src/assistant/workspace-bootstrap.js";
 
 describe("bootstrap-context", () => {
@@ -55,23 +52,5 @@ describe("bootstrap-context", () => {
     assert.equal(contextFiles[0]?.content.includes("[...truncated"), true);
     assert.equal(warnings.length, 1);
     assert.equal(warnings[0]?.fileName, "SOUL.md");
-  });
-
-  it("HEARTBEAT.md を含む場合は通常ターン向けの適用スコープ注意書きを出す", () => {
-    const rendered = renderProjectContext([
-      {
-        path: "HEARTBEAT.md",
-        content: "# HEARTBEAT\n...",
-      },
-    ]);
-
-    assert.equal(
-      rendered.includes("HEARTBEAT.md instructions apply only during heartbeat turns"),
-      true
-    );
-    assert.equal(
-      rendered.includes("For normal user turns, do not execute HEARTBEAT.md instructions."),
-      true
-    );
   });
 });

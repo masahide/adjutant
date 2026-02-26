@@ -1,5 +1,4 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { SandboxDockerConfig } from "./types.js";
 
@@ -245,8 +244,6 @@ export async function ensureSandboxContainer(params: {
   runner?: DockerCommandRunner;
 }): Promise<string> {
   const runner = params.runner ?? defaultRunner();
-  const hostWorkspaceDir = resolve(params.hostWorkspaceDir);
-  await mkdir(hostWorkspaceDir, { recursive: true });
   const containerName =
     params.containerName ??
     buildSandboxContainerName({
@@ -259,7 +256,7 @@ export async function ensureSandboxContainer(params: {
       name: containerName,
       ownerNonce: params.ownerNonce,
       cfg: params.cfg,
-      hostWorkspaceDir,
+      hostWorkspaceDir: params.hostWorkspaceDir,
     });
     await runner(createArgs);
     await runner(["start", containerName]);

@@ -79,6 +79,4 @@ export type HeartbeatRunRecord = {
   triggerReason?: string;
   modelId?: string;
   preview?: string;
-  eventStatus?: HeartbeatEventPayload["status"];
-  eventReason?: string;
 };

@@ -1,11 +1,4 @@
 import { createApiServer } from "./api-server.js";
-import { ProviderRegistry } from "./dynamic-tool/registry.js";
-import { ToolHub } from "./dynamic-tool/hub.js";
-import {
-  createSlackDynamicProviderFromEnv,
-  isSlackApiToolsEnabled,
-} from "./slack-api-tools/index.js";
-import { listSlackAuthWorkspacesFromCache } from "../slack/slackAuthTokenRegistry.js";
 import * as ChatHandler from "./chat-handler.js";
 import * as StreamEventBridge from "./stream-event-bridge.js";
 import { configureAgentAuditLogger } from "./agent-audit.js";
@@ -40,13 +33,9 @@ import { createPendingFlusher } from "../proactive/pending-flusher.js";
 import { createWatermarkStore } from "../proactive/watermark-store.js";
 import { routeEventKindFromEvent } from "../proactive/route-decision.js";
 import { createProactiveMetrics } from "../proactive/metrics.js";
-import { createSlackRpcWorkspaceRegistrarFromEnv } from "../slack/slack-rpc-workspace-registrar.js";
 import { listJsonlFiles, recoverJsonlFiles } from "../io/jsonl-recovery.js";
 import { loadAssistantGatewayRuntimeConfig } from "../runtime/runtime-config-loader.js";
-import { loadEnvFileIfPresent } from "../runtime/env-file-loader.js";
-import { installConsoleFileLogger } from "../runtime/process-log-file.js";
 import {
-  buildSandboxContainerName,
   checkDockerAvailability,
   destroySandboxContainer,
   ensureDockerImage,
@@ -56,23 +45,15 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { appendFile, mkdir, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import {
-  ensureSlackRpcGatewayReady,
-  resolveSlackRpcGatewayBootstrapConfig,
-  stopSlackRpcGateway,
-} from "./slack-rpc-gateway-bootstrap.js";
-
-loadEnvFileIfPresent();
 
 const runtimeConfig = loadAssistantGatewayRuntimeConfig();
 const PORT = runtimeConfig.app.assistant.port;
 const HOST = runtimeConfig.app.assistant.host;
 const DATA_DIR = runtimeConfig.app.assistant.dataDir;
-let workspaceDir = runtimeConfig.app.assistant.workspaceDir;
+const WORKSPACE_DIR = runtimeConfig.app.assistant.workspaceDir;
 const TIMEZONE = runtimeConfig.app.assistant.timezone;
 const MODEL = runtimeConfig.app.assistant.model;
 const TIMELINE_PATH = runtimeConfig.app.assistant.timelinePath;
-const ASSISTANT_LOG_PATH = runtimeConfig.app.assistant.logPath;
 const AGENT_AUDIT = runtimeConfig.app.agentAudit;
 const SESSION_STATE_DIR = runtimeConfig.app.sessionStorage.stateDir;
 const SESSION_AGENT_ID = runtimeConfig.app.sessionStorage.agentId;
@@ -88,17 +69,8 @@ const SSE_REPLAY_MAX_AGE_MS = runtimeConfig.app.sse.replayMaxAgeMs;
 const SLACK_RETRY_BASE_MS = runtimeConfig.app.slack.retryBaseMs;
 const SLACK_RETRY_MAX_MS = runtimeConfig.app.slack.retryMaxMs;
 const SLACK_DEFAULT_ACCOUNT_ID = runtimeConfig.app.slack.defaultAccountId;
-const SLACK_AUTH_TEST_ENABLED = parseBoolean(process.env.ADJUTANT_SLACK_AUTH_TEST_ENABLED, true);
 const FLUSHER_INTERVAL_MS = parsePositiveInt(process.env.ADJUTANT_FLUSHER_INTERVAL_MS, 300_000);
 const FLUSHER_STALE_MS = parsePositiveInt(process.env.ADJUTANT_FLUSHER_STALE_MS, 900_000);
-
-let consoleLogHandle: { flush: () => Promise<void> } | null = null;
-try {
-  consoleLogHandle = await installConsoleFileLogger(ASSISTANT_LOG_PATH);
-  console.log(`[Assistant] Process log file -> ${ASSISTANT_LOG_PATH}`);
-} catch (error) {
-  console.warn("[Assistant] 動作ログファイルの初期化に失敗しました:", toReason(error));
-}
 
 configureAgentAuditLogger({
   enabled: AGENT_AUDIT.enabled,
@@ -111,23 +83,6 @@ configureAgentAuditLogger({
 
 function toReason(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-function logStartupPhase(phase: string, meta?: Record<string, unknown>): void {
-  if (meta) {
-    console.log(`[Assistant][Startup] ${phase}`, meta);
-    return;
-  }
-  console.log(`[Assistant][Startup] ${phase}`);
-}
-
-function isDockerWorkspaceMountError(error: unknown): boolean {
-  const reason = toReason(error).toLowerCase();
-  return (
-    reason.includes("error while creating mount source path") ||
-    reason.includes('invalid mount config for type "bind"') ||
-    reason.includes("bind source path does not exist")
-  );
 }
 
 function parsePositiveInt(value: string | undefined, fallback: number): number {
@@ -152,131 +107,36 @@ function parseNonNegativeInt(value: string | undefined, fallback: number): numbe
   return Math.max(0, Math.floor(parsed));
 }
 
-function parseBoolean(value: string | undefined, fallback: boolean): boolean {
-  if (!value) {
-    return fallback;
-  }
-  const normalized = value.trim().toLowerCase();
-  if (normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on") {
-    return true;
-  }
-  if (normalized === "0" || normalized === "false" || normalized === "no" || normalized === "off") {
-    return false;
-  }
-  return fallback;
-}
-
-function shouldSuppressSlackAuthWarn(
-  message: string,
-  meta: Record<string, unknown> | undefined
-): boolean {
-  if (message !== "slack-auth-token-snapshot-skipped") {
-    return false;
-  }
-  const reason = typeof meta?.reason === "string" ? meta.reason : "";
-  return reason === "incoherent_token_pair";
-}
-
-const slackRpcGatewayBootstrap = resolveSlackRpcGatewayBootstrapConfig(process.env);
-if (slackRpcGatewayBootstrap.enabled) {
-  try {
-    await ensureSlackRpcGatewayReady({
-      config: slackRpcGatewayBootstrap,
-      cwd: process.cwd(),
-      onLog: (message, meta) => {
-        logStartupPhase(`slack-rpc-gateway:${message}`, meta);
-      },
-    });
-    console.log(
-      `[Assistant] Slack RPC gateway ready base_url=${slackRpcGatewayBootstrap.baseUrl} auto_start=${String(slackRpcGatewayBootstrap.autoStart)}`
-    );
-  } catch (error) {
-    console.error("[Assistant] Slack RPC gateway bootstrap failed", {
-      reason: toReason(error),
-      baseUrl: slackRpcGatewayBootstrap.baseUrl,
-    });
-    throw error;
-  }
-}
-
 let activeSandboxContainer: { containerName: string; ownerNonce: string } | null = null;
 
 if (SANDBOX_CONFIG.mode === "off") {
   configureSandbox(null);
 } else {
-  logStartupPhase("sandbox:docker-availability-check-start");
   const availability = await checkDockerAvailability();
   if (!availability.available) {
     throw new Error(
-      `サンドボックスモードの起動には Docker デーモンが必要です。Docker Desktop を起動して再実行してください。${availability.reason ? ` 理由: ${availability.reason}` : ""} サンドボックスを無効化する場合は ADJUTANT_SANDBOX_MODE=off を設定してください。`
+      `sandbox mode requires Docker daemon. Start Docker Desktop and retry. ${availability.reason ? `reason: ${availability.reason}` : ""} Set ADJUTANT_SANDBOX_MODE=off to disable sandbox.`
     );
   }
-  logStartupPhase("sandbox:docker-availability-check-done");
-  await mkdir(workspaceDir, { recursive: true });
-  logStartupPhase("sandbox:ensure-image-start", { image: SANDBOX_CONFIG.docker.image });
   await ensureDockerImage(SANDBOX_CONFIG.docker.image, {
     autoBuild: SANDBOX_CONFIG.docker.autoBuildImage,
     buildContextDir: process.cwd(),
   });
-  logStartupPhase("sandbox:ensure-image-done", { image: SANDBOX_CONFIG.docker.image });
   const ownerNonce = randomUUID().slice(0, 6);
-  const sandboxContainerName = buildSandboxContainerName({
-    containerPrefix: SANDBOX_CONFIG.docker.containerPrefix,
+  const containerName = await ensureSandboxContainer({
+    cfg: SANDBOX_CONFIG.docker,
+    hostWorkspaceDir: WORKSPACE_DIR,
     ownerNonce,
   });
-  let containerName: string;
-  try {
-    logStartupPhase("sandbox:container-ensure-start", { containerName: sandboxContainerName });
-    containerName = await ensureSandboxContainer({
-      cfg: SANDBOX_CONFIG.docker,
-      hostWorkspaceDir: workspaceDir,
-      ownerNonce,
-      containerName: sandboxContainerName,
-    });
-    logStartupPhase("sandbox:container-ensure-done", { containerName });
-  } catch (error) {
-    if (!isDockerWorkspaceMountError(error)) {
-      throw error;
-    }
-    const fallbackWorkspaceDir = resolve(process.cwd(), ".adjutant", "workspace");
-    if (fallbackWorkspaceDir === resolve(workspaceDir)) {
-      throw error;
-    }
-    console.warn(
-      `[Assistant] Workspace mount failed for sandbox path=${workspaceDir}. Retry with fallback=${fallbackWorkspaceDir}. reason=${toReason(error)}`
-    );
-    const removed = await destroySandboxContainer({
-      containerName: sandboxContainerName,
-      ownerNonce,
-    });
-    if (removed.removed) {
-      console.warn(`[Assistant] Removed failed sandbox container name=${sandboxContainerName}`);
-    }
-    await mkdir(fallbackWorkspaceDir, { recursive: true });
-    workspaceDir = fallbackWorkspaceDir;
-    logStartupPhase("sandbox:container-ensure-fallback-start", {
-      containerName: sandboxContainerName,
-      workspaceDir: fallbackWorkspaceDir,
-    });
-    containerName = await ensureSandboxContainer({
-      cfg: SANDBOX_CONFIG.docker,
-      hostWorkspaceDir: workspaceDir,
-      ownerNonce,
-      containerName: sandboxContainerName,
-    });
-    logStartupPhase("sandbox:container-ensure-fallback-done", { containerName });
-  }
   configureSandbox({
     containerName,
     workdir: SANDBOX_CONFIG.docker.workdir,
-    hostWorkspaceDir: workspaceDir,
+    hostWorkspaceDir: WORKSPACE_DIR,
     mode: SANDBOX_CONFIG.mode,
     envAllowlist: SANDBOX_CONFIG.docker.envAllowlist,
   });
   activeSandboxContainer = { containerName, ownerNonce };
-  console.log(
-    `[Assistant] Sandbox enabled mode=${SANDBOX_CONFIG.mode} container=${containerName} workspace=${workspaceDir}`
-  );
+  console.log(`[Assistant] Sandbox enabled mode=${SANDBOX_CONFIG.mode} container=${containerName}`);
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -363,18 +223,14 @@ async function appendJsonl(path: string, record: DualWriteRecord): Promise<{ off
 }
 
 const jsonlRecoveryTargets = new Set<string>([TIMELINE_PATH, IDEMPOTENCY_STORE_PATH]);
-logStartupPhase("jsonl-recovery:scan-start");
 for (const filePath of await listJsonlFiles(SESSION_TRANSCRIPTS_DIR)) {
   jsonlRecoveryTargets.add(filePath);
 }
 for (const filePath of await listJsonlFiles(DATA_DIR)) {
   jsonlRecoveryTargets.add(filePath);
 }
-logStartupPhase("jsonl-recovery:scan-done", { fileCount: jsonlRecoveryTargets.size });
-logStartupPhase("jsonl-recovery:repair-start");
 const jsonlRecoveryResults = await recoverJsonlFiles(jsonlRecoveryTargets);
 const repairedJsonl = jsonlRecoveryResults.filter((result) => result.repaired);
-logStartupPhase("jsonl-recovery:repair-done", { repairedCount: repairedJsonl.length });
 if (repairedJsonl.length > 0) {
   console.warn(
     "[AssistantGateway] JSONL recovery repaired files",
@@ -444,7 +300,7 @@ const watermarkStore = createWatermarkStore({
 
 const agentRunFn = createAgentRunAdapter(
   {
-    workspaceDir,
+    workspaceDir: WORKSPACE_DIR,
     timezone: TIMEZONE,
     model: MODEL,
     sessionEntriesPath: SESSION_ENTRIES_PATH,
@@ -483,7 +339,7 @@ ChatHandler.configure({
   runAgent: agentRunFn,
   globalConcurrencyQueue,
   dataDir: DATA_DIR,
-  workspaceDir,
+  workspaceDir: WORKSPACE_DIR,
   timezone: TIMEZONE,
   idempotencyTtlSec: 300,
   idempotencyStorePath: IDEMPOTENCY_STORE_PATH,
@@ -589,43 +445,6 @@ const pipeline = createChannelNotificationPipeline({
 });
 
 const pluginRegistry = createChannelPluginRegistry();
-let registrarFatal = false;
-const failFastRegistrarError = (message: string, meta?: Record<string, unknown>) => {
-  if (registrarFatal) {
-    return;
-  }
-  registrarFatal = true;
-  console.error("[AssistantGateway][SlackRpcWorkspaceRegistrar] fatal", {
-    message,
-    ...(meta ?? {}),
-  });
-  void (async () => {
-    if (slackRpcGatewayBootstrap.enabled && slackRpcGatewayBootstrap.autoStart) {
-      try {
-        await stopSlackRpcGateway({
-          config: slackRpcGatewayBootstrap,
-          cwd: process.cwd(),
-          onLog: (message, meta) => {
-            console.log("[Assistant][Startup][SlackRpcGateway]", message, meta ?? {});
-          },
-        });
-        console.log("[Assistant] Slack RPC gateway container stopped");
-      } catch (error) {
-        console.warn("[Assistant] failed to stop Slack RPC gateway container", toReason(error));
-      }
-    }
-    process.exit(1);
-  })();
-};
-const slackRpcWorkspaceRegistrar = createSlackRpcWorkspaceRegistrarFromEnv({
-  env: process.env,
-  onInfo: (message, meta) => {
-    console.log("[AssistantGateway][SlackRpcWorkspaceRegistrar]", message, meta ?? {});
-  },
-  onWarn: (message, meta) => {
-    failFastRegistrarError(message, meta);
-  },
-});
 pluginRegistry.register(
   createSlackChannelPlugin({
     dataDir: DATA_DIR,
@@ -638,14 +457,7 @@ pluginRegistry.register(
     retryMaxMs: Number.isFinite(SLACK_RETRY_MAX_MS)
       ? Math.max(1, Math.floor(SLACK_RETRY_MAX_MS))
       : 10000,
-    authTestEnabled: SLACK_AUTH_TEST_ENABLED,
-    onTokenPairReady: async (event) => {
-      await slackRpcWorkspaceRegistrar.registerTokenPair(event);
-    },
     onWarn: (message, meta) => {
-      if (shouldSuppressSlackAuthWarn(message, meta)) {
-        return;
-      }
       console.warn("[AssistantGateway][SlackPlugin]", message, meta ?? {});
     },
   })
@@ -662,7 +474,7 @@ const channelManager = createChannelManager({
 const heartbeatConfig: HeartbeatConfig = {
   dataDir: DATA_DIR,
   stateDir: SESSION_STATE_DIR,
-  workspaceDir,
+  workspaceDir: WORKSPACE_DIR,
   userTimezone: TIMEZONE,
   defaultAccountId: SLACK_DEFAULT_ACCOUNT_ID,
   model: MODEL,
@@ -702,7 +514,7 @@ const pendingFlusherTimer =
     : null;
 
 const markdownSummaryBatchService = createMarkdownSummaryBatchService({
-  workspaceDir,
+  workspaceDir: WORKSPACE_DIR,
   timezone: TIMEZONE,
   sessionTranscriptsDir: SESSION_TRANSCRIPTS_DIR,
   watermarkPath: resolveSummaryBatchWatermarkPath({
@@ -737,16 +549,6 @@ const markdownSummaryBatchTimer =
       }, MARKDOWN_SUMMARY_BATCH.intervalMs)
     : null;
 
-const debugProviderRegistry = new ProviderRegistry();
-if (isSlackApiToolsEnabled(process.env)) {
-  // Skip configureSlackAuthTokenRegistry — already configured by createSlackChannelPlugin.
-  // Re-calling it would reset the probeWorker and disrupt token promotion.
-  debugProviderRegistry.register(
-    createSlackDynamicProviderFromEnv({ env: process.env, skipRegistryConfigure: true })
-  );
-}
-const debugToolHub = new ToolHub(debugProviderRegistry);
-
 const api = createApiServer({
   port: PORT,
   host: HOST,
@@ -756,9 +558,6 @@ const api = createApiServer({
     getLastHeartbeatEvent,
     runOnce: (opts) => runOnce(heartbeatConfig, opts),
   },
-  toolHub: debugToolHub,
-  providerRegistry: debugProviderRegistry,
-  workspaceListProvider: () => listSlackAuthWorkspacesFromCache({ includePending: true }),
 });
 
 let viteChild: ChildProcess | null = null;
@@ -801,20 +600,6 @@ async function shutdown(signal: string) {
   }
   const stopTargets = pluginRegistry.list().map((plugin) => channelManager.stopChannel(plugin.id));
   await Promise.allSettled([api.stop(), ...stopTargets]);
-  if (slackRpcGatewayBootstrap.enabled && slackRpcGatewayBootstrap.autoStart) {
-    try {
-      await stopSlackRpcGateway({
-        config: slackRpcGatewayBootstrap,
-        cwd: process.cwd(),
-        onLog: (message, meta) => {
-          console.log("[Assistant][Shutdown][SlackRpcGateway]", message, meta ?? {});
-        },
-      });
-      console.log("[Assistant] Slack RPC gateway container stopped");
-    } catch (error) {
-      console.warn("[Assistant] failed to stop Slack RPC gateway container", toReason(error));
-    }
-  }
   if (activeSandboxContainer) {
     try {
       const result = await destroySandboxContainer({
@@ -835,9 +620,6 @@ async function shutdown(signal: string) {
     }
   }
   viteChild?.kill();
-  if (consoleLogHandle) {
-    await consoleLogHandle.flush();
-  }
   process.exit(0);
 }
 

@@ -16,7 +16,6 @@ describe("runtime-config-loader", () => {
       env: {
         ADJUTANT_TZ: "",
         ADJUTANT_DISABLE_DOM_CAPTURE: "true",
-        ADJUTANT_DEBUG_SLACK_GET_COOKIES: "1",
         ADJUTANT_DEBUG_UI: "true",
         ADJUTANT_DEBUG_UI_PORT: "NaN",
         ADJUTANT_CDP_EVENT_LOG: "1",
@@ -28,7 +27,6 @@ describe("runtime-config-loader", () => {
 
     assert.equal(config.timezone, "Asia/Tokyo");
     assert.equal(config.domCaptureDisabled, true);
-    assert.equal(config.debugSlackGetCookiesEnabled, true);
     assert.equal(config.debugUiEnabled, true);
     assert.equal(config.debugUiPort, 8787);
     assert.equal(config.cdpEventLogEnabled, true);
@@ -62,7 +60,6 @@ describe("runtime-config-loader", () => {
     assert.equal(config.app.assistant.workspaceDir, resolve("workspace-x"));
     assert.equal(config.app.assistant.timezone, "UTC");
     assert.equal(config.app.assistant.model, "gpt-5-mini");
-    assert.equal(config.app.assistant.logPath, resolve(expectedStateDir, "logs", "assistant.log"));
     assert.equal(config.app.agentAudit.enabled, true);
     assert.equal(
       config.app.agentAudit.path,
@@ -83,7 +80,7 @@ describe("runtime-config-loader", () => {
     assert.equal(config.app.markdownSummaryBatch.intervalMs, 3_600_000);
     assert.equal(config.app.markdownSummaryBatch.messages, 15);
     assert.equal(config.app.markdownSummaryBatch.maxSessions, 200);
-    assert.equal(config.app.sandbox.mode, "all");
+    assert.equal(config.app.sandbox.mode, "off");
     assert.equal(config.app.sandbox.docker.image, "adjutant-sandbox:trixie-slim");
     assert.equal(config.app.sandbox.docker.autoBuildImage, true);
     assert.equal(config.app.sandbox.docker.containerPrefix, "adjutant-sandbox");
@@ -127,7 +124,6 @@ describe("runtime-config-loader", () => {
       ADJUTANT_AGENT_AUDIT_LOG_ENABLED: "0",
       ADJUTANT_AGENT_AUDIT_LOG_PATH: "/tmp/custom/agent-audit.ndjson",
       ADJUTANT_AGENT_AUDIT_MAX_FIELD_CHARS: "1234",
-      ADJUTANT_ASSISTANT_LOG_PATH: "/tmp/custom/assistant.log",
     } as NodeJS.ProcessEnv);
 
     assert.equal(config.app.sessionStorage.stateDir, "/tmp/adjutant-state");
@@ -135,7 +131,6 @@ describe("runtime-config-loader", () => {
     assert.equal(config.app.sessionStorage.transcriptsDir, "/tmp/custom/sessions");
     assert.equal(config.app.sessionStorage.sessionEntriesPath, "/tmp/custom/sessions.json");
     assert.equal(config.app.assistant.workspaceDir, "/tmp/adjutant-state/workspace");
-    assert.equal(config.app.assistant.logPath, "/tmp/custom/assistant.log");
     assert.equal(config.app.agentAudit.enabled, false);
     assert.equal(config.app.agentAudit.path, "/tmp/custom/agent-audit.ndjson");
     assert.equal(config.app.agentAudit.maxFieldChars, 1234);

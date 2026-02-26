@@ -5,7 +5,7 @@ import { resolveSandboxConfig } from "../../src/sandbox/config.js";
 describe("sandbox config", () => {
   it("未設定時は既定値を返す", () => {
     const config = resolveSandboxConfig({} as NodeJS.ProcessEnv);
-    assert.equal(config.mode, "all");
+    assert.equal(config.mode, "off");
     assert.equal(config.docker.image, "adjutant-sandbox:trixie-slim");
     assert.equal(config.docker.autoBuildImage, true);
     assert.equal(config.docker.containerPrefix, "adjutant-sandbox");

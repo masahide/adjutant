@@ -10,8 +10,6 @@ import { readRunAudit, resolveAgentAuditLogPath } from "./audit-reader.js";
 import { resolveSessionKeyByRunId } from "./run-index-repository.js";
 import { readRunSummaryFromTranscript } from "./transcript-reader.js";
 import { resolveAdjutantStateDir } from "./session-paths.js";
-import type { ProviderRegistry } from "./dynamic-tool/registry.js";
-import type { ToolHub } from "./dynamic-tool/hub.js";
 
 export type HeartbeatProvider = {
   onHeartbeatEvent: (listener: (evt: HeartbeatEventPayload) => void) => () => void;
@@ -28,9 +26,6 @@ export type ApiServerConfig = {
   agentAuditLogPath?: string;
   heartbeatRunsPath?: string;
   runIndexPath?: string;
-  toolHub?: ToolHub;
-  providerRegistry?: ProviderRegistry;
-  workspaceListProvider?: () => unknown[];
 };
 
 const DEFAULT_CONFIG: ApiServerConfig = {
@@ -221,16 +216,6 @@ async function handleRequest(
     const limit = parseHeartbeatHistoryLimit(url.searchParams.get("limit"));
     const cursor = parseHeartbeatCursor(url.searchParams.get("cursor"));
     return handleGetHeartbeatHistory(res, cfg, { limit, cursor });
-  }
-
-  if (method === "GET" && path === "/api/tools/catalog") {
-    return handleGetToolsCatalog(res, cfg);
-  }
-  if (method === "POST" && path === "/api/tools/execute") {
-    return handlePostToolsExecute(req, res, cfg);
-  }
-  if (method === "GET" && path === "/api/tools/workspaces") {
-    return handleGetToolsWorkspaces(res, cfg);
   }
 
   sendJson(res, 404, { error: "Not Found" });
@@ -697,58 +682,4 @@ function handleGetHeartbeatLast(res: ServerResponse, cfg: ApiServerConfig): void
 
   const last = cfg.heartbeatProvider.getLastHeartbeatEvent();
   sendJson(res, 200, last);
-}
-
-// ── Tool debug endpoints ──
-
-function handleGetToolsCatalog(res: ServerResponse, cfg: ApiServerConfig): void {
-  if (!cfg.toolHub || !cfg.providerRegistry) {
-    sendError(res, 501, "NOT_IMPLEMENTED", "ToolHub not configured");
-    return;
-  }
-  const providers = cfg.providerRegistry.listProviders().map((item) => {
-    const provider = cfg.providerRegistry!.getProvider(item.name);
-    const actions = provider
-      ? provider.listActions().map((desc) => ({
-          name: desc.name,
-          description: desc.description,
-          requiredArgs: desc.requiredArgs ?? [],
-          argsSchema: desc.argsSchema ?? { type: "object" },
-        }))
-      : [];
-    return { name: item.name, description: item.description, actions };
-  });
-  sendJson(res, 200, { providers });
-}
-
-async function handlePostToolsExecute(
-  req: IncomingMessage,
-  res: ServerResponse,
-  cfg: ApiServerConfig
-): Promise<void> {
-  if (!cfg.toolHub) {
-    sendError(res, 501, "NOT_IMPLEMENTED", "ToolHub not configured");
-    return;
-  }
-  const body = await readJsonBody(req, res);
-  if (!body) return;
-  const result = await cfg.toolHub.execute(body);
-  sendJson(res, 200, result);
-}
-
-function handleGetToolsWorkspaces(res: ServerResponse, cfg: ApiServerConfig): void {
-  if (!cfg.workspaceListProvider) {
-    sendJson(res, 200, { workspaces: [] });
-    return;
-  }
-  const raw = cfg.workspaceListProvider() as Array<Record<string, unknown>>;
-  const workspaces = raw.map((ws) => ({
-    workspace_key: ws.workspaceKey ?? ws.workspace_key,
-    aliases: ws.aliases ?? [],
-    account_id: ws.accountId ?? ws.account_id,
-    has_tokens: ws.hasTokens ?? ws.has_tokens ?? false,
-    auth_test_status: ws.authTestStatus ?? ws.auth_test_status,
-    last_seen_at: ws.lastSeenAt ?? ws.last_seen_at ?? 0,
-  }));
-  sendJson(res, 200, { workspaces });
 }

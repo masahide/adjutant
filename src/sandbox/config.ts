@@ -9,9 +9,6 @@ const DEFAULT_SANDBOX_CAP_DROP = ["ALL"];
 
 function parseSandboxMode(value: string | undefined): SandboxMode {
   const normalized = value?.trim().toLowerCase();
-  if (!normalized) {
-    return "all";
-  }
   if (normalized === "off" || normalized === "non-main" || normalized === "all") {
     return normalized;
   }

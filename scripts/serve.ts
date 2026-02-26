@@ -3,9 +3,6 @@ import { existsSync, mkdirSync, readFileSync, createWriteStream } from "node:fs"
 import { join, resolve } from "node:path";
 import type { ChildProcess } from "node:child_process";
 import { ensureSlackWithCdp } from "./lib/slackCdp.js";
-import { loadEnvFileIfPresent } from "../src/runtime/env-file-loader.js";
-
-loadEnvFileIfPresent();
 
 type CliOptions = {
   skipSlackHelper: boolean;
