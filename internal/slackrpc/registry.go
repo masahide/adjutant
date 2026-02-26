@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -22,17 +23,29 @@ type WorkspaceRuntime struct {
 	TeamID            string
 	EnterpriseID      string
 	WorkspaceURL      string
+	AuthTest          *AuthTestIdentity
 	InitializedAtUnix int64
 }
 
 type WorkspaceStatus struct {
-	WorkspaceKey      string `json:"workspace_key"`
-	Ready             bool   `json:"ready"`
-	InitError         string `json:"init_error,omitempty"`
-	TeamID            string `json:"team_id,omitempty"`
-	EnterpriseID      string `json:"enterprise_id,omitempty"`
-	WorkspaceURL      string `json:"url,omitempty"`
-	InitializedAtUnix int64  `json:"initialized_at_unix"`
+	WorkspaceKey      string            `json:"workspace_key"`
+	Ready             bool              `json:"ready"`
+	InitError         string            `json:"init_error,omitempty"`
+	TeamID            string            `json:"team_id,omitempty"`
+	EnterpriseID      string            `json:"enterprise_id,omitempty"`
+	WorkspaceURL      string            `json:"url,omitempty"`
+	AuthTest          *AuthTestIdentity `json:"auth_test,omitempty"`
+	InitializedAtUnix int64             `json:"initialized_at_unix"`
+}
+
+type AuthTestIdentity struct {
+	URL          string `json:"url,omitempty"`
+	Team         string `json:"team,omitempty"`
+	User         string `json:"user,omitempty"`
+	TeamID       string `json:"team_id,omitempty"`
+	UserID       string `json:"user_id,omitempty"`
+	EnterpriseID string `json:"enterprise_id,omitempty"`
+	BotID        string `json:"bot_id,omitempty"`
 }
 
 type WorkspaceInitializer func(ctx context.Context, cfg WorkspaceConfig) (*WorkspaceRuntime, error)
@@ -106,9 +119,6 @@ func (r *WorkspaceRegistry) InitSequential(ctx context.Context, cfgs []Workspace
 
 func (r *WorkspaceRegistry) Register(ctx context.Context, cfg WorkspaceConfig, initFn WorkspaceInitializer) (*WorkspaceRuntime, error) {
 	workspaceKey := strings.TrimSpace(cfg.WorkspaceKey)
-	if workspaceKey == "" {
-		return nil, errors.New("workspace_key is required")
-	}
 	if strings.TrimSpace(cfg.XOXC) == "" {
 		return nil, errors.New("xoxc is required")
 	}
@@ -116,14 +126,21 @@ func (r *WorkspaceRegistry) Register(ctx context.Context, cfg WorkspaceConfig, i
 		return nil, errors.New("xoxd is required")
 	}
 
-	r.mu.Lock()
-	if _, exists := r.entries[workspaceKey]; exists {
+	if workspaceKey != "" {
+		r.mu.Lock()
+		if _, exists := r.entries[workspaceKey]; exists {
+			r.mu.Unlock()
+			return nil, fmt.Errorf("%w: %s", ErrWorkspaceAlreadyExists, workspaceKey)
+		}
 		r.mu.Unlock()
-		return nil, fmt.Errorf("%w: %s", ErrWorkspaceAlreadyExists, workspaceKey)
 	}
-	r.mu.Unlock()
 
-	runtime, err := initFn(ctx, cfg)
+	cfgForInit := cfg
+	if workspaceKey == "" {
+		cfgForInit.WorkspaceKey = fmt.Sprintf("__auto_workspace_%d", time.Now().UnixNano())
+	}
+
+	runtime, err := initFn(ctx, cfgForInit)
 	if err != nil {
 		return nil, err
 	}
@@ -133,19 +150,26 @@ func (r *WorkspaceRegistry) Register(ctx context.Context, cfg WorkspaceConfig, i
 	if !runtime.Ready {
 		return nil, errors.New("initializer returned not-ready runtime")
 	}
-	if strings.TrimSpace(runtime.WorkspaceKey) == "" {
-		runtime.WorkspaceKey = workspaceKey
+
+	resolvedWorkspaceKey := workspaceKey
+	if resolvedWorkspaceKey == "" {
+		resolvedWorkspaceKey = deriveWorkspaceKey(runtime)
 	}
+	resolvedWorkspaceKey = strings.TrimSpace(resolvedWorkspaceKey)
+	if resolvedWorkspaceKey == "" {
+		return nil, errors.New("workspace_key could not be derived from auth.test")
+	}
+	runtime.WorkspaceKey = resolvedWorkspaceKey
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if _, exists := r.entries[workspaceKey]; exists {
-		return nil, fmt.Errorf("%w: %s", ErrWorkspaceAlreadyExists, workspaceKey)
+	if _, exists := r.entries[resolvedWorkspaceKey]; exists {
+		return nil, fmt.Errorf("%w: %s", ErrWorkspaceAlreadyExists, resolvedWorkspaceKey)
 	}
-	r.entries[workspaceKey] = runtime
-	r.order = append(r.order, workspaceKey)
+	r.entries[resolvedWorkspaceKey] = runtime
+	r.order = append(r.order, resolvedWorkspaceKey)
 	if r.defaultKey == "" {
-		r.defaultKey = workspaceKey
+		r.defaultKey = resolvedWorkspaceKey
 	}
 
 	return runtime, nil
@@ -227,9 +251,64 @@ func (r *WorkspaceRegistry) ListStatuses() []WorkspaceStatus {
 			TeamID:            runtime.TeamID,
 			EnterpriseID:      runtime.EnterpriseID,
 			WorkspaceURL:      runtime.WorkspaceURL,
+			AuthTest:          runtime.AuthTest,
 			InitializedAtUnix: runtime.InitializedAtUnix,
 		})
 	}
 
 	return statuses
+}
+
+func deriveWorkspaceKey(runtime *WorkspaceRuntime) string {
+	if runtime == nil {
+		return ""
+	}
+
+	enterpriseID := strings.TrimSpace(runtime.EnterpriseID)
+	if enterpriseID != "" {
+		return enterpriseID
+	}
+
+	teamID := strings.TrimSpace(runtime.TeamID)
+	if teamID != "" {
+		return teamID
+	}
+
+	urlAlias := workspaceAliasFromURL(runtime.WorkspaceURL)
+	if urlAlias != "" {
+		return urlAlias
+	}
+
+	return strings.TrimSpace(runtime.WorkspaceKey)
+}
+
+func workspaceAliasFromURL(rawURL string) string {
+	normalized := strings.TrimSpace(rawURL)
+	if normalized == "" {
+		return ""
+	}
+
+	parsed, err := url.Parse(normalized)
+	if err != nil || parsed == nil {
+		return ""
+	}
+	host := strings.ToLower(strings.TrimSpace(parsed.Hostname()))
+	if host == "" {
+		return ""
+	}
+	parts := strings.Split(host, ".")
+	if len(parts) < 3 {
+		return ""
+	}
+	if parts[len(parts)-2] != "slack" || parts[len(parts)-1] != "com" {
+		return ""
+	}
+
+	candidate := strings.TrimSpace(parts[0])
+	switch candidate {
+	case "", "app", "edgeapi", "hooks":
+		return ""
+	default:
+		return candidate
+	}
 }

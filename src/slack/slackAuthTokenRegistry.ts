@@ -67,10 +67,21 @@ export type SlackWorkspacePromotionEvent = {
   enterpriseId?: string;
 };
 
+export type SlackWorkspaceTokenPairReadyEvent = {
+  workspaceKey: string;
+  aliases: string[];
+  accountId?: string;
+  xoxcToken: string;
+  xoxdToken: string;
+};
+
 const byAccount = new Map<string, CachedAccountTokens>();
 const pending = new Map<string, CachedTokenPair>();
 const backgroundTasks = new Set<Promise<void>>();
 const promotionListeners = new Set<(event: SlackWorkspacePromotionEvent) => Promise<void> | void>();
+const tokenPairListeners = new Set<
+  (event: SlackWorkspaceTokenPairReadyEvent) => Promise<void> | void
+>();
 
 let configuredDataDir: string | null = null;
 let tokenStore: SlackAuthTokenStore | null = null;
@@ -83,6 +94,31 @@ function normalizeString(value: unknown): string | undefined {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function extractSnapshotTokenRequestId(
+  entry: SlackAuthTokenCacheSnapshot["tokens"]["xoxc"] | SlackAuthTokenCacheSnapshot["tokens"]["xoxd"]
+): string | undefined {
+  if (!entry || typeof entry !== "object") {
+    return undefined;
+  }
+  const candidate = (entry as { requestId?: unknown }).requestId;
+  return normalizeString(candidate);
+}
+
+function isIncoherentSnapshotTokenPair(snapshot: SlackAuthTokenCacheSnapshot): boolean {
+  const xoxcValue = normalizeString(snapshot.tokens.xoxc?.value);
+  const xoxdValue = normalizeString(snapshot.tokens.xoxd?.value);
+  if (!xoxcValue || !xoxdValue) {
+    return false;
+  }
+
+  const xoxcRequestId = extractSnapshotTokenRequestId(snapshot.tokens.xoxc);
+  const xoxdRequestId = extractSnapshotTokenRequestId(snapshot.tokens.xoxd);
+  if (!xoxcRequestId || !xoxdRequestId) {
+    return false;
+  }
+  return xoxcRequestId !== xoxdRequestId;
 }
 
 function toTokenEntry(input: SlackAuthTokenEntry | undefined): PersistedTokenEntry | undefined {
@@ -387,6 +423,27 @@ function notifyWorkspacePromoted(event: SlackWorkspacePromotionEvent): void {
   }
 }
 
+function notifyTokenPairReady(entry: CachedTokenPair, accountId?: string): void {
+  if (tokenPairListeners.size === 0) {
+    return;
+  }
+  const xoxcToken = normalizeString(entry.tokens.xoxc?.value);
+  const xoxdToken = normalizeString(entry.tokens.xoxd?.value);
+  if (!xoxcToken || !xoxdToken) {
+    return;
+  }
+  const event: SlackWorkspaceTokenPairReadyEvent = {
+    workspaceKey: entry.workspaceKey,
+    aliases: dedupeAliases(entry.workspaceKey, entry.aliases),
+    accountId,
+    xoxcToken,
+    xoxdToken,
+  };
+  for (const listener of tokenPairListeners) {
+    trackBackgroundTask(Promise.resolve(listener(event)).then(() => undefined));
+  }
+}
+
 function persistPending(): void {
   if (!tokenStore) {
     return;
@@ -458,6 +515,7 @@ function hydrateFromStore(): void {
 
   for (const [accountId, accountMap] of byAccount.entries()) {
     for (const entry of accountMap.values()) {
+      notifyTokenPairReady(entry, accountId);
       if (entry.authTest?.status !== "ok") {
         continue;
       }
@@ -466,6 +524,7 @@ function hydrateFromStore(): void {
   }
 
   for (const entry of pending.values()) {
+    notifyTokenPairReady(entry);
     enqueueProbe(entry);
   }
 }
@@ -545,6 +604,7 @@ async function handleProbeResult(input: {
       sourceMap?.delete(location.key);
       persistAccount(location.accountId);
     }
+    notifyTokenPairReady(location.entry, resolvedAccountId);
     notifyWorkspacePromoted(toWorkspacePromotionEvent(location.entry, nextAuth, resolvedAccountId));
     return;
   }
@@ -621,6 +681,7 @@ export type ConfigureSlackAuthTokenRegistryOptions = {
   authTestRetryDelaysMs?: number[];
   onWarn?: (message: string, meta?: Record<string, unknown>) => void;
   onWorkspacePromoted?: (event: SlackWorkspacePromotionEvent) => Promise<void> | void;
+  onTokenPairReady?: (event: SlackWorkspaceTokenPairReadyEvent) => Promise<void> | void;
 };
 
 export function configureSlackAuthTokenRegistry(
@@ -636,6 +697,9 @@ export function configureSlackAuthTokenRegistry(
   }
   if (options.onWorkspacePromoted) {
     promotionListeners.add(options.onWorkspacePromoted);
+  }
+  if (options.onTokenPairReady) {
+    tokenPairListeners.add(options.onTokenPairReady);
   }
 
   const resolvedDataDir = resolve(dataDir);
@@ -677,6 +741,16 @@ export function syncSlackAuthTokenSnapshots(params: {
   let pendingDirty = false;
 
   for (const snapshot of snapshotList) {
+    if (isIncoherentSnapshotTokenPair(snapshot)) {
+      warnHandler?.("slack-auth-token-snapshot-skipped", {
+        reason: "incoherent_token_pair",
+        workspaceKey: normalizeWorkspaceKey(normalizeString(snapshot.workspaceKey)),
+        xoxcRequestId: extractSnapshotTokenRequestId(snapshot.tokens.xoxc) ?? null,
+        xoxdRequestId: extractSnapshotTokenRequestId(snapshot.tokens.xoxd) ?? null,
+      });
+      continue;
+    }
+
     const workspaceKey = normalizeWorkspaceKey(normalizeString(snapshot.workspaceKey));
     const location = findEntry(workspaceKey);
     const xoxc = toTokenEntry(snapshot.tokens.xoxc);
@@ -696,6 +770,9 @@ export function syncSlackAuthTokenSnapshots(params: {
       created.lastSeenAt = toLastSeenAt(created);
       pending.set(workspaceKey, created);
       pendingDirty = true;
+      if (hasTokenPair(created)) {
+        notifyTokenPairReady(created);
+      }
       enqueueProbe(created);
       continue;
     }
@@ -711,8 +788,9 @@ export function syncSlackAuthTokenSnapshots(params: {
     ]);
     location.entry.lastSeenAt = toLastSeenAt(location.entry);
     const nextPair = tokenPairKey(location.entry);
+    const pairChanged = originalPair !== nextPair;
 
-    if (originalPair !== nextPair) {
+    if (pairChanged) {
       location.entry.authTest = {
         status: "pending",
       };
@@ -720,8 +798,14 @@ export function syncSlackAuthTokenSnapshots(params: {
 
     if (location.scope === "pending") {
       pendingDirty = true;
+      if (pairChanged) {
+        notifyTokenPairReady(location.entry);
+      }
     } else {
       dirtyAccounts.add(location.accountId);
+      if (pairChanged) {
+        notifyTokenPairReady(location.entry, location.accountId);
+      }
     }
     enqueueProbe(location.entry);
   }
@@ -850,6 +934,7 @@ export function resetSlackAuthTokenCacheForTest(): void {
   byAccount.clear();
   pending.clear();
   promotionListeners.clear();
+  tokenPairListeners.clear();
   configuredDataDir = null;
   tokenStore = null;
   probeWorker?.resetForTest();

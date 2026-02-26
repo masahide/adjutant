@@ -36,18 +36,8 @@ func BuildWorkspaceInitializer(baseLogger *zap.Logger, envBootstrapper *EnvBoots
 				return fmt.Errorf("provider.New returned nil")
 			}
 
-			if !isDemoWorkspace {
-				initCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-				defer cancel()
-
-				if err := apiProvider.RefreshUsers(initCtx); err != nil {
-					return fmt.Errorf("refresh users: %w", err)
-				}
-				if err := apiProvider.RefreshChannels(initCtx); err != nil {
-					return fmt.Errorf("refresh channels: %w", err)
-				}
-			} else {
-				logger.Info("demo workspace detected; skipping cache warmup")
+			if isDemoWorkspace {
+				logger.Info("demo workspace detected")
 			}
 
 			return nil
@@ -56,32 +46,35 @@ func BuildWorkspaceInitializer(baseLogger *zap.Logger, envBootstrapper *EnvBoots
 			return nil, fmt.Errorf("initialize workspace %s: %w", workspaceKey, err)
 		}
 
-		ready := true
-		if !isDemoWorkspace {
-			var readyErr error
-			ready, readyErr = apiProvider.IsReady()
-			if readyErr != nil {
-				return nil, fmt.Errorf("workspace %s readiness check failed: %w", workspaceKey, readyErr)
-			}
-			if !ready {
-				return nil, fmt.Errorf("workspace %s is not ready", workspaceKey)
-			}
-		}
-
 		workspaceURL := ""
 		teamID := ""
 		enterpriseID := ""
+		var authTest *AuthTestIdentity
 		if isDemoWorkspace {
 			workspaceURL = "https://_.slack.com"
 			teamID = "TEAM123456"
-		} else {
-			authResp, authErr := apiProvider.Slack().AuthTest()
-			if authErr != nil {
-				logger.Warn("auth_test failed after provider init", zap.Error(authErr))
-			} else {
+			authTest = &AuthTestIdentity{
+				URL:    workspaceURL,
+				Team:   "Demo Team",
+				User:   "Username",
+				TeamID: teamID,
+				UserID: "U1234567890",
+			}
+		} else if slackClient, ok := apiProvider.Slack().(*provider.MCPSlackClient); ok && slackClient != nil {
+			// Avoid extra API requests here. provider.New already initializes and keeps auth response.
+			if authResp := slackClient.AuthResponse(); authResp != nil {
 				workspaceURL = authResp.URL
 				teamID = authResp.TeamID
 				enterpriseID = authResp.EnterpriseID
+				authTest = &AuthTestIdentity{
+					URL:          authResp.URL,
+					Team:         authResp.Team,
+					User:         authResp.User,
+					TeamID:       authResp.TeamID,
+					UserID:       authResp.UserID,
+					EnterpriseID: authResp.EnterpriseID,
+					BotID:        authResp.BotID,
+				}
 			}
 		}
 
@@ -94,6 +87,7 @@ func BuildWorkspaceInitializer(baseLogger *zap.Logger, envBootstrapper *EnvBoots
 			TeamID:            teamID,
 			EnterpriseID:      enterpriseID,
 			WorkspaceURL:      workspaceURL,
+			AuthTest:          authTest,
 			InitializedAtUnix: time.Now().Unix(),
 		}
 

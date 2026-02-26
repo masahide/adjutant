@@ -10,3 +10,4 @@ services:
       - "8080:8080"
     volumes:
       - ./config:/app/config:ro
+      - ${HOME}/.adjutant/data/slack-rpc-gateway-cache:/tmp/slack-rpc-gateway

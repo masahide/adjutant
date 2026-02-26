@@ -12,8 +12,19 @@ import type { SlackCdpClient } from "./runtime/slackConnection.js";
 import { computeFullJitterDelayMs } from "./runtime/retry-policy.js";
 import { listJsonlFiles, recoverJsonlFiles } from "./io/jsonl-recovery.js";
 import { resolveSlackCacheBaseDir } from "./runtime/data-paths.js";
+import {
+  configureSlackAuthTokenRegistry,
+  resolveSlackAuthTokensFromCache,
+  syncSlackAuthTokenSnapshots,
+} from "./slack/slackAuthTokenRegistry.js";
+import { createSlackRpcWorkspaceRegistrarFromEnv } from "./slack/slack-rpc-workspace-registrar.js";
 import { SLACK_PENDING_ACCOUNT_ID } from "./slack/slackAuthTokenStore.js";
 import type { SlackAuthTokenCacheSnapshot } from "./slack/slackAuthTokenCache.js";
+import {
+  ensureSlackRpcGatewayReady,
+  resolveSlackRpcGatewayBootstrapConfig,
+  stopSlackRpcGateway,
+} from "./assistant/slack-rpc-gateway-bootstrap.js";
 import path from "node:path";
 
 loadEnvFileIfPresent();
@@ -25,10 +36,12 @@ type ActiveSession = {
   targetId: string;
   slackUrl: string;
   detachCdpEventLogger?: () => void;
+  stopTokenSync?: () => void;
 };
 
 const BASE_RETRY_DELAY_MS = 1000;
 const MAX_RETRY_DELAY_MS = 10000;
+const AUTH_TOKEN_SYNC_INTERVAL_MS = 1000;
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -75,6 +88,34 @@ function parseWorkspaceAliasFromUrl(url: string | undefined): string | null {
   } catch {
     return null;
   }
+}
+
+function parseWorkspaceTeamIdFromSlackClientUrl(url: string | undefined): string | null {
+  if (!url || typeof url !== "string") {
+    return null;
+  }
+  try {
+    const parsed = new URL(url);
+    const segments = parsed.pathname.split("/").filter((segment) => segment.length > 0);
+    if (segments.length < 2 || segments[0] !== "client") {
+      return null;
+    }
+    const teamId = segments[1]?.trim();
+    return teamId && teamId.length > 0 ? teamId : null;
+  } catch {
+    return null;
+  }
+}
+
+function shouldSuppressSlackAuthWarn(
+  message: string,
+  meta: Record<string, unknown> | undefined
+): boolean {
+  if (message !== "slack-auth-token-snapshot-skipped") {
+    return false;
+  }
+  const reason = typeof meta?.reason === "string" ? meta.reason : "";
+  return reason === "incoherent_token_pair";
 }
 
 function summarizeWorkspaceSnapshot(snapshot: SlackAuthTokenCacheSnapshot): {
@@ -159,10 +200,104 @@ async function main() {
 
   const dataDir = resolveDataDir();
   console.log(`[Adjutant] dataDir -> ${dataDir}`);
+  const logStartupPhase = (phase: string, meta?: Record<string, unknown>) => {
+    if (meta) {
+      console.log(`[Adjutant][Startup] ${phase}`, meta);
+      return;
+    }
+    console.log(`[Adjutant][Startup] ${phase}`);
+  };
   const runtimeConfig = loadCollectorRuntimeConfig({ dataDir });
+  const slackRpcGatewayBootstrap = resolveSlackRpcGatewayBootstrapConfig(process.env);
+  let registrarFatal = false;
+  const failFastRegistrarError = (message: string, meta?: Record<string, unknown>) => {
+    if (registrarFatal) {
+      return;
+    }
+    registrarFatal = true;
+    console.error("[Adjutant][SlackRpcWorkspaceRegistrar] fatal", {
+      message,
+      ...(meta ?? {}),
+    });
+    void (async () => {
+      if (slackRpcGatewayBootstrap.enabled && slackRpcGatewayBootstrap.autoStart) {
+        try {
+          await stopSlackRpcGateway({
+            config: slackRpcGatewayBootstrap,
+            cwd: process.cwd(),
+            onLog: (message, meta) => {
+              logStartupPhase(`slack-rpc-gateway:${message}`, meta);
+            },
+          });
+          console.log("[Adjutant] Slack RPC gateway container stopped");
+        } catch (error) {
+          console.error("[Adjutant] failed to stop Slack RPC gateway container", {
+            reason: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+      process.exit(1);
+    })();
+  };
+  const slackRpcWorkspaceRegistrar = createSlackRpcWorkspaceRegistrarFromEnv({
+    env: process.env,
+    onInfo: (message, meta) => {
+      console.log("[Adjutant][SlackRpcWorkspaceRegistrar]", message, meta ?? {});
+    },
+    onWarn: (message, meta) => {
+      failFastRegistrarError(message, meta);
+    },
+  });
+  let activeAutoRegisterWorkspaceKey: string | null = null;
 
+  if (slackRpcGatewayBootstrap.enabled) {
+    try {
+      await ensureSlackRpcGatewayReady({
+        config: slackRpcGatewayBootstrap,
+        cwd: process.cwd(),
+        onLog: (message, meta) => {
+          logStartupPhase(`slack-rpc-gateway:${message}`, meta);
+        },
+      });
+      console.log(
+        `[Adjutant] Slack RPC gateway ready base_url=${slackRpcGatewayBootstrap.baseUrl} auto_start=${String(slackRpcGatewayBootstrap.autoStart)}`
+      );
+    } catch (error) {
+      console.error("[Adjutant] Slack RPC gateway bootstrap failed", {
+        reason: error instanceof Error ? error.message : String(error),
+        baseUrl: slackRpcGatewayBootstrap.baseUrl,
+      });
+      throw error;
+    }
+  }
+  logStartupPhase("slack-auth-token-registry:configure-start");
+  configureSlackAuthTokenRegistry({
+    dataDir,
+    authTestEnabled: false,
+    onWarn: (message, meta) => {
+      if (shouldSuppressSlackAuthWarn(message, meta)) {
+        return;
+      }
+      console.warn("[Adjutant][SlackAuthTokenRegistry]", message, meta ?? {});
+    },
+    onTokenPairReady: async (event) => {
+      const activeWorkspaceKey = activeAutoRegisterWorkspaceKey;
+      if (!activeWorkspaceKey) {
+        return;
+      }
+      if (event.workspaceKey !== activeWorkspaceKey && !event.aliases.includes(activeWorkspaceKey)) {
+        return;
+      }
+      await slackRpcWorkspaceRegistrar.registerTokenPair(event);
+    },
+  });
+  logStartupPhase("slack-auth-token-registry:configure-done");
+
+  logStartupPhase("jsonl-recovery:scan-start");
   const recoverTargets = await listJsonlFiles(dataDir);
+  logStartupPhase("jsonl-recovery:scan-done", { fileCount: recoverTargets.length });
   if (recoverTargets.length > 0) {
+    logStartupPhase("jsonl-recovery:repair-start");
     const recovered = await recoverJsonlFiles(recoverTargets);
     const repaired = recovered.filter((item) => item.repaired);
     if (repaired.length > 0) {
@@ -175,6 +310,9 @@ async function main() {
         }))
       );
     }
+    logStartupPhase("jsonl-recovery:repair-done", {
+      repairedCount: repaired.length,
+    });
   }
 
   const timezone = runtimeConfig.timezone;
@@ -258,6 +396,10 @@ async function main() {
     const session = activeSession;
     if (!session) return;
     activeSession = null;
+    activeAutoRegisterWorkspaceKey = null;
+    if (session.stopTokenSync) {
+      session.stopTokenSync();
+    }
     if (debugUi) {
       debugUi.setSlackAuthTestExecutor(undefined);
       debugUi.setSlackChannelsListExecutor(undefined);
@@ -312,6 +454,22 @@ async function main() {
       });
     }
     await cleanupActiveSession();
+    if (slackRpcGatewayBootstrap.enabled && slackRpcGatewayBootstrap.autoStart) {
+      try {
+        await stopSlackRpcGateway({
+          config: slackRpcGatewayBootstrap,
+          cwd: process.cwd(),
+          onLog: (message, meta) => {
+            console.log("[Adjutant][Shutdown][SlackRpcGateway]", message, meta ?? {});
+          },
+        });
+        console.log("[Adjutant] Slack RPC gateway container stopped");
+      } catch (error) {
+        console.error("[Adjutant] failed to stop Slack RPC gateway container", {
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
     if (debugUi) {
       await debugUi.stop();
     }
@@ -382,6 +540,28 @@ async function main() {
       ? cdpEventLogger.attach(client, { host, port, slackUrl })
       : undefined;
     console.log(`[Adjutant] attached to: ${slackUrl}`);
+    const attachedWorkspaceKey = parseWorkspaceTeamIdFromSlackClientUrl(slackUrl);
+    activeAutoRegisterWorkspaceKey = attachedWorkspaceKey;
+    if (attachedWorkspaceKey) {
+      console.log("[Adjutant][SlackRpcWorkspaceRegistrar] auto-register scope updated", {
+        workspaceKey: attachedWorkspaceKey,
+      });
+      const resolvedTokenPair = resolveSlackAuthTokensFromCache({ workspaceKey: attachedWorkspaceKey });
+      if (resolvedTokenPair) {
+        await slackRpcWorkspaceRegistrar.registerTokenPair({
+          workspaceKey: attachedWorkspaceKey,
+          aliases: [attachedWorkspaceKey, resolvedTokenPair.workspaceKey],
+          accountId: resolvedTokenPair.accountId,
+          xoxcToken: resolvedTokenPair.xoxcToken,
+          xoxdToken: resolvedTokenPair.xoxdToken,
+        });
+      }
+    } else {
+      console.warn(
+        "[Adjutant][SlackRpcWorkspaceRegistrar] auto-register scope unavailable: team_id not found in attached URL",
+        { slackUrl }
+      );
+    }
     if (debugUi) {
       debugUi.record({
         source: "system",
@@ -393,7 +573,32 @@ async function main() {
 
     const adapter = createSlackAdapterForClient(client);
     const ingestor = new SlackIngestor({ adapter, writer });
-    activeSession = { client, adapter, ingestor, targetId, slackUrl, detachCdpEventLogger };
+    const syncTokenSnapshots = () => {
+      try {
+        const snapshots = adapter.listAuthTokenSnapshots();
+        if (snapshots.length === 0) {
+          return;
+        }
+        syncSlackAuthTokenSnapshots({ snapshots });
+      } catch (error) {
+        console.warn("[Adjutant] failed to sync Slack auth token snapshots", {
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      }
+    };
+    syncTokenSnapshots();
+    const tokenSyncTimer = setInterval(() => {
+      syncTokenSnapshots();
+    }, AUTH_TOKEN_SYNC_INTERVAL_MS);
+    activeSession = {
+      client,
+      adapter,
+      ingestor,
+      targetId,
+      slackUrl,
+      detachCdpEventLogger,
+      stopTokenSync: () => clearInterval(tokenSyncTimer),
+    };
     if (debugUi) {
       debugUi.setSlackAuthTestExecutor(async ({ workspaceKey }) => {
         const session = activeSession;

@@ -40,6 +40,7 @@ import { createPendingFlusher } from "../proactive/pending-flusher.js";
 import { createWatermarkStore } from "../proactive/watermark-store.js";
 import { routeEventKindFromEvent } from "../proactive/route-decision.js";
 import { createProactiveMetrics } from "../proactive/metrics.js";
+import { createSlackRpcWorkspaceRegistrarFromEnv } from "../slack/slack-rpc-workspace-registrar.js";
 import { listJsonlFiles, recoverJsonlFiles } from "../io/jsonl-recovery.js";
 import { loadAssistantGatewayRuntimeConfig } from "../runtime/runtime-config-loader.js";
 import { loadEnvFileIfPresent } from "../runtime/env-file-loader.js";
@@ -55,6 +56,11 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { appendFile, mkdir, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import {
+  ensureSlackRpcGatewayReady,
+  resolveSlackRpcGatewayBootstrapConfig,
+  stopSlackRpcGateway,
+} from "./slack-rpc-gateway-bootstrap.js";
 
 loadEnvFileIfPresent();
 
@@ -107,6 +113,14 @@ function toReason(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function logStartupPhase(phase: string, meta?: Record<string, unknown>): void {
+  if (meta) {
+    console.log(`[Assistant][Startup] ${phase}`, meta);
+    return;
+  }
+  console.log(`[Assistant][Startup] ${phase}`);
+}
+
 function isDockerWorkspaceMountError(error: unknown): boolean {
   const reason = toReason(error).toLowerCase();
   return (
@@ -152,22 +166,59 @@ function parseBoolean(value: string | undefined, fallback: boolean): boolean {
   return fallback;
 }
 
+function shouldSuppressSlackAuthWarn(
+  message: string,
+  meta: Record<string, unknown> | undefined
+): boolean {
+  if (message !== "slack-auth-token-snapshot-skipped") {
+    return false;
+  }
+  const reason = typeof meta?.reason === "string" ? meta.reason : "";
+  return reason === "incoherent_token_pair";
+}
+
+const slackRpcGatewayBootstrap = resolveSlackRpcGatewayBootstrapConfig(process.env);
+if (slackRpcGatewayBootstrap.enabled) {
+  try {
+    await ensureSlackRpcGatewayReady({
+      config: slackRpcGatewayBootstrap,
+      cwd: process.cwd(),
+      onLog: (message, meta) => {
+        logStartupPhase(`slack-rpc-gateway:${message}`, meta);
+      },
+    });
+    console.log(
+      `[Assistant] Slack RPC gateway ready base_url=${slackRpcGatewayBootstrap.baseUrl} auto_start=${String(slackRpcGatewayBootstrap.autoStart)}`
+    );
+  } catch (error) {
+    console.error("[Assistant] Slack RPC gateway bootstrap failed", {
+      reason: toReason(error),
+      baseUrl: slackRpcGatewayBootstrap.baseUrl,
+    });
+    throw error;
+  }
+}
+
 let activeSandboxContainer: { containerName: string; ownerNonce: string } | null = null;
 
 if (SANDBOX_CONFIG.mode === "off") {
   configureSandbox(null);
 } else {
+  logStartupPhase("sandbox:docker-availability-check-start");
   const availability = await checkDockerAvailability();
   if (!availability.available) {
     throw new Error(
       `サンドボックスモードの起動には Docker デーモンが必要です。Docker Desktop を起動して再実行してください。${availability.reason ? ` 理由: ${availability.reason}` : ""} サンドボックスを無効化する場合は ADJUTANT_SANDBOX_MODE=off を設定してください。`
     );
   }
+  logStartupPhase("sandbox:docker-availability-check-done");
   await mkdir(workspaceDir, { recursive: true });
+  logStartupPhase("sandbox:ensure-image-start", { image: SANDBOX_CONFIG.docker.image });
   await ensureDockerImage(SANDBOX_CONFIG.docker.image, {
     autoBuild: SANDBOX_CONFIG.docker.autoBuildImage,
     buildContextDir: process.cwd(),
   });
+  logStartupPhase("sandbox:ensure-image-done", { image: SANDBOX_CONFIG.docker.image });
   const ownerNonce = randomUUID().slice(0, 6);
   const sandboxContainerName = buildSandboxContainerName({
     containerPrefix: SANDBOX_CONFIG.docker.containerPrefix,
@@ -175,12 +226,14 @@ if (SANDBOX_CONFIG.mode === "off") {
   });
   let containerName: string;
   try {
+    logStartupPhase("sandbox:container-ensure-start", { containerName: sandboxContainerName });
     containerName = await ensureSandboxContainer({
       cfg: SANDBOX_CONFIG.docker,
       hostWorkspaceDir: workspaceDir,
       ownerNonce,
       containerName: sandboxContainerName,
     });
+    logStartupPhase("sandbox:container-ensure-done", { containerName });
   } catch (error) {
     if (!isDockerWorkspaceMountError(error)) {
       throw error;
@@ -201,12 +254,17 @@ if (SANDBOX_CONFIG.mode === "off") {
     }
     await mkdir(fallbackWorkspaceDir, { recursive: true });
     workspaceDir = fallbackWorkspaceDir;
+    logStartupPhase("sandbox:container-ensure-fallback-start", {
+      containerName: sandboxContainerName,
+      workspaceDir: fallbackWorkspaceDir,
+    });
     containerName = await ensureSandboxContainer({
       cfg: SANDBOX_CONFIG.docker,
       hostWorkspaceDir: workspaceDir,
       ownerNonce,
       containerName: sandboxContainerName,
     });
+    logStartupPhase("sandbox:container-ensure-fallback-done", { containerName });
   }
   configureSandbox({
     containerName,
@@ -305,14 +363,18 @@ async function appendJsonl(path: string, record: DualWriteRecord): Promise<{ off
 }
 
 const jsonlRecoveryTargets = new Set<string>([TIMELINE_PATH, IDEMPOTENCY_STORE_PATH]);
+logStartupPhase("jsonl-recovery:scan-start");
 for (const filePath of await listJsonlFiles(SESSION_TRANSCRIPTS_DIR)) {
   jsonlRecoveryTargets.add(filePath);
 }
 for (const filePath of await listJsonlFiles(DATA_DIR)) {
   jsonlRecoveryTargets.add(filePath);
 }
+logStartupPhase("jsonl-recovery:scan-done", { fileCount: jsonlRecoveryTargets.size });
+logStartupPhase("jsonl-recovery:repair-start");
 const jsonlRecoveryResults = await recoverJsonlFiles(jsonlRecoveryTargets);
 const repairedJsonl = jsonlRecoveryResults.filter((result) => result.repaired);
+logStartupPhase("jsonl-recovery:repair-done", { repairedCount: repairedJsonl.length });
 if (repairedJsonl.length > 0) {
   console.warn(
     "[AssistantGateway] JSONL recovery repaired files",
@@ -527,6 +589,43 @@ const pipeline = createChannelNotificationPipeline({
 });
 
 const pluginRegistry = createChannelPluginRegistry();
+let registrarFatal = false;
+const failFastRegistrarError = (message: string, meta?: Record<string, unknown>) => {
+  if (registrarFatal) {
+    return;
+  }
+  registrarFatal = true;
+  console.error("[AssistantGateway][SlackRpcWorkspaceRegistrar] fatal", {
+    message,
+    ...(meta ?? {}),
+  });
+  void (async () => {
+    if (slackRpcGatewayBootstrap.enabled && slackRpcGatewayBootstrap.autoStart) {
+      try {
+        await stopSlackRpcGateway({
+          config: slackRpcGatewayBootstrap,
+          cwd: process.cwd(),
+          onLog: (message, meta) => {
+            console.log("[Assistant][Startup][SlackRpcGateway]", message, meta ?? {});
+          },
+        });
+        console.log("[Assistant] Slack RPC gateway container stopped");
+      } catch (error) {
+        console.warn("[Assistant] failed to stop Slack RPC gateway container", toReason(error));
+      }
+    }
+    process.exit(1);
+  })();
+};
+const slackRpcWorkspaceRegistrar = createSlackRpcWorkspaceRegistrarFromEnv({
+  env: process.env,
+  onInfo: (message, meta) => {
+    console.log("[AssistantGateway][SlackRpcWorkspaceRegistrar]", message, meta ?? {});
+  },
+  onWarn: (message, meta) => {
+    failFastRegistrarError(message, meta);
+  },
+});
 pluginRegistry.register(
   createSlackChannelPlugin({
     dataDir: DATA_DIR,
@@ -540,7 +639,13 @@ pluginRegistry.register(
       ? Math.max(1, Math.floor(SLACK_RETRY_MAX_MS))
       : 10000,
     authTestEnabled: SLACK_AUTH_TEST_ENABLED,
+    onTokenPairReady: async (event) => {
+      await slackRpcWorkspaceRegistrar.registerTokenPair(event);
+    },
     onWarn: (message, meta) => {
+      if (shouldSuppressSlackAuthWarn(message, meta)) {
+        return;
+      }
       console.warn("[AssistantGateway][SlackPlugin]", message, meta ?? {});
     },
   })
@@ -696,6 +801,20 @@ async function shutdown(signal: string) {
   }
   const stopTargets = pluginRegistry.list().map((plugin) => channelManager.stopChannel(plugin.id));
   await Promise.allSettled([api.stop(), ...stopTargets]);
+  if (slackRpcGatewayBootstrap.enabled && slackRpcGatewayBootstrap.autoStart) {
+    try {
+      await stopSlackRpcGateway({
+        config: slackRpcGatewayBootstrap,
+        cwd: process.cwd(),
+        onLog: (message, meta) => {
+          console.log("[Assistant][Shutdown][SlackRpcGateway]", message, meta ?? {});
+        },
+      });
+      console.log("[Assistant] Slack RPC gateway container stopped");
+    } catch (error) {
+      console.warn("[Assistant] failed to stop Slack RPC gateway container", toReason(error));
+    }
+  }
   if (activeSandboxContainer) {
     try {
       const result = await destroySandboxContainer({

@@ -1,5 +1,4 @@
 import type { DynamicAction, DynamicProvider } from "../dynamic-tool/index.js";
-import { isSlackRoutingMode, type SlackRoutingMode } from "./types.js";
 import type { SlackApiService } from "./service.js";
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -18,28 +17,6 @@ function readString(args: Record<string, unknown>, key: string): string | undefi
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function readOptionalPositiveInt(args: Record<string, unknown>, key: string): number | undefined {
-  const value = args[key];
-  if (value === undefined) {
-    return undefined;
-  }
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
-    throw new Error(`${key} must be a positive number`);
-  }
-  return Math.floor(value);
-}
-
-function validateRoutingMode(args: Record<string, unknown>): SlackRoutingMode | undefined {
-  const routingMode = readString(args, "routing_mode");
-  if (!routingMode) {
-    return undefined;
-  }
-  if (!isSlackRoutingMode(routingMode)) {
-    throw new Error("routing_mode must be manual_team/manual_enterprise/auto_probe");
-  }
-  return routingMode;
-}
-
 function requireString(args: Record<string, unknown>, key: string): string {
   const value = readString(args, key);
   if (!value) {
@@ -48,12 +25,22 @@ function requireString(args: Record<string, unknown>, key: string): string {
   return value;
 }
 
+function validatePositiveInt(args: Record<string, unknown>, key: string): void {
+  const value = args[key];
+  if (value === undefined) {
+    return;
+  }
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    throw new Error(`${key} must be a positive number`);
+  }
+}
+
+function requireWorkspaceKey(args: Record<string, unknown>): void {
+  requireString(args, "workspace_key");
+}
+
 function baseProperties() {
   return {
-    routing_mode: {
-      type: "string",
-      enum: ["manual_team", "manual_enterprise", "auto_probe"],
-    },
     workspace_key: { type: "string", minLength: 1 },
   };
 }
@@ -61,84 +48,10 @@ function baseProperties() {
 export function createSlackDynamicProvider(service: SlackApiService): DynamicProvider {
   const actions = new Map<string, DynamicAction>();
 
-  const getUserNameByIdAction: DynamicAction = {
-    descriptor: {
-      name: "get_user_name_by_id",
-      description: "Resolve Slack user name from user_id",
-      requiredArgs: ["user_id"],
-      argsSchema: {
-        type: "object",
-        properties: {
-          ...baseProperties(),
-          user_id: { type: "string", minLength: 1 },
-          team_id: { type: "string", minLength: 1 },
-          channel_id: { type: "string", minLength: 1 },
-        },
-        required: ["user_id"],
-        additionalProperties: false,
-      },
-    },
-    validate: (rawArgs) => {
-      const args = asRecord(rawArgs);
-      requireString(args, "user_id");
-      validateRoutingMode(args);
-    },
-    execute: async (rawArgs) => {
-      return await service.getUserNameById(asRecord(rawArgs));
-    },
-  };
-
-  const getChannelNameByIdAction: DynamicAction = {
-    descriptor: {
-      name: "get_channel_name_by_id",
-      description: "Resolve Slack channel name from channel_id",
-      requiredArgs: ["channel_id"],
-      argsSchema: {
-        type: "object",
-        properties: {
-          ...baseProperties(),
-          channel_id: { type: "string", minLength: 1 },
-          team_id: { type: "string", minLength: 1 },
-        },
-        required: ["channel_id"],
-        additionalProperties: false,
-      },
-    },
-    validate: (rawArgs) => {
-      const args = asRecord(rawArgs);
-      requireString(args, "channel_id");
-      validateRoutingMode(args);
-    },
-    execute: async (rawArgs) => {
-      return await service.getChannelNameById(asRecord(rawArgs));
-    },
-  };
-
-  const usersListAction: DynamicAction = {
-    descriptor: {
-      name: "users_list",
-      description: "List users and update shared Slack name cache",
-      argsSchema: {
-        type: "object",
-        properties: {
-          ...baseProperties(),
-        },
-        additionalProperties: false,
-      },
-    },
-    validate: (rawArgs) => {
-      const args = asRecord(rawArgs);
-      validateRoutingMode(args);
-    },
-    execute: async (rawArgs) => {
-      return await service.listUsers(asRecord(rawArgs));
-    },
-  };
-
   const workspacesListAction: DynamicAction = {
     descriptor: {
       name: "workspaces_list",
-      description: "List cached Slack workspaces resolved from xoxc/xoxd registry",
+      description: "List currently registered Slack workspaces from RPC gateway",
       argsSchema: {
         type: "object",
         properties: {
@@ -161,48 +74,254 @@ export function createSlackDynamicProvider(service: SlackApiService): DynamicPro
     },
   };
 
-  const channelsListAction: DynamicAction = {
+  const workspaceRegisterAction: DynamicAction = {
     descriptor: {
-      name: "channels_list",
-      description: "List channels and update shared Slack name cache",
+      name: "workspace_register",
+      description: "Register Slack workspace runtime in gateway",
+      requiredArgs: ["xoxc", "xoxd"],
       argsSchema: {
         type: "object",
         properties: {
           ...baseProperties(),
+          xoxc: { type: "string", minLength: 1 },
+          xoxd: { type: "string", minLength: 1 },
+          cache_dir: { type: "string", minLength: 1 },
         },
+        required: ["xoxc", "xoxd"],
         additionalProperties: false,
       },
     },
     validate: (rawArgs) => {
       const args = asRecord(rawArgs);
-      validateRoutingMode(args);
+      if (
+        Object.prototype.hasOwnProperty.call(args, "workspace_key") &&
+        !readString(args, "workspace_key")
+      ) {
+        throw new Error("workspace_key must be a non-empty string");
+      }
+      requireString(args, "xoxc");
+      requireString(args, "xoxd");
+    },
+    execute: async (rawArgs) => {
+      return await service.workspaceRegister(asRecord(rawArgs));
+    },
+  };
+
+  const workspaceUnregisterAction: DynamicAction = {
+    descriptor: {
+      name: "workspace_unregister",
+      description: "Unregister Slack workspace runtime from gateway",
+      requiredArgs: ["workspace_key"],
+      argsSchema: {
+        type: "object",
+        properties: {
+          ...baseProperties(),
+        },
+        required: ["workspace_key"],
+        additionalProperties: false,
+      },
+    },
+    validate: (rawArgs) => {
+      requireWorkspaceKey(asRecord(rawArgs));
+    },
+    execute: async (rawArgs) => {
+      return await service.workspaceUnregister(asRecord(rawArgs));
+    },
+  };
+
+  const usersListAction: DynamicAction = {
+    descriptor: {
+      name: "users_list",
+      description: "List users from selected workspace",
+      requiredArgs: ["workspace_key"],
+      argsSchema: {
+        type: "object",
+        properties: {
+          ...baseProperties(),
+          limit: { type: "number", minimum: 1 },
+        },
+        required: ["workspace_key"],
+        additionalProperties: false,
+      },
+    },
+    validate: (rawArgs) => {
+      const args = asRecord(rawArgs);
+      requireWorkspaceKey(args);
+      validatePositiveInt(args, "limit");
+    },
+    execute: async (rawArgs) => {
+      return await service.listUsers(asRecord(rawArgs));
+    },
+  };
+
+  const channelsListAction: DynamicAction = {
+    descriptor: {
+      name: "channels_list",
+      description: "List channels from selected workspace",
+      requiredArgs: ["workspace_key"],
+      argsSchema: {
+        type: "object",
+        properties: {
+          ...baseProperties(),
+          sort: { type: "string", minLength: 1 },
+          channel_types: { type: "string", minLength: 1 },
+          cursor: { type: "string" },
+          limit: { type: "number", minimum: 1 },
+        },
+        required: ["workspace_key"],
+        additionalProperties: false,
+      },
+    },
+    validate: (rawArgs) => {
+      const args = asRecord(rawArgs);
+      requireWorkspaceKey(args);
+      validatePositiveInt(args, "limit");
     },
     execute: async (rawArgs) => {
       return await service.listChannels(asRecord(rawArgs));
     },
   };
 
-  const searchMessagesAction: DynamicAction = {
+  const getUserInfoAction: DynamicAction = {
     descriptor: {
-      name: "search_messages",
-      description: "Search Slack messages with optional auto fallback",
-      requiredArgs: ["query"],
+      name: "get_user_info",
+      description: "Get Slack user information by user_id",
+      requiredArgs: ["workspace_key", "user_id"],
       argsSchema: {
         type: "object",
         properties: {
           ...baseProperties(),
-          query: { type: "string", minLength: 1 },
-          limit: { type: "number", minimum: 1 },
+          user_id: { type: "string", minLength: 1 },
         },
-        required: ["query"],
+        required: ["workspace_key", "user_id"],
         additionalProperties: false,
       },
     },
     validate: (rawArgs) => {
       const args = asRecord(rawArgs);
-      requireString(args, "query");
-      readOptionalPositiveInt(args, "limit");
-      validateRoutingMode(args);
+      requireWorkspaceKey(args);
+      requireString(args, "user_id");
+    },
+    execute: async (rawArgs) => {
+      return await service.getUserInfo(asRecord(rawArgs));
+    },
+  };
+
+  const getChannelInfoAction: DynamicAction = {
+    descriptor: {
+      name: "get_channel_info",
+      description: "Get Slack channel information by channel_id",
+      requiredArgs: ["workspace_key", "channel_id"],
+      argsSchema: {
+        type: "object",
+        properties: {
+          ...baseProperties(),
+          channel_id: { type: "string", minLength: 1 },
+        },
+        required: ["workspace_key", "channel_id"],
+        additionalProperties: false,
+      },
+    },
+    validate: (rawArgs) => {
+      const args = asRecord(rawArgs);
+      requireWorkspaceKey(args);
+      requireString(args, "channel_id");
+    },
+    execute: async (rawArgs) => {
+      return await service.getChannelInfo(asRecord(rawArgs));
+    },
+  };
+
+  const getUserNameByIdAction: DynamicAction = {
+    descriptor: {
+      name: "get_user_name_by_id",
+      description: "Resolve Slack user name by user_id",
+      requiredArgs: ["workspace_key", "user_id"],
+      argsSchema: {
+        type: "object",
+        properties: {
+          ...baseProperties(),
+          user_id: { type: "string", minLength: 1 },
+          team_id: { type: "string", minLength: 1 },
+          channel_id: { type: "string", minLength: 1 },
+          routing_mode: { type: "string", minLength: 1 },
+        },
+        required: ["workspace_key", "user_id"],
+        additionalProperties: false,
+      },
+    },
+    validate: (rawArgs) => {
+      const args = asRecord(rawArgs);
+      requireWorkspaceKey(args);
+      requireString(args, "user_id");
+    },
+    execute: async (rawArgs) => {
+      return await service.getUserNameById(asRecord(rawArgs));
+    },
+  };
+
+  const getChannelNameByIdAction: DynamicAction = {
+    descriptor: {
+      name: "get_channel_name_by_id",
+      description: "Resolve Slack channel name by channel_id",
+      requiredArgs: ["workspace_key", "channel_id"],
+      argsSchema: {
+        type: "object",
+        properties: {
+          ...baseProperties(),
+          channel_id: { type: "string", minLength: 1 },
+          team_id: { type: "string", minLength: 1 },
+          routing_mode: { type: "string", minLength: 1 },
+        },
+        required: ["workspace_key", "channel_id"],
+        additionalProperties: false,
+      },
+    },
+    validate: (rawArgs) => {
+      const args = asRecord(rawArgs);
+      requireWorkspaceKey(args);
+      requireString(args, "channel_id");
+    },
+    execute: async (rawArgs) => {
+      return await service.getChannelNameById(asRecord(rawArgs));
+    },
+  };
+
+  const searchMessagesAction: DynamicAction = {
+    descriptor: {
+      name: "search_messages",
+      description: "Search messages in selected Slack workspace",
+      requiredArgs: ["workspace_key"],
+      argsSchema: {
+        type: "object",
+        properties: {
+          ...baseProperties(),
+          query: { type: "string", minLength: 1 },
+          search_query: { type: "string", minLength: 1 },
+          limit: { type: "number", minimum: 1 },
+          cursor: { type: "string" },
+          filter_in_channel: { type: "string", minLength: 1 },
+          filter_in_im_or_mpim: { type: "string", minLength: 1 },
+          filter_users_with: { type: "string", minLength: 1 },
+          filter_users_from: { type: "string", minLength: 1 },
+          filter_date_before: { type: "string", minLength: 1 },
+          filter_date_after: { type: "string", minLength: 1 },
+          filter_date_on: { type: "string", minLength: 1 },
+          filter_date_during: { type: "string", minLength: 1 },
+        },
+        required: ["workspace_key"],
+        additionalProperties: false,
+      },
+    },
+    validate: (rawArgs) => {
+      const args = asRecord(rawArgs);
+      requireWorkspaceKey(args);
+      validatePositiveInt(args, "limit");
+      const query = readString(args, "query");
+      const searchQuery = readString(args, "search_query");
+      if (!query && !searchQuery) {
+        throw new Error("query or search_query is required");
+      }
     },
     execute: async (rawArgs) => {
       return await service.searchMessages(asRecord(rawArgs));
@@ -212,41 +331,74 @@ export function createSlackDynamicProvider(service: SlackApiService): DynamicPro
   const postMessageAction: DynamicAction = {
     descriptor: {
       name: "post_message",
-      description: "Post a Slack message with selectable routing mode",
-      requiredArgs: ["channel_id", "text"],
+      description: "Post message to Slack channel",
+      requiredArgs: ["workspace_key", "channel_id", "text"],
       argsSchema: {
         type: "object",
         properties: {
           ...baseProperties(),
           channel_id: { type: "string", minLength: 1 },
           text: { type: "string", minLength: 1 },
+          thread_ts: { type: "string", minLength: 1 },
+          content_type: { type: "string", minLength: 1 },
         },
-        required: ["channel_id", "text"],
+        required: ["workspace_key", "channel_id", "text"],
         additionalProperties: false,
       },
     },
     validate: (rawArgs) => {
       const args = asRecord(rawArgs);
+      requireWorkspaceKey(args);
       requireString(args, "channel_id");
       requireString(args, "text");
-      validateRoutingMode(args);
     },
     execute: async (rawArgs) => {
       return await service.postMessage(asRecord(rawArgs));
     },
   };
 
-  actions.set(getUserNameByIdAction.descriptor.name, getUserNameByIdAction);
-  actions.set(getChannelNameByIdAction.descriptor.name, getChannelNameByIdAction);
-  actions.set(workspacesListAction.descriptor.name, workspacesListAction);
-  actions.set(usersListAction.descriptor.name, usersListAction);
-  actions.set(channelsListAction.descriptor.name, channelsListAction);
-  actions.set(searchMessagesAction.descriptor.name, searchMessagesAction);
-  actions.set(postMessageAction.descriptor.name, postMessageAction);
+  const authTestAction: DynamicAction = {
+    descriptor: {
+      name: "auth_test",
+      description: "Get auth.test style identity for selected workspace",
+      requiredArgs: ["workspace_key"],
+      argsSchema: {
+        type: "object",
+        properties: {
+          ...baseProperties(),
+        },
+        required: ["workspace_key"],
+        additionalProperties: false,
+      },
+    },
+    validate: (rawArgs) => {
+      requireWorkspaceKey(asRecord(rawArgs));
+    },
+    execute: async (rawArgs) => {
+      return await service.authTest(asRecord(rawArgs));
+    },
+  };
+
+  for (const action of [
+    workspacesListAction,
+    workspaceRegisterAction,
+    workspaceUnregisterAction,
+    usersListAction,
+    channelsListAction,
+    getUserInfoAction,
+    getChannelInfoAction,
+    getUserNameByIdAction,
+    getChannelNameByIdAction,
+    searchMessagesAction,
+    postMessageAction,
+    authTestAction,
+  ]) {
+    actions.set(action.descriptor.name, action);
+  }
 
   return {
     name: "slack",
-    description: "Slack API tools with team/enterprise routing",
+    description: "Slack RPC Gateway tools",
     listActions: () => [...actions.values()].map((action) => action.descriptor),
     getAction: (actionName) => actions.get(actionName.trim().toLowerCase()),
   };

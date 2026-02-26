@@ -141,11 +141,54 @@ func TestWorkspaceRegistryRegisterValidation(t *testing.T) {
 	}
 
 	_, err := registry.Register(context.Background(), WorkspaceConfig{
-		WorkspaceKey: "",
-		XOXC:         "xoxc",
+		WorkspaceKey: "acme",
+		XOXC:         "",
 		XOXD:         "xoxd",
 	}, initializer)
-	if err == nil || !strings.Contains(err.Error(), "workspace_key is required") {
-		t.Fatalf("Register error = %v, want workspace_key validation error", err)
+	if err == nil || !strings.Contains(err.Error(), "xoxc is required") {
+		t.Fatalf("Register error = %v, want xoxc validation error", err)
+	}
+
+	_, err = registry.Register(context.Background(), WorkspaceConfig{
+		WorkspaceKey: "acme",
+		XOXC:         "xoxc",
+		XOXD:         "",
+	}, initializer)
+	if err == nil || !strings.Contains(err.Error(), "xoxd is required") {
+		t.Fatalf("Register error = %v, want xoxd validation error", err)
+	}
+}
+
+func TestWorkspaceRegistryRegisterAutoWorkspaceKey(t *testing.T) {
+	registry := NewWorkspaceRegistry()
+	initializer := func(_ context.Context, cfg WorkspaceConfig) (*WorkspaceRuntime, error) {
+		// workspace_key omission path: runtime is resolved from auth metadata.
+		_ = cfg.WorkspaceKey
+		return &WorkspaceRuntime{
+			WorkspaceKey: "",
+			Ready:        true,
+			TeamID:       "T12345",
+			EnterpriseID: "E98765",
+			WorkspaceURL: "https://acme.slack.com/",
+		}, nil
+	}
+
+	runtime, err := registry.Register(context.Background(), WorkspaceConfig{
+		XOXC: "xoxc",
+		XOXD: "xoxd",
+	}, initializer)
+	if err != nil {
+		t.Fatalf("Register returned error: %v", err)
+	}
+	if runtime.WorkspaceKey != "E98765" {
+		t.Fatalf("runtime.WorkspaceKey = %q, want E98765", runtime.WorkspaceKey)
+	}
+
+	statuses := registry.ListStatuses()
+	if len(statuses) != 1 {
+		t.Fatalf("len(statuses) = %d, want 1", len(statuses))
+	}
+	if statuses[0].WorkspaceKey != "E98765" {
+		t.Fatalf("statuses[0].WorkspaceKey = %q, want E98765", statuses[0].WorkspaceKey)
 	}
 }

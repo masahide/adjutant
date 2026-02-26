@@ -4,11 +4,14 @@ export {
   type CreateSlackDynamicProviderFromEnvOptions,
 } from "./factory.js";
 export { createSlackDynamicProvider } from "./provider.js";
+export { SlackApiService, type SlackApiServiceOptions } from "./service.js";
 export {
-  SlackApiService,
-  type SlackApiServiceOptions,
-  type SlackRouteClientLike,
-} from "./service.js";
+  SlackRpcMcpClient,
+  SlackRpcClientError,
+  type SlackRpcMcpClientOptions,
+  type SlackRpcToolCallResult,
+  type SlackRpcClientErrorCode,
+} from "./slack-rpc-client.js";
 export {
   SlackRouteClient,
   SlackRouteError,

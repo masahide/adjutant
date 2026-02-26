@@ -9,6 +9,7 @@ import { SlackAdapter } from "../slack/adapter.js";
 import {
   configureSlackAuthTokenRegistry,
   syncSlackAuthTokenSnapshots,
+  type SlackWorkspaceTokenPairReadyEvent,
 } from "../slack/slackAuthTokenRegistry.js";
 import type { SlackAuthTokenCacheSnapshot } from "../slack/slackAuthTokenCache.js";
 import { PendingDataPromoter } from "../slack/pendingDataPromoter.js";
@@ -49,6 +50,8 @@ type SlackChannelPluginOptions = {
   nowMs?: () => number;
   random?: () => number;
   authTestEnabled?: boolean;
+  authTokenSyncIntervalMs?: number;
+  onTokenPairReady?: (event: SlackWorkspaceTokenPairReadyEvent) => Promise<void> | void;
   onWarn?: (message: string, meta?: Record<string, unknown>) => void;
 };
 
@@ -70,6 +73,7 @@ type TokenSnapshotReadableAdapter = IngestionAdapter & {
 
 const DEFAULT_RETRY_BASE_MS = 1000;
 const DEFAULT_RETRY_MAX_MS = 10000;
+const DEFAULT_AUTH_TOKEN_SYNC_INTERVAL_MS = 1000;
 
 function normalizeRetryMs(value: number | undefined, fallback: number): number {
   if (!Number.isFinite(value)) {
@@ -196,6 +200,7 @@ export function createSlackChannelPlugin(
         teamId: event.teamId,
       });
     },
+    onTokenPairReady: options.onTokenPairReady,
   });
 
   const pluginId = options.id?.trim() || "slack";
@@ -205,6 +210,10 @@ export function createSlackChannelPlugin(
   const retryMaxMs = Math.max(
     normalizeRetryMs(options.retryMaxMs, DEFAULT_RETRY_MAX_MS),
     retryBaseMs
+  );
+  const authTokenSyncIntervalMs = normalizeRetryMs(
+    options.authTokenSyncIntervalMs,
+    DEFAULT_AUTH_TOKEN_SYNC_INTERVAL_MS
   );
   const domCaptureDisabled = options.domCaptureDisabled ?? false;
   const endpointResolver = options.resolveEndpoint ?? resolveEndpoint;
@@ -244,6 +253,7 @@ export function createSlackChannelPlugin(
   const startAccount = async (ctx: ChannelGatewayContext<unknown>): Promise<void> => {
     let retryCount = 0;
     while (!ctx.abortSignal.aborted) {
+      let authTokenSyncTimer: NodeJS.Timeout | null = null;
       try {
         const endpoint = endpointResolver();
         const { client, slackUrl } = await connectFn(endpoint.host, endpoint.port);
@@ -263,13 +273,22 @@ export function createSlackChannelPlugin(
           lastError: null,
           lastStartAt: nowMs(),
         });
-        await adapter.start(async (event) => {
-          const snapshots = readTokenSnapshots(adapter);
-          if (snapshots.length > 0) {
-            syncSlackAuthTokenSnapshots({
-              snapshots,
+        const syncTokenSnapshots = () => {
+          try {
+            const snapshots = readTokenSnapshots(adapter);
+            if (snapshots.length === 0) {
+              return;
+            }
+            syncSlackAuthTokenSnapshots({ snapshots });
+          } catch (error) {
+            options.onWarn?.("slack-plugin-token-sync-failed", {
+              accountId: ctx.accountId,
+              reason: toReason(error),
             });
           }
+        };
+        await adapter.start(async (event) => {
+          syncTokenSnapshots();
           const forStorage = attachAccountId(event, SLACK_PENDING_ACCOUNT_ID);
           await writer.append(forStorage);
           const forEmit = attachAccountId(event, ctx.accountId);
@@ -279,6 +298,10 @@ export function createSlackChannelPlugin(
             event: forEmit,
           });
         });
+        syncTokenSnapshots();
+        authTokenSyncTimer = setInterval(() => {
+          syncTokenSnapshots();
+        }, authTokenSyncIntervalMs);
         retryCount = 0;
         const reason = await waitForDisconnectOrAbort(client, ctx.abortSignal);
         if (reason === "disconnect" && !ctx.abortSignal.aborted) {
@@ -301,6 +324,9 @@ export function createSlackChannelPlugin(
           reason,
         });
       } finally {
+        if (authTokenSyncTimer) {
+          clearInterval(authTokenSyncTimer);
+        }
         await stopActiveSession(ctx.accountId);
         ctx.setStatus({
           ...ctx.getStatus(),

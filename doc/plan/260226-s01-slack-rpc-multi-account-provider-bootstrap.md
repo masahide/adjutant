@@ -224,6 +224,7 @@
 ## 4.4 代表的な例 Examples
 
 - Example-1: MCPツール一覧
+
 ```bash
 curl -s -X POST http://localhost:8080/mcp \
   -H 'content-type: application/json' \
@@ -236,6 +237,7 @@ curl -s -X POST http://localhost:8080/mcp \
 ```
 
 - Example-2: `users_list` を tools/call で実行
+
 ```bash
 curl -s -X POST http://localhost:8080/mcp \
   -H 'content-type: application/json' \
@@ -251,6 +253,7 @@ curl -s -X POST http://localhost:8080/mcp \
 ```
 
 - Example-3: `post_message` を tools/call で実行
+
 ```bash
 curl -s -X POST http://localhost:8080/mcp \
   -H 'content-type: application/json' \
@@ -266,11 +269,13 @@ curl -s -X POST http://localhost:8080/mcp \
 ```
 
 - Example-4: ローカルビルド
+
 ```bash
 go build -o ./bin/slack-rpc-gateway ./cmd/slack-rpc-gateway
 ```
 
 - Example-5: Dockerでローカル起動
+
 ```bash
 docker build -t slack-rpc-gateway:local .
 docker run --rm -p 8080:8080 \
@@ -280,6 +285,7 @@ curl -s http://localhost:8080/healthz
 ```
 
 - Example-6: 起動後に `workspace_register` で追加
+
 ```bash
 curl -s -X POST http://localhost:8080/mcp \
   -H 'content-type: application/json' \
@@ -299,6 +305,7 @@ curl -s -X POST http://localhost:8080/mcp \
 ```
 
 - Example-7: `workspace_unregister` で解除
+
 ```bash
 curl -s -X POST http://localhost:8080/mcp \
   -H 'content-type: application/json' \
@@ -461,6 +468,16 @@ sequenceDiagram
 - [ ] Integration `workspace_unregister` 後に `not_found` を返すことを確認
 - [ ] Security review 管理ツールのログマスキング（token/cookie 非出力）と監査ログ項目を確認
 - [ ] Docs `compose` 起動時はトークン不要で、必要時に `workspace_register` で追加する運用手順へ更新
+
+### Phase 4.5 xoxc/xoxd ペア検知時の自動登録（assistant / collector）
+
+- [x] Impl `workspace_register` は `workspace_key` 省略時に `auth.test` 結果から自動決定する（`enterprise_id` -> `team_id` -> `url` サブドメイン）
+- [x] Impl `workspace_register` で `workspace_key` 指定時は指定値を優先し、重複は `already_exists` で返す
+- [x] Impl `SlackAuthTokenRegistry` の token pair ready callback を追加し、起動時 hydrate と実行中 sync の両方で通知する
+- [x] Impl assistant / collector の両方で token pair ready を受けて `workspace_register(xoxc,xoxd)` を自動実行する
+- [x] Test token pair ready callback（成立時・hydrate時）を追加
+- [x] Test Slack RPC 自動登録の重複抑止・`already_exists`・再試行を追加
+- [x] Docs README に自動登録フローを追記
 
 # 8. 完了の定義 Definition of Done
 

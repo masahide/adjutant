@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/korotovsky/slack-mcp-server/pkg/provider"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -53,7 +52,7 @@ func (g *GatewayMCP) registerTools(mcpServer *server.MCPServer) {
 
 	mcpServer.AddTool(mcp.NewTool("workspace_register",
 		mcp.WithDescription("Register a new Slack workspace runtime using xoxc/xoxd tokens"),
-		mcp.WithString("workspace_key", mcp.Required()),
+		mcp.WithString("workspace_key", mcp.Description("Optional. When omitted, gateway derives key from auth.test (enterprise_id/team_id/url alias).")),
 		mcp.WithString("xoxc", mcp.Required()),
 		mcp.WithString("xoxd", mcp.Required()),
 		mcp.WithString("cache_dir"),
@@ -67,14 +66,14 @@ func (g *GatewayMCP) registerTools(mcpServer *server.MCPServer) {
 	mcpServer.AddTool(mcp.NewTool("users_list",
 		mcp.WithDescription("List users from the selected workspace"),
 		mcp.WithReadOnlyHintAnnotation(true),
-		mcp.WithString("workspace_key", mcp.Description("Optional workspace key. Defaults to the first configured workspace.")),
+		mcp.WithString("workspace_key", mcp.Required(), mcp.Description("Workspace key to execute this tool on")),
 		mcp.WithNumber("limit", mcp.DefaultNumber(200)),
 	), g.handleUsersList)
 
 	mcpServer.AddTool(mcp.NewTool("channels_list",
 		mcp.WithDescription("List channels from the selected workspace"),
 		mcp.WithReadOnlyHintAnnotation(true),
-		mcp.WithString("workspace_key", mcp.Description("Optional workspace key. Defaults to the first configured workspace.")),
+		mcp.WithString("workspace_key", mcp.Required(), mcp.Description("Workspace key to execute this tool on")),
 		mcp.WithString("sort", mcp.DefaultString("popularity")),
 		mcp.WithString("channel_types", mcp.DefaultString("public_channel,private_channel")),
 		mcp.WithString("cursor", mcp.DefaultString("")),
@@ -84,40 +83,40 @@ func (g *GatewayMCP) registerTools(mcpServer *server.MCPServer) {
 	mcpServer.AddTool(mcp.NewTool("get_user_info",
 		mcp.WithDescription("Get detailed user information by user_id"),
 		mcp.WithReadOnlyHintAnnotation(true),
-		mcp.WithString("workspace_key", mcp.Description("Optional workspace key. Defaults to the first configured workspace.")),
+		mcp.WithString("workspace_key", mcp.Required(), mcp.Description("Workspace key to execute this tool on")),
 		mcp.WithString("user_id", mcp.Required()),
 	), g.handleGetUserInfo)
 
 	mcpServer.AddTool(mcp.NewTool("get_channel_info",
 		mcp.WithDescription("Get channel information by channel_id"),
 		mcp.WithReadOnlyHintAnnotation(true),
-		mcp.WithString("workspace_key", mcp.Description("Optional workspace key. Defaults to the first configured workspace.")),
+		mcp.WithString("workspace_key", mcp.Required(), mcp.Description("Workspace key to execute this tool on")),
 		mcp.WithString("channel_id", mcp.Required()),
 	), g.handleGetChannelInfo)
 
 	mcpServer.AddTool(mcp.NewTool("get_user_name_by_id",
 		mcp.WithDescription("Resolve a user name from user_id"),
 		mcp.WithReadOnlyHintAnnotation(true),
+		mcp.WithString("workspace_key", mcp.Required(), mcp.Description("Workspace key to execute this tool on")),
 		mcp.WithString("user_id", mcp.Required()),
 		mcp.WithString("team_id"),
 		mcp.WithString("channel_id"),
 		mcp.WithString("routing_mode"),
-		mcp.WithString("workspace_key"),
 	), g.handleGetUserNameByID)
 
 	mcpServer.AddTool(mcp.NewTool("get_channel_name_by_id",
 		mcp.WithDescription("Resolve a channel name from channel_id"),
 		mcp.WithReadOnlyHintAnnotation(true),
+		mcp.WithString("workspace_key", mcp.Required(), mcp.Description("Workspace key to execute this tool on")),
 		mcp.WithString("channel_id", mcp.Required()),
 		mcp.WithString("team_id"),
 		mcp.WithString("routing_mode"),
-		mcp.WithString("workspace_key"),
 	), g.handleGetChannelNameByID)
 
 	mcpServer.AddTool(mcp.NewTool("search_messages",
 		mcp.WithDescription("Search Slack messages using the vendor search handler"),
 		mcp.WithReadOnlyHintAnnotation(true),
-		mcp.WithString("workspace_key", mcp.Description("Optional workspace key. Defaults to the first configured workspace.")),
+		mcp.WithString("workspace_key", mcp.Required(), mcp.Description("Workspace key to execute this tool on")),
 		mcp.WithString("query", mcp.Description("Alias of search_query")),
 		mcp.WithString("search_query", mcp.Description("Vendor-native query field")),
 		mcp.WithNumber("limit", mcp.DefaultNumber(20)),
@@ -135,12 +134,18 @@ func (g *GatewayMCP) registerTools(mcpServer *server.MCPServer) {
 	mcpServer.AddTool(mcp.NewTool("post_message",
 		mcp.WithDescription("Post a message using the vendor add-message handler"),
 		mcp.WithDestructiveHintAnnotation(true),
-		mcp.WithString("workspace_key", mcp.Description("Optional workspace key. Defaults to the first configured workspace.")),
+		mcp.WithString("workspace_key", mcp.Required(), mcp.Description("Workspace key to execute this tool on")),
 		mcp.WithString("channel_id", mcp.Required()),
 		mcp.WithString("text", mcp.Required()),
 		mcp.WithString("thread_ts"),
 		mcp.WithString("content_type", mcp.DefaultString("text/markdown")),
 	), g.handlePostMessage)
+
+	mcpServer.AddTool(mcp.NewTool("auth_test",
+		mcp.WithDescription("Return auth.test-style identity payload for the selected workspace"),
+		mcp.WithReadOnlyHintAnnotation(true),
+		mcp.WithString("workspace_key", mcp.Required(), mcp.Description("Workspace key to execute this tool on")),
+	), g.handleAuthTest)
 }
 
 func (g *GatewayMCP) healthz(w http.ResponseWriter, _ *http.Request) {
@@ -159,13 +164,8 @@ func (g *GatewayMCP) healthz(w http.ResponseWriter, _ *http.Request) {
 		"workspace_statuses": statuses,
 	}
 
-	statusCode := http.StatusOK
-	if readyCount == 0 {
-		statusCode = http.StatusServiceUnavailable
-	}
-
 	w.Header().Set("content-type", "application/json")
-	w.WriteHeader(statusCode)
+	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
@@ -192,8 +192,7 @@ func (g *GatewayMCP) handleWorkspaceRegister(ctx context.Context, request mcp.Ca
 		switch {
 		case errors.Is(err, ErrWorkspaceAlreadyExists):
 			return g.asToolError("already_exists", err.Error()), nil
-		case strings.Contains(err.Error(), "workspace_key is required"),
-			strings.Contains(err.Error(), "xoxc is required"),
+		case strings.Contains(err.Error(), "xoxc is required"),
 			strings.Contains(err.Error(), "xoxd is required"):
 			return g.asToolError("validation_error", err.Error()), nil
 		default:
@@ -202,9 +201,11 @@ func (g *GatewayMCP) handleWorkspaceRegister(ctx context.Context, request mcp.Ca
 	}
 
 	status := workspaceStatusFromRuntime(runtime)
+	authTest := authTestFromRuntime(runtime)
 	return mcp.NewToolResultStructured(map[string]any{
 		"ok":        true,
 		"workspace": status,
+		"auth_test": authTest,
 	}, fmt.Sprintf("workspace registered: %s", status.WorkspaceKey)), nil
 }
 
@@ -346,14 +347,6 @@ func (g *GatewayMCP) handleGetChannelInfo(ctx context.Context, request mcp.CallT
 
 	channel, ok := g.lookupChannel(runtime.Provider, channelID)
 	if !ok {
-		refreshCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
-		defer cancel()
-		if err := runtime.Provider.RefreshChannels(refreshCtx); err != nil {
-			return g.asToolError(classifyError(err), fmt.Sprintf("refresh channels failed: %v", err)), nil
-		}
-		channel, ok = g.lookupChannel(runtime.Provider, channelID)
-	}
-	if !ok {
 		return g.asToolError("not_found", fmt.Sprintf("channel not found: %s", channelID)), nil
 	}
 
@@ -427,15 +420,6 @@ func (g *GatewayMCP) handleGetChannelNameByID(ctx context.Context, request mcp.C
 	channel, ok := g.lookupChannel(runtime.Provider, channelID)
 	source := "memory_cache"
 	if !ok {
-		refreshCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
-		defer cancel()
-		if err := runtime.Provider.RefreshChannels(refreshCtx); err != nil {
-			return g.asToolError(classifyError(err), fmt.Sprintf("refresh channels failed: %v", err)), nil
-		}
-		channel, ok = g.lookupChannel(runtime.Provider, channelID)
-		source = "api_refresh"
-	}
-	if !ok {
 		return g.asToolError("not_found", fmt.Sprintf("channel not found: %s", channelID)), nil
 	}
 
@@ -487,8 +471,24 @@ func (g *GatewayMCP) handlePostMessage(ctx context.Context, request mcp.CallTool
 	return result, nil
 }
 
+func (g *GatewayMCP) handleAuthTest(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	runtime, toolErr := g.resolveRuntime(request)
+	if toolErr != nil {
+		return toolErr, nil
+	}
+
+	authTest := authTestFromRuntime(runtime)
+	if authTest == nil {
+		return g.asToolError("not_ready", "auth_test is not available for workspace"), nil
+	}
+	return mcp.NewToolResultStructured(authTest, fmt.Sprintf("auth_test succeeded: %s", runtime.WorkspaceKey)), nil
+}
+
 func (g *GatewayMCP) resolveRuntime(request mcp.CallToolRequest) (*WorkspaceRuntime, *mcp.CallToolResult) {
 	workspaceKey := strings.TrimSpace(request.GetString("workspace_key", ""))
+	if workspaceKey == "" {
+		return nil, g.asToolError("validation_error", "workspace_key is required")
+	}
 	resolvedKey, err := g.registry.ResolveWorkspaceKey(workspaceKey)
 	if err != nil {
 		return nil, g.asToolError("not_found", err.Error())
@@ -551,7 +551,37 @@ func workspaceStatusFromRuntime(runtime *WorkspaceRuntime) WorkspaceStatus {
 		TeamID:            runtime.TeamID,
 		EnterpriseID:      runtime.EnterpriseID,
 		WorkspaceURL:      runtime.WorkspaceURL,
+		AuthTest:          runtime.AuthTest,
 		InitializedAtUnix: runtime.InitializedAtUnix,
+	}
+}
+
+func authTestFromRuntime(runtime *WorkspaceRuntime) map[string]any {
+	if runtime == nil {
+		return nil
+	}
+
+	if runtime.AuthTest != nil {
+		return map[string]any{
+			"workspace_key": runtime.WorkspaceKey,
+			"url":           runtime.AuthTest.URL,
+			"team":          runtime.AuthTest.Team,
+			"user":          runtime.AuthTest.User,
+			"team_id":       runtime.AuthTest.TeamID,
+			"user_id":       runtime.AuthTest.UserID,
+			"enterprise_id": runtime.AuthTest.EnterpriseID,
+			"bot_id":        runtime.AuthTest.BotID,
+		}
+	}
+
+	if strings.TrimSpace(runtime.TeamID) == "" && strings.TrimSpace(runtime.WorkspaceURL) == "" {
+		return nil
+	}
+	return map[string]any{
+		"workspace_key": runtime.WorkspaceKey,
+		"url":           runtime.WorkspaceURL,
+		"team_id":       runtime.TeamID,
+		"enterprise_id": runtime.EnterpriseID,
 	}
 }
 

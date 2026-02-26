@@ -310,6 +310,182 @@ describe("slackAuthTokenRegistry", () => {
     }
   });
 
+  it("xoxc/xoxd ペア成立時に token pair callback を発火する", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "adjutant-auth-registry-token-pair-"));
+    const tokenPairs: Array<{
+      workspaceKey: string;
+      accountId?: string;
+      xoxcToken: string;
+      xoxdToken: string;
+    }> = [];
+
+    try {
+      resetSlackAuthTokenCacheForTest();
+      configureSlackAuthTokenRegistry({
+        dataDir,
+        authTestEnabled: false,
+        onTokenPairReady: async (event) => {
+          tokenPairs.push({
+            workspaceKey: event.workspaceKey,
+            accountId: event.accountId,
+            xoxcToken: event.xoxcToken,
+            xoxdToken: event.xoxdToken,
+          });
+        },
+      });
+
+      syncSlackAuthTokenSnapshots({
+        snapshots: [
+          {
+            workspaceKey: "workspace-pair",
+            tokens: {
+              xoxc: {
+                value: "xoxc-pair",
+                firstSeenAt: 1,
+                lastSeenAt: 1,
+                hits: 1,
+                sourceStage: "requestWillBeSent",
+              },
+              xoxd: {
+                value: "xoxd-pair",
+                firstSeenAt: 1,
+                lastSeenAt: 1,
+                hits: 1,
+                sourceStage: "requestWillBeSentExtraInfo",
+              },
+            },
+          },
+        ],
+      });
+      await flushSlackAuthTokenRegistryForTest();
+
+      assert.equal(tokenPairs.length, 1);
+      assert.equal(tokenPairs[0]?.workspaceKey, "workspace-pair");
+      assert.equal(tokenPairs[0]?.accountId, undefined);
+      assert.equal(tokenPairs[0]?.xoxcToken, "xoxc-pair");
+      assert.equal(tokenPairs[0]?.xoxdToken, "xoxd-pair");
+    } finally {
+      resetSlackAuthTokenCacheForTest();
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("requestId が不一致な xoxc/xoxd ペアは登録対象から除外する", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "adjutant-auth-registry-token-mismatch-"));
+    const tokenPairs: Array<{ workspaceKey: string }> = [];
+    const warnings: Array<{ message: string; meta?: Record<string, unknown> }> = [];
+
+    try {
+      resetSlackAuthTokenCacheForTest();
+      configureSlackAuthTokenRegistry({
+        dataDir,
+        authTestEnabled: false,
+        onTokenPairReady: async (event) => {
+          tokenPairs.push({ workspaceKey: event.workspaceKey });
+        },
+        onWarn: (message, meta) => {
+          warnings.push({ message, meta });
+        },
+      });
+
+      syncSlackAuthTokenSnapshots({
+        snapshots: [
+          {
+            workspaceKey: "workspace-mismatch",
+            tokens: {
+              xoxc: {
+                value: "xoxc-mismatch",
+                firstSeenAt: 1,
+                lastSeenAt: 1,
+                hits: 1,
+                sourceStage: "requestWillBeSent",
+                requestId: "req-1",
+              },
+              xoxd: {
+                value: "xoxd-mismatch",
+                firstSeenAt: 1,
+                lastSeenAt: 1,
+                hits: 1,
+                sourceStage: "requestWillBeSentExtraInfo",
+                requestId: "req-2",
+              },
+            },
+          },
+        ],
+      });
+      await flushSlackAuthTokenRegistryForTest();
+
+      assert.equal(tokenPairs.length, 0);
+      assert.equal(warnings.length, 1);
+      assert.equal(warnings[0]?.message, "slack-auth-token-snapshot-skipped");
+      assert.equal(warnings[0]?.meta?.reason, "incoherent_token_pair");
+
+      const snapshot = getSlackAuthTokenRegistrySnapshotForTest();
+      assert.equal(snapshot.pending.length, 0);
+    } finally {
+      resetSlackAuthTokenCacheForTest();
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("起動時 hydrate された token pair に対して callback を発火する", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "adjutant-auth-registry-token-hydrate-"));
+    const hydratedPairs: Array<{ workspaceKey: string; xoxcToken: string; xoxdToken: string }> = [];
+    try {
+      resetSlackAuthTokenCacheForTest();
+      configureSlackAuthTokenRegistry({
+        dataDir,
+        authTestEnabled: false,
+      });
+      syncSlackAuthTokenSnapshots({
+        snapshots: [
+          {
+            workspaceKey: "workspace-hydrate",
+            tokens: {
+              xoxc: {
+                value: "xoxc-hydrate",
+                firstSeenAt: 1,
+                lastSeenAt: 1,
+                hits: 1,
+                sourceStage: "requestWillBeSent",
+              },
+              xoxd: {
+                value: "xoxd-hydrate",
+                firstSeenAt: 1,
+                lastSeenAt: 1,
+                hits: 1,
+                sourceStage: "requestWillBeSentExtraInfo",
+              },
+            },
+          },
+        ],
+      });
+      await flushSlackAuthTokenRegistryForTest();
+
+      resetSlackAuthTokenCacheForTest();
+      configureSlackAuthTokenRegistry({
+        dataDir,
+        authTestEnabled: false,
+        onTokenPairReady: async (event) => {
+          hydratedPairs.push({
+            workspaceKey: event.workspaceKey,
+            xoxcToken: event.xoxcToken,
+            xoxdToken: event.xoxdToken,
+          });
+        },
+      });
+      await flushSlackAuthTokenRegistryForTest();
+
+      assert.equal(hydratedPairs.length, 1);
+      assert.equal(hydratedPairs[0]?.workspaceKey, "workspace-hydrate");
+      assert.equal(hydratedPairs[0]?.xoxcToken, "xoxc-hydrate");
+      assert.equal(hydratedPairs[0]?.xoxdToken, "xoxd-hydrate");
+    } finally {
+      resetSlackAuthTokenCacheForTest();
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it("auth.test ログに token を含めない", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "adjutant-auth-registry-log-safety-"));
     const xoxcSecret = "xoxc-secret-token-value";

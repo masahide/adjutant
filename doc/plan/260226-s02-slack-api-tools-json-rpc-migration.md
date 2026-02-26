@@ -135,7 +135,6 @@
   - `ADJUTANT_SLACK_RPC_BASE_URL`
   - `ADJUTANT_SLACK_RPC_AUTO_START`
   - `ADJUTANT_SLACK_RPC_STARTUP_TIMEOUT_MS`
-  - `ADJUTANT_SLACK_RPC_REQUIRED`
 - 外部サービス連携
   - Slack RPC Gateway（Go, MCP サーバ）
 
@@ -193,11 +192,13 @@
 ## 4.4 代表的な例 Examples
 
 - Example-1: assistant 起動時の compose 実行（内部）
+
 ```bash
 docker compose up -d slack-rpc-gateway
 ```
 
 - Example-2: JSON-RPC `auth_test`
+
 ```json
 {
   "jsonrpc": "2.0",
@@ -213,6 +214,7 @@ docker compose up -d slack-rpc-gateway
 ```
 
 - Example-3: `tool_hub` 実行例
+
 ```json
 {
   "mode": "execute",
@@ -349,64 +351,74 @@ sequenceDiagram
 ### Phase 1 Gateway `auth_test` tool 追加（Go）
 
 - [ ] Test `internal/slackrpc/mcp_server` に `auth_test` の失敗テストを追加 Red
-- [ ] Impl Gateway に `auth_test` tool を追加し `workspace_key` 解決と結果整形を実装 Green
+- [x] Impl Gateway に `auth_test` tool を追加し `workspace_key` 解決と結果整形を実装 Green
 - [ ] Refactor 既存エラーハンドリングとの共通化
-- [ ] Impl `resolveRuntime` の default workspace 解決を廃止し、`workspace_key` 必須バリデーションに変更
+- [x] Impl `resolveRuntime` の default workspace 解決を廃止し、`workspace_key` 必須バリデーションに変更
 - [ ] Integration Go テストで `auth_invalid`/`not_found`/成功系を固定
-- [ ] Docs README の MCP tools 一覧を 12個前提へ更新
+- [x] Docs README の MCP tools 一覧を 12個前提へ更新
 
 ### Phase 2 JSON-RPC クライアント基盤
 
-- [ ] Test `SlackRpcMcpClient` の失敗するテスト（initialize/session/tool call）を作成 Red
-- [ ] Impl `src/assistant/slack-api-tools/slack-rpc-client.ts` を実装 Green
-- [ ] Refactor レスポンス正規化とエラー変換を共通化
-- [ ] Integration `tool_hub` から JSON-RPC stub 実行テストを追加
-- [ ] Docs インターフェース契約の例を README へ追記
+- [x] Test `SlackRpcMcpClient` の失敗するテスト（initialize/session/tool call）を作成 Red
+- [x] Impl `src/assistant/slack-api-tools/slack-rpc-client.ts` を実装 Green
+- [x] Refactor レスポンス正規化とエラー変換を共通化
+- [x] Integration `tool_hub` から JSON-RPC stub 実行テストを追加
+- [x] Docs インターフェース契約の例を README へ追記
 
 ### Phase 3 Slack provider の CDP 廃止と action 12個化
 
-- [ ] Test 既存 `slack-provider.integration` を JSON-RPC 前提で失敗させる Red
-- [ ] Impl `factory.ts` 配線を `SlackRpcRouteClient` へ置換し CDP invoker 依存を除去 Green
-- [ ] Impl `workspace_register`, `workspace_unregister`, `get_user_info`, `get_channel_info`, `auth_test` を provider/service に追加 Green
+- [x] Test 既存 `slack-provider.integration` を JSON-RPC 前提で失敗させる Red
+- [x] Impl `factory.ts` 配線を `SlackRpcRouteClient` へ置換し CDP invoker 依存を除去 Green
+- [x] Impl `workspace_register`, `workspace_unregister`, `get_user_info`, `get_channel_info`, `auth_test` を provider/service に追加 Green
 - [ ] Refactor 未使用の CDP API 実行コードと env 参照を整理
-- [ ] Contract Slack action catalog 12個固定テストを追加/更新
+- [x] Contract Slack action catalog 12個固定テストを追加/更新
 
 ### Phase 4 assistant 起動時の Gateway 自動起動
 
-- [ ] Test bootstrap モジュール（compose 成功/失敗/timeout）の失敗テストを作成 Red
-- [ ] Impl `src/assistant/main.ts` 起動シーケンスへ compose auto start を統合 Green
-- [ ] Refactor 起動ログと設定読み込み（runtime-config）を整理
+- [x] Test bootstrap モジュール（compose 成功/失敗/timeout）の失敗テストを作成 Red
+- [x] Impl `src/assistant/main.ts` 起動シーケンスへ compose auto start を統合 Green
+- [x] Refactor 起動ログと設定読み込み（runtime-config）を整理
 - [ ] Integration main 起動のモックテスト追加（auto_start on/off）
-- [ ] Docs 新規環境変数と運用手順を README に反映
+- [x] Docs 新規環境変数と運用手順を README に反映
+
+### Phase 4.5 xoxc/xoxd ペア検知時の自動登録
+
+- [x] Impl `SlackAuthTokenRegistry` に token pair ready callback を追加（起動時 hydrate + 実行中 sync の両方で通知）
+- [x] Impl `SlackRpcWorkspaceRegistrar` を追加し、`workspace_register(xoxc,xoxd)` 自動実行と重複抑止を実装
+- [x] Impl assistant (`pnpm assistant`) / collector (`pnpm start`) の両方で自動登録 callback を有効化
+- [x] Refactor Slack channel plugin に token snapshot 定期同期を追加し、イベント未発火時もペア成立を検知
+- [x] Test `slackAuthTokenRegistry` の token pair callback（成立時・hydrate時）を追加
+- [x] Test `slack-rpc-workspace-registrar` の重複抑止 / `already_exists` / 再試行を追加
+- [x] Docs README に自動 `workspace_register` の運用を追記
 
 ### Phase 5 統合と検証
 
-- [ ] 全体テストの実行（`pnpm run test`, `pnpm run typecheck`）
+- [x] 全体テストの実行（`pnpm run test`, `pnpm run typecheck`）
 - [ ] エッジケース確認（Gateway停止中, workspace未登録, invalid_auth）
-- [ ] エッジケース確認（`workspace_key` 省略時は必ず `validation_error`）
-- [ ] ツールセット確認（`tool_hub` Slack action が12個）
+- [x] エッジケース確認（`workspace_key` 省略時は必ず `validation_error`）
+- [x] ツールセット確認（`tool_hub` Slack action が12個）
 - [ ] ログと例外の確認（token非出力, timeout表示）
-- [ ] ドキュメント更新（README, 設定表, 本プランの進捗チェック）
+- [x] ドキュメント更新（README, 設定表, 本プランの進捗チェック）
 
 # 8. 完了の定義 Definition of Done
 
 ## 8.1 機能DoD Functional DoD
 
 - [ ] 受け入れ条件がすべて満たされていること
-- [ ] CDP 経由 API 実行が Slack provider の本番経路から完全に除去されていること
-- [ ] Slack action 12個すべてが JSON-RPC 経由で成功すること
+- [x] CDP 経由 API 実行が Slack provider の本番経路から完全に除去されていること
+- [x] Slack action 12個すべてが JSON-RPC 経由で成功すること
 
 ## 8.2 品質DoD Quality DoD
 
-- [ ] 全てのテストがパスしていること
-- [ ] Linter Formatterのエラーがないこと
+- [x] 全てのテストがパスしていること
+- [x] Linter Formatterのエラーがないこと
 - [ ] 不要なデバッグコードが削除されていること
-- [ ] 主要な変更点がドキュメントに反映されていること
+- [x] 主要な変更点がドキュメントに反映されていること
 
 # 9. 懸念事項と未確定事項 Concerns and Questions
 
-- `adjutant起動時` の対象を assistant (`pnpm assistant`) のみとするか、collector (`pnpm start`) にも適用するかは要確認。
-- compose 自動起動失敗時に assistant を fail-fast させるか、Slack provider だけ無効化して継続起動させるかの運用方針決定が必要。
+- `adjutant起動時` の対象は assistant (`pnpm assistant`) と collector (`pnpm start`) の両方に適用する。
+- compose 自動起動失敗時は fail-fast で終了し、Slack provider を部分的に無効化して継続起動する挙動は採用しない。
 - `workspace_register` / `workspace_unregister` を `tool_hub` で公開した場合の権限制御（誰が実行できるか）を別途明確化する必要がある。
-- 既存クライアントが `workspace_key` 省略前提で呼んでいる場合は破壊的変更になるため、移行手順（呼び出し側修正）を README に明記する必要がある。
+- 既存クライアント向けに、`workspace_register` は `workspace_key` 省略時に `auth.test` 由来でキー自動決定し、実行系 action は `workspace_key` 必須という移行手順を README に明記済み。
 - 開発環境で `docker compose` コマンド名差異（v1/v2）がある場合の互換戦略（`docker compose` 固定か `docker-compose` フォールバックか）を決める必要がある。

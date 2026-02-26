@@ -20,7 +20,10 @@ export type SlackApiErrorCode =
   | "fallback_failed"
   | "rate_limited"
   | "not_found"
-  | "validation_error";
+  | "validation_error"
+  | "integration_unavailable"
+  | "timeout"
+  | "api_error";
 
 export type SlackApiError = {
   ok: false;

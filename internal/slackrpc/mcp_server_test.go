@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/korotovsky/slack-mcp-server/pkg/provider"
 	"github.com/mark3labs/mcp-go/mcp"
 	"go.uber.org/zap"
 )
@@ -91,6 +92,94 @@ func TestResolveRuntimeNotFound(t *testing.T) {
 	}
 }
 
+func TestResolveRuntimeRequiresWorkspaceKey(t *testing.T) {
+	registry := NewWorkspaceRegistry()
+	err := registry.InitSequential(context.Background(), []WorkspaceConfig{{WorkspaceKey: "alpha", XOXC: "x", XOXD: "d"}}, func(_ context.Context, cfg WorkspaceConfig) (*WorkspaceRuntime, error) {
+		return &WorkspaceRuntime{
+			WorkspaceKey: cfg.WorkspaceKey,
+			Ready:        true,
+			Provider:     &provider.ApiProvider{},
+		}, nil
+	})
+	if err != nil {
+		t.Fatalf("InitSequential returned error: %v", err)
+	}
+
+	gateway := &GatewayMCP{registry: registry, logger: zap.NewNop()}
+	req := mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name:      "users_list",
+			Arguments: map[string]any{},
+		},
+	}
+
+	runtime, toolErr := gateway.resolveRuntime(req)
+	if runtime != nil {
+		t.Fatal("runtime must be nil when workspace_key is missing")
+	}
+	if toolErr == nil || !toolErr.IsError {
+		t.Fatal("tool error must be returned when workspace_key is missing")
+	}
+}
+
+func TestHandleAuthTest(t *testing.T) {
+	registry := NewWorkspaceRegistry()
+	err := registry.InitSequential(context.Background(), []WorkspaceConfig{{WorkspaceKey: "alpha", XOXC: "x", XOXD: "d"}}, func(_ context.Context, cfg WorkspaceConfig) (*WorkspaceRuntime, error) {
+		return &WorkspaceRuntime{
+			WorkspaceKey: cfg.WorkspaceKey,
+			Ready:        true,
+			Provider:     &provider.ApiProvider{},
+			TeamID:       "TALPHA",
+			EnterpriseID: "EALPHA",
+			WorkspaceURL: "https://alpha.slack.test/",
+			AuthTest: &AuthTestIdentity{
+				URL:          "https://alpha.slack.test/",
+				Team:         "Alpha",
+				User:         "tester",
+				TeamID:       "TALPHA",
+				UserID:       "UALPHA",
+				EnterpriseID: "EALPHA",
+			},
+		}, nil
+	})
+	if err != nil {
+		t.Fatalf("InitSequential returned error: %v", err)
+	}
+
+	gateway := &GatewayMCP{registry: registry, logger: zap.NewNop()}
+	req := mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name:      "auth_test",
+			Arguments: map[string]any{"workspace_key": "alpha"},
+		},
+	}
+
+	result, callErr := gateway.handleAuthTest(context.Background(), req)
+	if callErr != nil {
+		t.Fatalf("handleAuthTest returned error: %v", callErr)
+	}
+	if result == nil {
+		t.Fatal("result must not be nil")
+	}
+	if result.IsError {
+		t.Fatalf("result must not be error: %+v", result)
+	}
+
+	payload, ok := result.StructuredContent.(map[string]any)
+	if !ok {
+		t.Fatalf("structured content must be map, got %T", result.StructuredContent)
+	}
+	if payload["workspace_key"] != "alpha" {
+		t.Fatalf("workspace_key = %v, want alpha", payload["workspace_key"])
+	}
+	if payload["team_id"] != "TALPHA" {
+		t.Fatalf("team_id = %v, want TALPHA", payload["team_id"])
+	}
+	if payload["user_id"] != "UALPHA" {
+		t.Fatalf("user_id = %v, want UALPHA", payload["user_id"])
+	}
+}
+
 func TestClassifyError(t *testing.T) {
 	cases := []struct {
 		name string
@@ -120,6 +209,15 @@ func TestHandleWorkspaceRegisterAndUnregister(t *testing.T) {
 			return &WorkspaceRuntime{
 				WorkspaceKey: cfg.WorkspaceKey,
 				Ready:        true,
+				AuthTest: &AuthTestIdentity{
+					URL:          "https://acme.slack.test/",
+					Team:         "Acme",
+					User:         "bot",
+					TeamID:       "TACME",
+					UserID:       "UACME",
+					EnterpriseID: "EACME",
+					BotID:        "BACME",
+				},
 			}, nil
 		},
 	}
@@ -140,6 +238,17 @@ func TestHandleWorkspaceRegisterAndUnregister(t *testing.T) {
 	}
 	if registerResult == nil || registerResult.IsError {
 		t.Fatalf("register result must be non-error, got: %+v", registerResult)
+	}
+	registerPayload, ok := registerResult.StructuredContent.(map[string]any)
+	if !ok {
+		t.Fatalf("register structured content must be map, got %T", registerResult.StructuredContent)
+	}
+	authTest, ok := registerPayload["auth_test"].(map[string]any)
+	if !ok {
+		t.Fatalf("auth_test must be map, got %T", registerPayload["auth_test"])
+	}
+	if authTest["team_id"] != "TACME" {
+		t.Fatalf("auth_test.team_id = %v, want TACME", authTest["team_id"])
 	}
 	if statuses := registry.ListStatuses(); len(statuses) != 1 {
 		t.Fatalf("len(statuses) = %d, want 1", len(statuses))
@@ -204,5 +313,48 @@ func TestHandleWorkspaceRegisterDuplicate(t *testing.T) {
 	}
 	if statuses := registry.ListStatuses(); len(statuses) != 1 {
 		t.Fatalf("len(statuses) = %d, want 1", len(statuses))
+	}
+}
+
+func TestHandleWorkspaceRegisterWithoutWorkspaceKey(t *testing.T) {
+	registry := NewWorkspaceRegistry()
+	gateway := &GatewayMCP{
+		registry: registry,
+		logger:   zap.NewNop(),
+		initializer: func(_ context.Context, cfg WorkspaceConfig) (*WorkspaceRuntime, error) {
+			_ = cfg.WorkspaceKey
+			return &WorkspaceRuntime{
+				WorkspaceKey: "",
+				Ready:        true,
+				TeamID:       "T-AUTO",
+				EnterpriseID: "E-AUTO",
+				WorkspaceURL: "https://auto.slack.com/",
+			}, nil
+		},
+	}
+
+	req := mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name: "workspace_register",
+			Arguments: map[string]any{
+				"xoxc": "xoxc-token",
+				"xoxd": "xoxd-token",
+			},
+		},
+	}
+	result, err := gateway.handleWorkspaceRegister(context.Background(), req)
+	if err != nil {
+		t.Fatalf("handleWorkspaceRegister returned error: %v", err)
+	}
+	if result == nil || result.IsError {
+		t.Fatalf("register result must be non-error, got: %+v", result)
+	}
+
+	statuses := registry.ListStatuses()
+	if len(statuses) != 1 {
+		t.Fatalf("len(statuses) = %d, want 1", len(statuses))
+	}
+	if statuses[0].WorkspaceKey != "E-AUTO" {
+		t.Fatalf("workspace_key = %q, want E-AUTO", statuses[0].WorkspaceKey)
 	}
 }

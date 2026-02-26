@@ -181,7 +181,7 @@ data/_debug/
 
 `xoxc/xoxd` の認証トークンは ingest 時にまず `_pending` へ保存され、`auth.test` 成功後に `account_id = enterprise_id ?? team_id` で account ストアへ昇格します。
 同時に `events.jsonl` / team cache / workspace route pin も workspace/team 単位で account 配下へ移動されます。
-`tool_hub` の Slack provider (`s02/s03`) は `workspace_key` 指定時に一致 token pair を優先し、未指定時は最新 pair を利用します。
+`tool_hub` の Slack provider (`s02/s03`) は `workspaces_list` 以外の実行系 action で `workspace_key` 必須です（default workspace フォールバックなし）。
 
 `user-names-by-team/<team_id>.json` は以下のように保存されます（`adjutant.slack.user-cache.v2`）。
 
@@ -232,7 +232,7 @@ go build -mod=mod -o ./bin/slack-rpc-gateway ./cmd/slack-rpc-gateway
 ./bin/slack-rpc-gateway --config ./config/slack-rpc-gateway.yaml --listen :8080
 ```
 
-`config/slack-rpc-gateway.example.yaml` はデフォルトで `workspaces: []` です。起動後に JSON-RPC の `workspace_register` で `workspace_key` と `xoxc/xoxd` を動的登録できます。
+`config/slack-rpc-gateway.example.yaml` はデフォルトで `workspaces: []` です。起動後に JSON-RPC の `workspace_register` で `xoxc/xoxd` を動的登録できます（`workspace_key` は任意）。
 
 ### エンドポイント
 
@@ -241,7 +241,23 @@ go build -mod=mod -o ./bin/slack-rpc-gateway ./cmd/slack-rpc-gateway
 
 `/mcp` は MCP セッションが必要なため、最初に `initialize` を呼び出し、レスポンスヘッダー `mcp-session-id` を後続リクエストで送ってください。
 
-CDP 直叩き呼び出しからの差し替えは、既存の Slack 操作を `tools/call` に移すだけで進められます（例: `channels_list`, `search_messages`, `post_message`, `get_user_name_by_id`）。
+`adjutant` の `tool_hub` からは次の 12 action を Gateway に 1:1 で委譲します。
+
+- `workspaces_list`
+- `workspace_register`
+- `workspace_unregister`
+- `users_list`
+- `channels_list`
+- `get_user_info`
+- `get_channel_info`
+- `get_user_name_by_id`
+- `get_channel_name_by_id`
+- `search_messages`
+- `post_message`
+- `auth_test`
+
+`workspaces_list` 以外の実行系 action は `workspace_key` 必須です。`workspace_key` 省略時の default workspace フォールバックは行いません。  
+例外は `workspace_register` で、`workspace_key` を省略した場合は gateway が `auth.test` 結果から自動決定します（優先順: `enterprise_id` -> `team_id` -> `url` のサブドメイン）。
 
 起動後に workspace を動的追加:
 
@@ -263,6 +279,27 @@ curl -s -X POST http://localhost:8080/mcp \
   }'
 ```
 
+`workspace_key` を自動決定させる場合:
+
+```bash
+curl -s -X POST http://localhost:8080/mcp \
+  -H 'content-type: application/json' \
+  -d '{
+    "jsonrpc":"2.0",
+    "id":1,
+    "method":"tools/call",
+    "params":{
+      "name":"workspace_register",
+      "arguments":{
+        "xoxc":"xoxc-***",
+        "xoxd":"xoxd-***"
+      }
+    }
+  }'
+```
+
+レスポンスの `workspace.workspace_key`（または `workspaces_list` で確認したキー）を、以後の全実行系 action に渡してください。
+
 workspace の解除:
 
 ```bash
@@ -278,6 +315,35 @@ curl -s -X POST http://localhost:8080/mcp \
     }
   }'
 ```
+
+### adjutant 起動時の自動起動
+
+`pnpm assistant` と `pnpm start`（collector）の両方で、起動時に Slack RPC Gateway を自動起動できます。
+
+- `ADJUTANT_SLACK_RPC_ENABLED` (`1`/`0`, default: `1`)
+- `ADJUTANT_SLACK_RPC_AUTO_START` (`1`/`0`, default: `1`)
+- `ADJUTANT_SLACK_RPC_BASE_URL` (default: `http://127.0.0.1:8080`)
+- `ADJUTANT_SLACK_RPC_STARTUP_TIMEOUT_MS` (default: `20000`)
+
+Gateway の起動/healthcheck に失敗した場合は、`pnpm assistant` / `pnpm start` ともに fail-fast で終了します。
+
+### xoxc/xoxd ペア検知時の自動 workspace_register
+
+`pnpm assistant` / `pnpm start`（collector）は、`auth-token-store.json` から読み込んだ `xoxc/xoxd` ペアを起動直後に検出すると、Slack RPC Gateway に対して `workspace_register` を自動実行します。  
+さらに実行中に新しい `xoxc/xoxd` ペアが揃った場合も、同様に即時で `workspace_register` を実行します。
+
+- 自動登録時は `workspace_key` を渡しません。
+- Gateway 側で `auth.test` 結果から `workspace_key` を自動決定します（`enterprise_id` -> `team_id` -> `url` サブドメイン）。
+- 既登録ペアは重複登録せず、トークン値はログに出力しません。
+
+### 破壊的変更と移行手順（`workspace_key` 必須化）
+
+従来 `workspace_key` を省略していた呼び出しは、そのままでは `validation_error` になります。  
+移行は次の手順で実施してください。
+
+1. `workspace_register` を呼ぶ（`workspace_key` を指定するか、省略して自動決定）
+2. 返却された `workspace.workspace_key` を控える
+3. `users_list` / `channels_list` / `search_messages` / `post_message` / `auth_test` など全実行系 action で `workspace_key` を必ず渡す
 
 ### Docker (multi-stage + distroless)
 
