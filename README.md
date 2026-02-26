@@ -220,3 +220,93 @@ ADJUTANT_DISABLE_DOM_CAPTURE=1 pnpm start
 - リアクション本文取得は DOM キャプチャ依存です。対象メッセージが画面上にない場合、本文を補完できないことがあります。
 - DOM キャプチャは `/api/reactions.*` の POST を起点に動作し、他ユーザー由来の WebSocket 通知だけでは発火しません。
 - デバッグログには機密情報が含まれる可能性があるため、共有前に必ずマスクしてください。
+
+## Slack RPC Gateway (MCP / JSON-RPC)
+
+`vendor/slack-mcp-server` の `pkg/provider` / `pkg/handler` を利用し、`workspace_key` で複数 Slack アカウントを切り替える MCP (JSON-RPC) HTTP サービスを追加しています。
+
+### ローカル実行
+
+```bash
+go build -mod=mod -o ./bin/slack-rpc-gateway ./cmd/slack-rpc-gateway
+./bin/slack-rpc-gateway --config ./config/slack-rpc-gateway.yaml --listen :8080
+```
+
+`config/slack-rpc-gateway.example.yaml` をコピーして、各 `workspace_key` に `xoxc/xoxd` を設定してください。
+
+### エンドポイント
+
+- `POST /mcp` (`tools/list`, `tools/call`)
+- `GET /healthz`
+
+`/mcp` は MCP セッションが必要なため、最初に `initialize` を呼び出し、レスポンスヘッダー `mcp-session-id` を後続リクエストで送ってください。
+
+CDP 直叩き呼び出しからの差し替えは、既存の Slack 操作を `tools/call` に移すだけで進められます（例: `channels_list`, `search_messages`, `post_message`, `get_user_name_by_id`）。
+
+### Docker (multi-stage + distroless)
+
+```bash
+docker build -t slack-rpc-gateway:local .
+docker run --rm -p 8080:8080 \
+  -v "$(pwd)/config/slack-rpc-gateway.yaml:/app/config/slack-rpc-gateway.yaml:ro" \
+  slack-rpc-gateway:local
+curl -s http://localhost:8080/healthz
+```
+
+### Docker Compose
+
+```bash
+docker compose up --build
+```
+
+停止:
+
+```bash
+docker compose down
+```
+
+`config/slack-rpc-gateway.yaml` は必ず「ファイル」として用意してください（ディレクトリになっていると mount エラーになります）。
+
+### 起動トラブルシュート
+
+`invalid_auth` で起動失敗する場合:
+
+- 症状:
+  - `Authentication failed - check your Slack tokens`
+  - `workspace initialization failed: no workspace initialized successfully`
+- 主な原因:
+  - `config/slack-rpc-gateway.yaml` の `xoxc/xoxd` が `REPLACE_ME` のまま
+  - `xoxc/xoxd` の組み合わせが不正（同一ワークスペースのペアでない）
+- 対処:
+  - `xoxc` と `xoxd` を実トークンへ置換
+  - 2ワークスペース運用時は両方の `workspace_key` のペアを個別に確認
+
+`not a directory` mount エラーで起動失敗する場合:
+
+- 症状:
+  - `error mounting ... not a directory`
+  - `Are you trying to mount a directory onto a file (or vice-versa)?`
+- 主な原因:
+  - `config/slack-rpc-gateway.yaml` がファイルではなくディレクトリ
+- 対処:
+  - `config/slack-rpc-gateway.yaml` を削除してファイルとして再作成
+  - Compose利用時は `./config:/app/config:ro` をマウントする現在の `compose.yaml` を利用
+
+`config/slack-rpc-gateway.yaml` がファイルか確認:
+
+```bash
+ls -ld config/slack-rpc-gateway.yaml
+```
+
+サンプル値の残存確認（`REPLACE_ME`）:
+
+```bash
+rg -n "REPLACE_ME" config/slack-rpc-gateway.yaml
+```
+
+起動確認:
+
+```bash
+docker compose up --build
+curl -s http://localhost:8080/healthz
+```

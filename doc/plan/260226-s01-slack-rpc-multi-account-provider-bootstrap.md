@@ -1,11 +1,11 @@
 # 1. 概要と目的 Overview and Purpose
 
 - What  
-  `https://github.com/korotovsky/slack-mcp-server` の `pkg` ディレクトリにある必要パッケージ（`pkg/provider` など）をGo moduleとしてimportし、MCPではなくHTTP RPCで利用できるマルチアカウントSlackゲートウェイをGoで実装する。`workspace_key` 指定で `xoxc/xoxd` ペアを切り替えて実行できるようにする。
+  `https://github.com/korotovsky/slack-mcp-server` の `pkg` ディレクトリにある必要パッケージ（`pkg/provider` など）をGo moduleとしてimportし、元々のMCPを利用可能なマルチアカウントSlackゲートウェイをGoで実装する。`workspace_key` 指定で `xoxc/xoxd` ペアを切り替え、JSON-RPC経由のMCPツール呼び出しで実行できるようにする。
 - Why  
-  upstream `github.com/korotovsky/slack-mcp-server` の実装挙動を追従可能な形で再利用しつつ、`adjutant` から複数ワークスペースを安定利用するためには、アカウント切替可能なRPC境界が必要なため。
+  upstream `github.com/korotovsky/slack-mcp-server` の実装挙動を追従可能な形で再利用しつつ、`adjutant` から複数ワークスペースを安定利用するためには、アカウント切替可能なMCP境界が必要なため。
 - How  
-  `provider.New()` の環境変数依存は受け入れ、起動時に「直列でのみ」環境変数を切り替えて複数 `ApiProvider` を初期化する。初期化完了後は環境変数を不変とし、`workspace_key -> provider` のルーティングでRPC呼び出しを処理する。
+  `provider.New()` の環境変数依存は受け入れ、起動時に「直列でのみ」環境変数を切り替えて複数 `ApiProvider` を初期化する。初期化完了後は環境変数を不変とし、`workspace_key -> provider` のルーティングでMCP `tools/call` を処理する。
 
 ## 1.1 行動原則 Core Principles
 
@@ -26,20 +26,20 @@
 ## 2.1 スコープ Scope
 
 - 今回やること
-  - Go製HTTP RPCサービスを新規追加し、`workspace_key` 指定でSlack API呼び出し先アカウントを切り替える。
+  - Go製MCPサーバ（JSON-RPC over HTTP）を新規追加し、`workspace_key` 指定でSlack API呼び出し先アカウントを切り替える。
   - `github.com/korotovsky/slack-mcp-server/pkg/...` を `go.mod` で依存追加し、ローカル `vendor` コピーには依存しない。
   - 起動時に複数アカウント設定を読み込み、`provider.New()` を直列に呼んで `ApiProvider` を複数初期化する。
   - 初期化時のみ環境変数を差し替え、初期化完了後は変更しない運用ガードを入れる。
-  - `adjutant` の現行利用に必要なRPCメソッドを先行実装する。
-  - `workspaces_list` 相当のRPCを追加し、利用可能な `workspace_key` と状態を返す。
+  - `adjutant` の現行利用に必要なMCPツールを先行実装する。
+  - `workspaces_list` ツールを追加し、利用可能な `workspace_key` と状態を返す。
   - エラー契約とログ契約を定義し、tokenやcookieを出力しない。
   - `go build` で単体バイナリを生成可能にする。
-  - ローカル起動可能な `Dockerfile` を追加し、コンテナ実行手順を用意する。
+  - ローカル起動可能な `Dockerfile` を追加し、`multi-stage build` + `distroless` ランタイムでコンテナ実行手順を用意する。
 - 成果物
   - Goサービス実装（`cmd` / `internal` / `pkg`）
   - `go.mod` / `go.sum`（upstream依存込み）
-  - `Dockerfile`（ローカル実行用）
-  - RPC契約ドキュメント
+  - `Dockerfile`（`multi-stage build` + `distroless` ランタイム）
+  - MCP（JSON-RPC）契約ドキュメント
   - 単体テストと契約テスト
   - ビルド/起動手順ドキュメント（`go build` と `docker build/run`）
   - `adjutant` 差し替え用I/Fメモ
@@ -59,8 +59,8 @@
 ## 2.3 ユースケース Use Cases
 
 - UC-1: 起動時に3つの `workspace_key` 設定を読み込み、順番に `ApiProvider` を初期化して利用可能状態にする。
-- UC-2: `channels_list(workspace_key=A)` 呼び出しでAのアカウント経路が選択される。
-- UC-3: `channels_list(workspace_key=B)` 呼び出しでBのアカウント経路が選択される。
+- UC-2: MCP `tools/call` で `channels_list(workspace_key=A)` を呼ぶとAのアカウント経路が選択される。
+- UC-3: MCP `tools/call` で `channels_list(workspace_key=B)` を呼ぶとBのアカウント経路が選択される。
 - UC-4: Enterpriseワークスペースでは upstream 既存分岐に従い enterprise向け経路が利用される。
 - UC-5: Non-Enterpriseワークスペースでは upstream 既存分岐に従い `conversations.list` 経路が利用される。
 - 異常系1: 未登録 `workspace_key` を指定した場合は `not_found` を返す。
@@ -73,7 +73,7 @@
   Then `provider.New()` は直列に呼ばれ、全ワークスペースの初期化結果が `workspaces_list` に反映される。
 
 - Given サービス起動後  
-  When RPCを並行実行  
+  When MCPツール呼び出しを並行実行  
   Then 環境変数の再書き換えなしで `workspace_key` ルーティングのみで処理される。
 
 - Given `workspace_key=acme` が登録済み  
@@ -81,8 +81,8 @@
   Then `acme` に対応する `ApiProvider` 経由で結果が返る。
 
 - Given 未登録 `workspace_key`  
-  When 任意RPCを呼ぶ  
-  Then HTTP 404相当の `not_found` エラーを返す。
+  When MCP `tools/call` を呼ぶ  
+  Then `not_found` エラーをJSON-RPCエラーまたはtool errorとして返す。
 
 - Given Enterpriseワークスペース  
   When `channels_list` を呼ぶ  
@@ -98,7 +98,7 @@
 
 - Given `Dockerfile` が存在  
   When `docker build` と `docker run` を実行  
-  Then コンテナ内でサービスが起動し、`/healthz` が成功応答を返す。
+  Then `distroless` ランタイムイメージでコンテナ内サービスが起動し、`/healthz` が成功応答を返す。
 
 ## 2.5 既知の制約 Known Limitations
 
@@ -115,7 +115,7 @@
 - Style Guide  
   既存リポジトリのlint/format方針に準拠
 - Runtime Deployment  
-  単一プロセスHTTPサーバ、ローカル起動およびDockerコンテナ起動
+  単一プロセスHTTPサーバ、ローカル起動および `multi-stage build` + `distroless` Dockerコンテナ起動
 - Testing  
   `go test`（unit + contract）
 
@@ -124,9 +124,8 @@
 ## 4.1 公開APIまたは外部I O一覧
 
 - HTTP API
-  - `POST /rpc`
+  - `POST /mcp`（JSON-RPC 2.0）
   - `GET /healthz`
-  - `GET /workspaces`
 - CLI
   - `--config <path>` ワークスペース設定ファイル
   - `--listen <host:port>` 待受アドレス（任意、未指定は `:8080`）
@@ -144,15 +143,15 @@
   - `xoxc: string` 必須
   - `xoxd: string` 必須
   - `cache_dir: string` 任意
-- RPC Request
-  - `method: string` 必須
-  - `params: object` 任意
-  - `workspace_key: string` 任意（未指定はdefault）
-- RPC Response
-  - `ok: boolean`
-  - `data: object` 成功時
-  - `error: { code, message, details? }` 失敗時
-- 先行サポートメソッド
+- JSON-RPC Request（MCP）
+  - `jsonrpc: "2.0"` 必須
+  - `id: string|number` 必須
+  - `method: string` 必須（例: `tools/list`, `tools/call`）
+  - `params: object` 必須
+- JSON-RPC Response（MCP）
+  - 成功時: `result`
+  - 失敗時: `error { code, message, data? }`
+- 先行サポートツール
   - `workspaces_list`
   - `users_list`
   - `channels_list`
@@ -178,35 +177,50 @@
   - リクエスト単位タイムアウトを設定
   - タイムアウト時は `timeout` を返す
 - ログ方針と個人情報の扱い
-  - `workspace_key`, method, status, latency のみ記録
+  - `workspace_key`, `jsonrpc_method`, `tool_name`, status, latency のみ記録
   - token/cookie/Authorizationはマスクまたは非出力
 
 ## 4.4 代表的な例 Examples
 
-- Example-1: ワークスペース一覧
+- Example-1: MCPツール一覧
 ```bash
-curl -s http://localhost:8080/workspaces
-```
-
-- Example-2: ユーザー一覧RPC
-```bash
-curl -s -X POST http://localhost:8080/rpc \
+curl -s -X POST http://localhost:8080/mcp \
   -H 'content-type: application/json' \
   -d '{
-    "method":"users_list",
-    "workspace_key":"acme",
-    "params":{"limit":200}
+    "jsonrpc":"2.0",
+    "id":1,
+    "method":"tools/list",
+    "params":{}
   }'
 ```
 
-- Example-3: メッセージ投稿RPC
+- Example-2: `users_list` を tools/call で実行
 ```bash
-curl -s -X POST http://localhost:8080/rpc \
+curl -s -X POST http://localhost:8080/mcp \
   -H 'content-type: application/json' \
   -d '{
-    "method":"post_message",
-    "workspace_key":"acme",
-    "params":{"channel_id":"C123","text":"hello"}
+    "jsonrpc":"2.0",
+    "id":2,
+    "method":"tools/call",
+    "params":{
+      "name":"users_list",
+      "arguments":{"workspace_key":"acme","limit":200}
+    }
+  }'
+```
+
+- Example-3: `post_message` を tools/call で実行
+```bash
+curl -s -X POST http://localhost:8080/mcp \
+  -H 'content-type: application/json' \
+  -d '{
+    "jsonrpc":"2.0",
+    "id":3,
+    "method":"tools/call",
+    "params":{
+      "name":"post_message",
+      "arguments":{"workspace_key":"acme","channel_id":"C123","text":"hello"}
+    }
   }'
 ```
 
@@ -235,10 +249,10 @@ curl -s http://localhost:8080/healthz
 
 ```mermaid
 classDiagram
-  class RpcServer {
+  class McpServer {
     +Start()
-    +HandleRPC(req)
-    +HandleWorkspaces()
+    +HandleJsonRpc(req)
+    +RegisterTools()
   }
 
   class WorkspaceRegistry {
@@ -258,7 +272,7 @@ classDiagram
     +InitStatus string
   }
 
-  class SlackRpcService {
+  class SlackMcpToolService {
     +UsersList(workspaceKey, params)
     +ChannelsList(workspaceKey, params)
     +GetUserInfo(workspaceKey, userID)
@@ -274,12 +288,12 @@ classDiagram
     +RefreshChannels(ctx)
   }
 
-  RpcServer --> WorkspaceRegistry
-  RpcServer --> SlackRpcService
+  McpServer --> WorkspaceRegistry
+  McpServer --> SlackMcpToolService
   WorkspaceRegistry --> EnvBootstrapper
   WorkspaceRegistry --> ApiProvider
-  SlackRpcService --> WorkspaceRegistry
-  SlackRpcService --> ApiProvider
+  SlackMcpToolService --> WorkspaceRegistry
+  SlackMcpToolService --> ApiProvider
 ```
 
 ## 5.3 その他の図 Optional
@@ -309,13 +323,13 @@ sequenceDiagram
   - `WorkspaceRegistry` が直列初期化順序を守ること
   - `workspace_key` 解決ロジックが期待通りであること
 - Integration
-  - `httptest` で `/rpc` と `/workspaces` の統合確認
+  - `httptest` で `/mcp`（`tools/list`, `tools/call`）の統合確認
   - 複数ワークスペースのルーティング確認
   - `go build` 成功のスモーク確認
-  - `docker build` + `docker run` + `/healthz` のスモーク確認
+  - `docker build` + `docker run` + `/healthz` のスモーク確認（runtimeがdistrolessであることを含む）
 - Contract
-  - RPCの入力バリデーションとエラーコード契約確認
-  - `workspaces_list` の応答スキーマ固定
+  - JSON-RPC/MCPの入力バリデーションとエラーコード契約確認
+  - `workspaces_list` ツール応答スキーマ固定
 
 ## 6.2 カバレッジ対象
 
@@ -334,55 +348,56 @@ sequenceDiagram
 
 ### Phase 1 起動基盤とレジストリ
 
-- [ ] Test `EnvBootstrapper` の保存復元と直列実行を検証するRedテストを作成
-- [ ] Impl `EnvBootstrapper` と `WorkspaceRegistry.InitSequential` の最小実装を追加しGreen化
-- [ ] Refactor 初期化責務を分離し、ログ・エラー整形を共通化
-- [ ] Integration 複数ワークスペース設定で起動し、`/workspaces` 応答を確認
-- [ ] Integration `go build` でバイナリ生成可能であることを確認
-- [ ] Docs 初期化制約（起動後env不変）をREADMEへ追記
+- [x] Test `EnvBootstrapper` の保存復元と直列実行を検証するRedテストを作成
+- [x] Impl `EnvBootstrapper` と `WorkspaceRegistry.InitSequential` の最小実装を追加しGreen化
+- [x] Refactor 初期化責務を分離し、ログ・エラー整形を共通化
+- [x] Integration 複数ワークスペース設定で起動し、`/healthz` と `workspaces_list` 応答を確認
+- [x] Integration `go build` でバイナリ生成可能であることを確認
+- [x] Docs 初期化制約（起動後env不変）をREADMEへ追記
 
-### Phase 2 RPC API（最小メソッド群）
+### Phase 2 MCP API（最小ツール群）
 
-- [ ] Test `workspaces_list/users_list/channels_list` の失敗ケースRedテストを作成
-- [ ] Impl `POST /rpc` とメソッドディスパッチの最小実装を追加しGreen化
-- [ ] Refactor `workspace_key` 解決とエラー変換処理を共通化
-- [ ] Integration `workspace_key` 切替で異なるproviderに到達することを確認
-- [ ] Docs RPCメソッド契約とサンプルcurlを更新
+- [x] Test `workspaces_list/users_list/channels_list` の失敗ケースRedテストを作成
+- [x] Impl `POST /mcp`（JSON-RPC）と `tools/call` ディスパッチの最小実装を追加しGreen化
+- [x] Refactor `workspace_key` 解決とエラー変換処理を共通化
+- [x] Integration `workspace_key` 切替で異なるproviderに到達することを確認
+- [x] Docs MCPツール契約とサンプルcurlを更新
 
 ### Phase 3 adjutant接続準備と品質確認
 
-- [ ] Test `adjutant` 側差し替え前提の契約テスト（メソッド名/レスポンス形）を追加
-- [ ] Impl `get_user_info/get_channel_info/search_messages/post_message` を追加
-- [ ] Refactor 共通Slack呼び出しラッパーを整理し重複を削減
-- [ ] Integration エラー分類 `auth_invalid/rate_limited/not_found` をE2Eで確認
-- [ ] Impl ローカル起動可能な `Dockerfile` を追加
-- [ ] Integration `docker build` と `docker run` で `/healthz` が成功することを確認
-- [ ] Docs 移行手順（CDP直叩きからRPC呼び出し）を追記
+- [x] Test `adjutant` 側差し替え前提の契約テスト（tool名/レスポンス形）を追加
+- [x] Impl `get_user_info/get_channel_info/search_messages/post_message` を追加
+- [x] Refactor 共通Slack呼び出しラッパーを整理し重複を削減
+- [x] Integration エラー分類 `auth_invalid/rate_limited/not_found` をE2Eで確認
+- [x] Impl `multi-stage build` + `distroless` の `Dockerfile` を追加
+- [x] Integration `docker build` と `docker run` で `/healthz` が成功し、distroless runtimeで起動することを確認
+- [x] Docs 移行手順（CDP直叩きからMCPツール呼び出し）を追記
 
 # 8. 完了の定義 Definition of Done
 
 ## 8.1 機能DoD Functional DoD
 
-- [ ] 受け入れ条件がすべて満たされていること
-- [ ] 既知の制約が明文化され、想定通りであること
-- [ ] 契約の例に対して期待通りの結果が得られること
+- [x] 受け入れ条件がすべて満たされていること
+- [x] 既知の制約が明文化され、想定通りであること
+- [x] 契約の例に対して期待通りの結果が得られること
 
 ## 8.2 品質DoD Quality DoD
 
-- [ ] 全てのテストがパスしていること
-- [ ] `go build` が成功していること
-- [ ] `docker build` およびローカル `docker run` のスモーク確認が完了していること
-- [ ] Linter Formatterのエラーがないこと
-- [ ] 不要なデバッグコードが削除されていること
-- [ ] 主要な変更点がドキュメントに反映されていること
+- [x] 全てのテストがパスしていること
+- [x] `go build` が成功していること
+- [x] `docker build` およびローカル `docker run` のスモーク確認が完了し、runtimeがdistrolessであること
+- [x] Linter Formatterのエラーがないこと
+- [x] 不要なデバッグコードが削除されていること
+- [x] 主要な変更点がドキュメントに反映されていること
 
 # 9. 懸念事項と未確定事項 Concerns and Questions
 
 - `provider.New()` 依存方式のため、将来upstreamで実行時env参照が増えた場合の影響監視が必要。
 - upstream依存のため、将来の `github.com/korotovsky/slack-mcp-server` 更新で破壊的変更が入る可能性がある。`go.mod` のバージョン固定と更新手順が必要。
 - 初期版で起動後の動的ワークスペース追加を見送る判断で問題ないか確認が必要。
-- `POST /rpc` の認証方式（ローカル限定かAPI key必須か）が未確定。
+- `POST /mcp` の認証方式（ローカル限定かAPI key必須か）が未確定。
 - `adjutant` 側で既存 `SlackRouteClient` とどの粒度で互換を合わせるか最終決定が必要。
 - Dockerイメージに設定ファイルをどう注入するか（bind mountか環境変数か）の運用方針が未確定。
+- distrolessランタイムではshellが使えないため、トラブルシュート導線（debug tagや別イメージ）を事前に決める必要がある。
 
 ---

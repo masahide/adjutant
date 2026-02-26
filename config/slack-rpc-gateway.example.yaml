@@ -1,0 +1,11 @@
+listen: ":8080"
+log_level: "info"
+workspaces:
+  - workspace_key: "primary"
+    xoxc: "xoxc-REPLACE_ME"
+    xoxd: "xoxd-REPLACE_ME"
+    cache_dir: "/tmp/slack-rpc-gateway/primary"
+  - workspace_key: "secondary"
+    xoxc: "xoxc-REPLACE_ME"
+    xoxd: "xoxd-REPLACE_ME"
+    cache_dir: "/tmp/slack-rpc-gateway/secondary"

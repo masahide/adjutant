@@ -1,0 +1,12 @@
+services:
+  slack-rpc-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: slack-rpc-gateway:local
+    container_name: slack-rpc-gateway
+    command: ["--config", "/app/config/slack-rpc-gateway.yaml", "--listen", ":8080"]
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./config:/app/config:ro
