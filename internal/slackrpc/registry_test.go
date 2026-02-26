@@ -3,7 +3,9 @@ package slackrpc
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -63,7 +65,87 @@ func TestWorkspaceRegistryInitSequentialAllFailed(t *testing.T) {
 	err := registry.InitSequential(context.Background(), configs, func(_ context.Context, cfg WorkspaceConfig) (*WorkspaceRuntime, error) {
 		return nil, errors.New("always fail")
 	})
-	if err == nil {
-		t.Fatal("expected error when all workspaces fail")
+	if err != nil {
+		t.Fatalf("InitSequential returned error: %v", err)
+	}
+
+	statuses := registry.ListStatuses()
+	if len(statuses) != 1 {
+		t.Fatalf("len(statuses) = %d, want 1", len(statuses))
+	}
+	if statuses[0].Ready {
+		t.Fatalf("status ready = %v, want false", statuses[0].Ready)
+	}
+}
+
+func TestWorkspaceRegistryInitSequentialEmptyAllowed(t *testing.T) {
+	registry := NewWorkspaceRegistry()
+	if err := registry.InitSequential(context.Background(), []WorkspaceConfig{}, func(_ context.Context, cfg WorkspaceConfig) (*WorkspaceRuntime, error) {
+		return &WorkspaceRuntime{WorkspaceKey: cfg.WorkspaceKey, Ready: true}, nil
+	}); err != nil {
+		t.Fatalf("InitSequential returned error: %v", err)
+	}
+
+	statuses := registry.ListStatuses()
+	if len(statuses) != 0 {
+		t.Fatalf("len(statuses) = %d, want 0", len(statuses))
+	}
+}
+
+func TestWorkspaceRegistryRegisterAndUnregister(t *testing.T) {
+	registry := NewWorkspaceRegistry()
+	initializer := func(_ context.Context, cfg WorkspaceConfig) (*WorkspaceRuntime, error) {
+		return &WorkspaceRuntime{
+			WorkspaceKey: cfg.WorkspaceKey,
+			Ready:        true,
+		}, nil
+	}
+
+	runtime, err := registry.Register(context.Background(), WorkspaceConfig{
+		WorkspaceKey: "acme",
+		XOXC:         "xoxc",
+		XOXD:         "xoxd",
+	}, initializer)
+	if err != nil {
+		t.Fatalf("Register returned error: %v", err)
+	}
+	if runtime.WorkspaceKey != "acme" {
+		t.Fatalf("runtime.WorkspaceKey = %q, want acme", runtime.WorkspaceKey)
+	}
+
+	if _, err := registry.Register(context.Background(), WorkspaceConfig{
+		WorkspaceKey: "acme",
+		XOXC:         "xoxc",
+		XOXD:         "xoxd",
+	}, initializer); !errors.Is(err, ErrWorkspaceAlreadyExists) {
+		t.Fatalf("Register duplicate error = %v, want ErrWorkspaceAlreadyExists", err)
+	}
+
+	removed, err := registry.Unregister("acme")
+	if err != nil {
+		t.Fatalf("Unregister returned error: %v", err)
+	}
+	if removed.WorkspaceKey != "acme" {
+		t.Fatalf("removed.WorkspaceKey = %q, want acme", removed.WorkspaceKey)
+	}
+
+	if _, err := registry.Unregister("acme"); !errors.Is(err, ErrWorkspaceNotFound) {
+		t.Fatalf("Unregister missing error = %v, want ErrWorkspaceNotFound", err)
+	}
+}
+
+func TestWorkspaceRegistryRegisterValidation(t *testing.T) {
+	registry := NewWorkspaceRegistry()
+	initializer := func(_ context.Context, cfg WorkspaceConfig) (*WorkspaceRuntime, error) {
+		return nil, fmt.Errorf("unexpected initializer call: %s", cfg.WorkspaceKey)
+	}
+
+	_, err := registry.Register(context.Background(), WorkspaceConfig{
+		WorkspaceKey: "",
+		XOXC:         "xoxc",
+		XOXD:         "xoxd",
+	}, initializer)
+	if err == nil || !strings.Contains(err.Error(), "workspace_key is required") {
+		t.Fatalf("Register error = %v, want workspace_key validation error", err)
 	}
 }

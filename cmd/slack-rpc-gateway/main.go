@@ -53,7 +53,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	handler := slackrpc.NewHTTPHandler(registry, logger)
+	handler := slackrpc.NewHTTPHandler(registry, logger, initializer)
 	httpServer := &http.Server{
 		Addr:              cfg.Listen,
 		Handler:           handler,

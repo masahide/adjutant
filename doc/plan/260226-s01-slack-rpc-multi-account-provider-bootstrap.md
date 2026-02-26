@@ -103,8 +103,38 @@
 ## 2.5 既知の制約 Known Limitations
 
 - 環境変数切替方式はプロセスグローバル依存のため、初期化フェーズの排他制御が前提。
-- 起動後の動的アカウント追加は初期版では非対応とする。
+- 現行実装では起動後の動的アカウント追加は未対応（本書の追加フェーズで対応計画を定義）。
 - upstream側の将来変更で実行時 `os.Getenv` 参照が増えた場合、方式見直しが必要。
+
+## 2.6 追加計画 Dynamic Workspace Registration
+
+- 目的
+  - `docker compose up` 時点ではトークン未設定でも Gateway を起動可能にし、起動後に `workspace_key` と `xoxc/xoxd` を登録してワークスペースを増やせるようにする。
+- 追加スコープ
+  - 起動時 `workspaces` 0件を許容する。
+  - MCP 管理ツール `workspace_register` を追加し、起動後に `workspace_key` と `xoxc/xoxd` を登録できるようにする。
+  - 管理ツール `workspace_unregister` を追加し、不要な `workspace_key` を登録解除できるようにする。
+  - `workspace_register` / `workspace_unregister` で変更した状態を runtime ストアへ永続化し、再起動後も復元できるようにする。
+  - 既存の静的 `workspaces` 設定による起動方式は後方互換として維持する。
+- 追加受け入れ条件
+  - Given `workspaces: []` または未指定  
+    When サービスを起動  
+    Then プロセスは起動し、`workspaces_list` は0件を返し、`/healthz` は `workspace_ready=0` を返す。
+  - Given 起動後に `workspace_register(workspace_key=acme, xoxc, xoxd)` を呼ぶ  
+    When 初期化が成功  
+    Then `workspaces_list` に `acme` が `ready=true` で追加され、既存ツールが `workspace_key=acme` で利用できる。
+  - Given 既存 `workspace_key` へ再登録を試行  
+    When `workspace_register` を呼ぶ  
+    Then `already_exists` を返し、既存 runtime は変更されない。
+  - Given 不正トークンで `workspace_register` を呼ぶ  
+    When 初期化に失敗  
+    Then `auth_invalid` または `api_error` を返し、失敗 workspace は ready 登録されない。
+  - Given `workspace_unregister(workspace_key=acme)` を呼ぶ  
+    When 解除が成功  
+    Then `workspaces_list` から `acme` が除外され、永続ストアからも削除される。
+  - Given `workspace_register` が同時に複数呼ばれる  
+    When 異なる `workspace_key` を登録  
+    Then 排他制御下で順次初期化され、環境変数競合が発生しない。
 
 # 3. 前提技術スタック Context and Tech Stack
 
@@ -143,6 +173,13 @@
   - `xoxc: string` 必須
   - `xoxd: string` 必須
   - `cache_dir: string` 任意
+- WorkspaceRegistrationRequest（`workspace_register`）
+  - `workspace_key: string` 必須
+  - `xoxc: string` 必須
+  - `xoxd: string` 必須
+  - `cache_dir: string` 任意
+- WorkspaceUnregisterRequest（`workspace_unregister`）
+  - `workspace_key: string` 必須
 - JSON-RPC Request（MCP）
   - `jsonrpc: "2.0"` 必須
   - `id: string|number` 必須
@@ -159,12 +196,16 @@
   - `get_channel_info`
   - `search_messages`
   - `post_message`
+- 追加予定管理ツール
+  - `workspace_register`
+  - `workspace_unregister`
 
 ## 4.3 エラーと例外 Error Handling
 
 - エラー分類
   - `validation_error`
   - `not_found`
+  - `already_exists`
   - `auth_invalid`
   - `rate_limited`
   - `timeout`
@@ -236,6 +277,40 @@ docker run --rm -p 8080:8080 \
   -v "$(pwd)/config:/app/config:ro" \
   slack-rpc-gateway:local
 curl -s http://localhost:8080/healthz
+```
+
+- Example-6: 起動後に `workspace_register` で追加
+```bash
+curl -s -X POST http://localhost:8080/mcp \
+  -H 'content-type: application/json' \
+  -d '{
+    "jsonrpc":"2.0",
+    "id":6,
+    "method":"tools/call",
+    "params":{
+      "name":"workspace_register",
+      "arguments":{
+        "workspace_key":"acme",
+        "xoxc":"xoxc-***",
+        "xoxd":"xoxd-***"
+      }
+    }
+  }'
+```
+
+- Example-7: `workspace_unregister` で解除
+```bash
+curl -s -X POST http://localhost:8080/mcp \
+  -H 'content-type: application/json' \
+  -d '{
+    "jsonrpc":"2.0",
+    "id":7,
+    "method":"tools/call",
+    "params":{
+      "name":"workspace_unregister",
+      "arguments":{"workspace_key":"acme"}
+    }
+  }'
 ```
 
 # 5. アーキテクチャと設計図 Architecture and Diagrams
@@ -373,6 +448,20 @@ sequenceDiagram
 - [x] Integration `docker build` と `docker run` で `/healthz` が成功し、distroless runtimeで起動することを確認
 - [x] Docs 移行手順（CDP直叩きからMCPツール呼び出し）を追記
 
+### Phase 4 起動後動的ワークスペース追加（追加計画）
+
+- [ ] Test `workspaces: []` で起動成功し、`workspaces_list` が 0 件を返す Red テストを追加
+- [ ] Impl `Config.Validate` / `WorkspaceRegistry` を拡張し、起動後追加可能な mutable registry に変更して Green 化
+- [ ] Test `workspace_register` の正常系・重複キー・認証失敗・同時実行を Red テストで追加
+- [ ] Impl `workspace_register` ツール実装（初期化は既存 `EnvBootstrapper` 排他制御を再利用）で Green 化
+- [ ] Test `workspace_unregister` の正常系・未登録キー・実行中ワークスペース解除の扱いを Red テストで追加
+- [ ] Impl `workspace_unregister` ツール実装（registry と永続ストア更新）で Green 化
+- [ ] Impl runtime 永続ストア（registered workspaces）を追加し、起動時に静的設定 + 永続ストアをマージ復元
+- [ ] Integration `workspace_register` 後に `users_list/channels_list/post_message` が利用可能になる E2E を追加
+- [ ] Integration `workspace_unregister` 後に `not_found` を返すことを確認
+- [ ] Security review 管理ツールのログマスキング（token/cookie 非出力）と監査ログ項目を確認
+- [ ] Docs `compose` 起動時はトークン不要で、必要時に `workspace_register` で追加する運用手順へ更新
+
 # 8. 完了の定義 Definition of Done
 
 ## 8.1 機能DoD Functional DoD
@@ -394,7 +483,8 @@ sequenceDiagram
 
 - `provider.New()` 依存方式のため、将来upstreamで実行時env参照が増えた場合の影響監視が必要。
 - upstream依存のため、将来の `github.com/korotovsky/slack-mcp-server` 更新で破壊的変更が入る可能性がある。`go.mod` のバージョン固定と更新手順が必要。
-- 初期版で起動後の動的ワークスペース追加を見送る判断で問題ないか確認が必要。
+- `workspace_register/workspace_unregister` の実行主体をどう制限するか（ローカル限定、ヘッダ認証、mTLS等）の決定が必要。
+- runtime 永続ストアの平文保存可否（暗号化/secret manager 連携要否）の判断が必要。
 - `POST /mcp` の認証方式（ローカル限定かAPI key必須か）が未確定。
 - `adjutant` 側で既存 `SlackRouteClient` とどの粒度で互換を合わせるか最終決定が必要。
 - Dockerイメージに設定ファイルをどう注入するか（bind mountか環境変数か）の運用方針が未確定。

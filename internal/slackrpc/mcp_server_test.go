@@ -25,7 +25,7 @@ func TestHealthz(t *testing.T) {
 		t.Fatalf("InitSequential returned error: %v", err)
 	}
 
-	handler := NewHTTPHandler(registry, zap.NewNop())
+	handler := NewHTTPHandler(registry, zap.NewNop(), nil)
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
@@ -108,5 +108,101 @@ func TestClassifyError(t *testing.T) {
 		if got != tc.want {
 			t.Fatalf("%s classifyError() = %q, want %q", tc.name, got, tc.want)
 		}
+	}
+}
+
+func TestHandleWorkspaceRegisterAndUnregister(t *testing.T) {
+	registry := NewWorkspaceRegistry()
+	gateway := &GatewayMCP{
+		registry: registry,
+		logger:   zap.NewNop(),
+		initializer: func(_ context.Context, cfg WorkspaceConfig) (*WorkspaceRuntime, error) {
+			return &WorkspaceRuntime{
+				WorkspaceKey: cfg.WorkspaceKey,
+				Ready:        true,
+			}, nil
+		},
+	}
+
+	registerReq := mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name: "workspace_register",
+			Arguments: map[string]any{
+				"workspace_key": "acme",
+				"xoxc":          "xoxc-token",
+				"xoxd":          "xoxd-token",
+			},
+		},
+	}
+	registerResult, err := gateway.handleWorkspaceRegister(context.Background(), registerReq)
+	if err != nil {
+		t.Fatalf("handleWorkspaceRegister returned error: %v", err)
+	}
+	if registerResult == nil || registerResult.IsError {
+		t.Fatalf("register result must be non-error, got: %+v", registerResult)
+	}
+	if statuses := registry.ListStatuses(); len(statuses) != 1 {
+		t.Fatalf("len(statuses) = %d, want 1", len(statuses))
+	}
+
+	unregisterReq := mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name: "workspace_unregister",
+			Arguments: map[string]any{
+				"workspace_key": "acme",
+			},
+		},
+	}
+	unregisterResult, err := gateway.handleWorkspaceUnregister(context.Background(), unregisterReq)
+	if err != nil {
+		t.Fatalf("handleWorkspaceUnregister returned error: %v", err)
+	}
+	if unregisterResult == nil || unregisterResult.IsError {
+		t.Fatalf("unregister result must be non-error, got: %+v", unregisterResult)
+	}
+	if statuses := registry.ListStatuses(); len(statuses) != 0 {
+		t.Fatalf("len(statuses) = %d, want 0", len(statuses))
+	}
+}
+
+func TestHandleWorkspaceRegisterDuplicate(t *testing.T) {
+	registry := NewWorkspaceRegistry()
+	if _, err := registry.Register(context.Background(), WorkspaceConfig{
+		WorkspaceKey: "acme",
+		XOXC:         "xoxc-token",
+		XOXD:         "xoxd-token",
+	}, func(_ context.Context, cfg WorkspaceConfig) (*WorkspaceRuntime, error) {
+		return &WorkspaceRuntime{WorkspaceKey: cfg.WorkspaceKey, Ready: true}, nil
+	}); err != nil {
+		t.Fatalf("Register setup returned error: %v", err)
+	}
+
+	gateway := &GatewayMCP{
+		registry: registry,
+		logger:   zap.NewNop(),
+		initializer: func(_ context.Context, cfg WorkspaceConfig) (*WorkspaceRuntime, error) {
+			return &WorkspaceRuntime{WorkspaceKey: cfg.WorkspaceKey, Ready: true}, nil
+		},
+	}
+
+	req := mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name: "workspace_register",
+			Arguments: map[string]any{
+				"workspace_key": "acme",
+				"xoxc":          "xoxc-token",
+				"xoxd":          "xoxd-token",
+			},
+		},
+	}
+	result, err := gateway.handleWorkspaceRegister(context.Background(), req)
+	if err != nil {
+		t.Fatalf("handleWorkspaceRegister returned error: %v", err)
+	}
+	if result == nil || !result.IsError {
+		t.Fatalf("duplicate register must return tool error, got: %+v", result)
+	}
+	if statuses := registry.ListStatuses(); len(statuses) != 1 {
+		t.Fatalf("len(statuses) = %d, want 1", len(statuses))
 	}
 }

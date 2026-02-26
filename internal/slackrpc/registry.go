@@ -37,6 +37,11 @@ type WorkspaceStatus struct {
 
 type WorkspaceInitializer func(ctx context.Context, cfg WorkspaceConfig) (*WorkspaceRuntime, error)
 
+var (
+	ErrWorkspaceAlreadyExists = errors.New("workspace_key already exists")
+	ErrWorkspaceNotFound      = errors.New("workspace_key not found")
+)
+
 type WorkspaceRegistry struct {
 	mu         sync.RWMutex
 	entries    map[string]*WorkspaceRuntime
@@ -59,10 +64,6 @@ func (r *WorkspaceRegistry) InitSequential(ctx context.Context, cfgs []Workspace
 	if r.frozen {
 		return errors.New("workspace registry has already been initialized")
 	}
-	if len(cfgs) == 0 {
-		return errors.New("workspace config list is empty")
-	}
-
 	for i, cfg := range cfgs {
 		workspaceKey := strings.TrimSpace(cfg.WorkspaceKey)
 		if workspaceKey == "" {
@@ -100,11 +101,89 @@ func (r *WorkspaceRegistry) InitSequential(ctx context.Context, cfgs []Workspace
 
 	r.frozen = true
 
-	if !r.anyReadyLocked() {
-		return errors.New("no workspace initialized successfully")
+	return nil
+}
+
+func (r *WorkspaceRegistry) Register(ctx context.Context, cfg WorkspaceConfig, initFn WorkspaceInitializer) (*WorkspaceRuntime, error) {
+	workspaceKey := strings.TrimSpace(cfg.WorkspaceKey)
+	if workspaceKey == "" {
+		return nil, errors.New("workspace_key is required")
+	}
+	if strings.TrimSpace(cfg.XOXC) == "" {
+		return nil, errors.New("xoxc is required")
+	}
+	if strings.TrimSpace(cfg.XOXD) == "" {
+		return nil, errors.New("xoxd is required")
 	}
 
-	return nil
+	r.mu.Lock()
+	if _, exists := r.entries[workspaceKey]; exists {
+		r.mu.Unlock()
+		return nil, fmt.Errorf("%w: %s", ErrWorkspaceAlreadyExists, workspaceKey)
+	}
+	r.mu.Unlock()
+
+	runtime, err := initFn(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	if runtime == nil {
+		return nil, errors.New("initializer returned nil runtime")
+	}
+	if !runtime.Ready {
+		return nil, errors.New("initializer returned not-ready runtime")
+	}
+	if strings.TrimSpace(runtime.WorkspaceKey) == "" {
+		runtime.WorkspaceKey = workspaceKey
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, exists := r.entries[workspaceKey]; exists {
+		return nil, fmt.Errorf("%w: %s", ErrWorkspaceAlreadyExists, workspaceKey)
+	}
+	r.entries[workspaceKey] = runtime
+	r.order = append(r.order, workspaceKey)
+	if r.defaultKey == "" {
+		r.defaultKey = workspaceKey
+	}
+
+	return runtime, nil
+}
+
+func (r *WorkspaceRegistry) Unregister(workspaceKey string) (*WorkspaceRuntime, error) {
+	key := strings.TrimSpace(workspaceKey)
+	if key == "" {
+		return nil, errors.New("workspace_key is required")
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	runtime, exists := r.entries[key]
+	if !exists {
+		return nil, fmt.Errorf("%w: %s", ErrWorkspaceNotFound, key)
+	}
+
+	delete(r.entries, key)
+	for i, current := range r.order {
+		if current == key {
+			r.order = append(r.order[:i], r.order[i+1:]...)
+			break
+		}
+	}
+
+	if r.defaultKey == key {
+		r.defaultKey = ""
+		for _, candidate := range r.order {
+			if _, ok := r.entries[candidate]; ok {
+				r.defaultKey = candidate
+				break
+			}
+		}
+	}
+
+	return runtime, nil
 }
 
 func (r *WorkspaceRegistry) ResolveWorkspaceKey(candidate string) (string, error) {
@@ -153,13 +232,4 @@ func (r *WorkspaceRegistry) ListStatuses() []WorkspaceStatus {
 	}
 
 	return statuses
-}
-
-func (r *WorkspaceRegistry) anyReadyLocked() bool {
-	for _, runtime := range r.entries {
-		if runtime.Ready {
-			return true
-		}
-	}
-	return false
 }

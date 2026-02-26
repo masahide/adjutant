@@ -232,7 +232,7 @@ go build -mod=mod -o ./bin/slack-rpc-gateway ./cmd/slack-rpc-gateway
 ./bin/slack-rpc-gateway --config ./config/slack-rpc-gateway.yaml --listen :8080
 ```
 
-`config/slack-rpc-gateway.example.yaml` をコピーして、各 `workspace_key` に `xoxc/xoxd` を設定してください。
+`config/slack-rpc-gateway.example.yaml` はデフォルトで `workspaces: []` です。起動後に JSON-RPC の `workspace_register` で `workspace_key` と `xoxc/xoxd` を動的登録できます。
 
 ### エンドポイント
 
@@ -242,6 +242,42 @@ go build -mod=mod -o ./bin/slack-rpc-gateway ./cmd/slack-rpc-gateway
 `/mcp` は MCP セッションが必要なため、最初に `initialize` を呼び出し、レスポンスヘッダー `mcp-session-id` を後続リクエストで送ってください。
 
 CDP 直叩き呼び出しからの差し替えは、既存の Slack 操作を `tools/call` に移すだけで進められます（例: `channels_list`, `search_messages`, `post_message`, `get_user_name_by_id`）。
+
+起動後に workspace を動的追加:
+
+```bash
+curl -s -X POST http://localhost:8080/mcp \
+  -H 'content-type: application/json' \
+  -d '{
+    "jsonrpc":"2.0",
+    "id":1,
+    "method":"tools/call",
+    "params":{
+      "name":"workspace_register",
+      "arguments":{
+        "workspace_key":"acme",
+        "xoxc":"xoxc-***",
+        "xoxd":"xoxd-***"
+      }
+    }
+  }'
+```
+
+workspace の解除:
+
+```bash
+curl -s -X POST http://localhost:8080/mcp \
+  -H 'content-type: application/json' \
+  -d '{
+    "jsonrpc":"2.0",
+    "id":2,
+    "method":"tools/call",
+    "params":{
+      "name":"workspace_unregister",
+      "arguments":{"workspace_key":"acme"}
+    }
+  }'
+```
 
 ### Docker (multi-stage + distroless)
 
@@ -269,17 +305,15 @@ docker compose down
 
 ### 起動トラブルシュート
 
-`invalid_auth` で起動失敗する場合:
+`invalid_auth` が `workspace_register` で発生する場合:
 
 - 症状:
   - `Authentication failed - check your Slack tokens`
-  - `workspace initialization failed: no workspace initialized successfully`
 - 主な原因:
-  - `config/slack-rpc-gateway.yaml` の `xoxc/xoxd` が `REPLACE_ME` のまま
   - `xoxc/xoxd` の組み合わせが不正（同一ワークスペースのペアでない）
 - 対処:
-  - `xoxc` と `xoxd` を実トークンへ置換
-  - 2ワークスペース運用時は両方の `workspace_key` のペアを個別に確認
+  - `workspace_register` で正しい `xoxc/xoxd` ペアを再登録
+  - 2ワークスペース運用時は各 `workspace_key` のペアを個別に確認
 
 `not a directory` mount エラーで起動失敗する場合:
 
@@ -296,12 +330,6 @@ docker compose down
 
 ```bash
 ls -ld config/slack-rpc-gateway.yaml
-```
-
-サンプル値の残存確認（`REPLACE_ME`）:
-
-```bash
-rg -n "REPLACE_ME" config/slack-rpc-gateway.yaml
 ```
 
 起動確認:

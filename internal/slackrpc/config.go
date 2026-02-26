@@ -72,10 +72,6 @@ func (c *Config) applyDefaults() {
 }
 
 func (c *Config) Validate() error {
-	if len(c.Workspaces) == 0 {
-		return errors.New("workspaces must contain at least one item")
-	}
-
 	seen := make(map[string]struct{}, len(c.Workspaces))
 	for i, ws := range c.Workspaces {
 		if strings.TrimSpace(ws.WorkspaceKey) == "" {

@@ -51,3 +51,23 @@ func TestLoadConfigValidation(t *testing.T) {
 		t.Fatal("LoadConfig expected validation error, got nil")
 	}
 }
+
+func TestLoadConfigAllowsEmptyWorkspaces(t *testing.T) {
+	tempDir := t.TempDir()
+	path := filepath.Join(tempDir, "empty.yaml")
+	content := []byte(`listen: ":8080"
+log_level: "info"
+workspaces: []
+`)
+	if err := os.WriteFile(path, content, 0o644); err != nil {
+		t.Fatalf("write config file: %v", err)
+	}
+
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig returned error: %v", err)
+	}
+	if len(cfg.Workspaces) != 0 {
+		t.Fatalf("len(Workspaces) = %d, want 0", len(cfg.Workspaces))
+	}
+}

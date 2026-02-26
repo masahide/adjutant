@@ -3,6 +3,7 @@ package slackrpc
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -16,11 +17,12 @@ import (
 )
 
 type GatewayMCP struct {
-	registry *WorkspaceRegistry
-	logger   *zap.Logger
+	registry    *WorkspaceRegistry
+	logger      *zap.Logger
+	initializer WorkspaceInitializer
 }
 
-func NewHTTPHandler(registry *WorkspaceRegistry, logger *zap.Logger) http.Handler {
+func NewHTTPHandler(registry *WorkspaceRegistry, logger *zap.Logger, initializer WorkspaceInitializer) http.Handler {
 	mcpServer := server.NewMCPServer(
 		"adjutant-slack-mcp-gateway",
 		"0.1.0",
@@ -28,7 +30,7 @@ func NewHTTPHandler(registry *WorkspaceRegistry, logger *zap.Logger) http.Handle
 		server.WithRecovery(),
 	)
 
-	gateway := &GatewayMCP{registry: registry, logger: logger}
+	gateway := &GatewayMCP{registry: registry, logger: logger, initializer: initializer}
 	gateway.registerTools(mcpServer)
 
 	streamableHTTP := server.NewStreamableHTTPServer(
@@ -48,6 +50,19 @@ func (g *GatewayMCP) registerTools(mcpServer *server.MCPServer) {
 		mcp.WithDescription("List configured Slack workspaces and initialization state"),
 		mcp.WithReadOnlyHintAnnotation(true),
 	), g.handleWorkspacesList)
+
+	mcpServer.AddTool(mcp.NewTool("workspace_register",
+		mcp.WithDescription("Register a new Slack workspace runtime using xoxc/xoxd tokens"),
+		mcp.WithString("workspace_key", mcp.Required()),
+		mcp.WithString("xoxc", mcp.Required()),
+		mcp.WithString("xoxd", mcp.Required()),
+		mcp.WithString("cache_dir"),
+	), g.handleWorkspaceRegister)
+
+	mcpServer.AddTool(mcp.NewTool("workspace_unregister",
+		mcp.WithDescription("Unregister an existing Slack workspace runtime"),
+		mcp.WithString("workspace_key", mcp.Required()),
+	), g.handleWorkspaceUnregister)
 
 	mcpServer.AddTool(mcp.NewTool("users_list",
 		mcp.WithDescription("List users from the selected workspace"),
@@ -159,6 +174,59 @@ func (g *GatewayMCP) handleWorkspacesList(_ context.Context, _ mcp.CallToolReque
 	return mcp.NewToolResultStructured(map[string]any{
 		"workspaces": statuses,
 	}, fmt.Sprintf("%d workspace(s)", len(statuses))), nil
+}
+
+func (g *GatewayMCP) handleWorkspaceRegister(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if g.initializer == nil {
+		return g.asToolError("internal_error", "workspace registration is disabled"), nil
+	}
+
+	cfg := WorkspaceConfig{
+		WorkspaceKey: strings.TrimSpace(request.GetString("workspace_key", "")),
+		XOXC:         strings.TrimSpace(request.GetString("xoxc", "")),
+		XOXD:         strings.TrimSpace(request.GetString("xoxd", "")),
+		CacheDir:     strings.TrimSpace(request.GetString("cache_dir", "")),
+	}
+	runtime, err := g.registry.Register(ctx, cfg, g.initializer)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrWorkspaceAlreadyExists):
+			return g.asToolError("already_exists", err.Error()), nil
+		case strings.Contains(err.Error(), "workspace_key is required"),
+			strings.Contains(err.Error(), "xoxc is required"),
+			strings.Contains(err.Error(), "xoxd is required"):
+			return g.asToolError("validation_error", err.Error()), nil
+		default:
+			return g.asToolError(classifyError(err), err.Error()), nil
+		}
+	}
+
+	status := workspaceStatusFromRuntime(runtime)
+	return mcp.NewToolResultStructured(map[string]any{
+		"ok":        true,
+		"workspace": status,
+	}, fmt.Sprintf("workspace registered: %s", status.WorkspaceKey)), nil
+}
+
+func (g *GatewayMCP) handleWorkspaceUnregister(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	workspaceKey := strings.TrimSpace(request.GetString("workspace_key", ""))
+	runtime, err := g.registry.Unregister(workspaceKey)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrWorkspaceNotFound):
+			return g.asToolError("not_found", err.Error()), nil
+		case strings.Contains(err.Error(), "workspace_key is required"):
+			return g.asToolError("validation_error", err.Error()), nil
+		default:
+			return g.asToolError("internal_error", err.Error()), nil
+		}
+	}
+
+	status := workspaceStatusFromRuntime(runtime)
+	return mcp.NewToolResultStructured(map[string]any{
+		"ok":        true,
+		"workspace": status,
+	}, fmt.Sprintf("workspace unregistered: %s", status.WorkspaceKey)), nil
 }
 
 func (g *GatewayMCP) handleUsersList(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -473,6 +541,18 @@ func cloneArgs(args map[string]any) map[string]any {
 		cloned[key] = value
 	}
 	return cloned
+}
+
+func workspaceStatusFromRuntime(runtime *WorkspaceRuntime) WorkspaceStatus {
+	return WorkspaceStatus{
+		WorkspaceKey:      runtime.WorkspaceKey,
+		Ready:             runtime.Ready,
+		InitError:         runtime.InitError,
+		TeamID:            runtime.TeamID,
+		EnterpriseID:      runtime.EnterpriseID,
+		WorkspaceURL:      runtime.WorkspaceURL,
+		InitializedAtUnix: runtime.InitializedAtUnix,
+	}
 }
 
 func classifyError(err error) string {
