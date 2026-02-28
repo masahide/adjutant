@@ -5,5 +5,5 @@
     "jsx": "react-jsx"
   },
   "include": ["src/**/*.ts", "src/**/*.tsx", "scripts/**/*.ts", "tests/**/*.ts", "vite.config.ts"],
-  "exclude": ["vendor", "dist", "node_modules"]
+  "exclude": ["vendor", "dist", "node_modules", "legacy"]
 }

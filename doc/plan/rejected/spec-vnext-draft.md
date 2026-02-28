@@ -3,10 +3,6 @@
 Status: Draft  
 Last Updated: 2026-02-27
 
-## 関連ドキュメント
-
-- 実装プラン: `doc/plan/260228-s01-file-queue-ipc-foundation.md`
-
 ## 1. 目的
 
 本仕様は、既存実装を UNIX 哲学に沿って再設計するための vNext 案である。  
@@ -268,13 +264,3 @@ core（assistant-gateway）は共通契約だけを扱い、source/sink 固有�
 3. command/action のバージョニング規約
 4. DLQ の再投入オペレーション設計
 5. `adjutant-supervisor` の再起動/子プロセス復旧ポリシー
-
-## 15. ACP セッション識別子対応規約（s02追記）
-
-`control-plane` と `agent-worker-acp` の間で、セッション識別子は次の規約で正規化する。
-
-1. `sessionId`: ACP が返す実セッション識別子
-2. `sessionKey`: control-plane 内の論理キー。`session:${sessionId}`
-3. `runId`: 1セッション内の実行単位キー。`session:${sessionId}:run:${n}`
-
-この規約により、`session/load` 再開時に `sessionKey` を固定しつつ、`session/prompt` ごとの実行を `runId` で追跡できる。

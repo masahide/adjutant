@@ -493,46 +493,46 @@ sequenceDiagram
 
 ### Phase 1 基盤契約固定（journal + Process RPC + ACP）
 
-- [ ] JRN-001 `JournalStore.append` / `JournalStore.drain` を実装（追記専用JSONL + cursor読み）  
+- [x] JRN-001 `JournalStore.append` / `JournalStore.drain` を実装（追記専用JSONL + cursor読み）  
        成果物: `src/runtime/journal-store.ts`, `tests/unit/journal-store.test.ts`
-- [ ] JRN-002 `CursorStore.commit` を原子的更新で実装（temp file -> rename）  
+- [x] JRN-002 `CursorStore.commit` を原子的更新で実装（temp file -> rename）  
        成果物: `src/runtime/cursor-store.ts`, `tests/unit/cursor-store.test.ts`
-- [ ] JRN-003 `JournalCompactor.compact` を実装（所有プロセスcursor到達済みセグメントのみ対象）  
+- [x] JRN-003 `JournalCompactor.compact` を実装（所有プロセスcursor到達済みセグメントのみ対象）  
        成果物: `src/runtime/journal-compactor.ts`, `tests/integration/journal-compaction.test.ts`
-- [ ] PRC-001 Process RPC（`collector/ingest`, `deliver/enqueue`, `deliver/completed`）の型を定義  
+- [x] PRC-001 Process RPC（`collector/ingest`, `deliver/enqueue`, `deliver/completed`）の型を定義  
        成果物: `src/contracts/process-rpc/rpc-types.ts`, `src/contracts/process-rpc/method-types.ts`
-- [ ] PRC-002 Process RPC の契約バリデータを追加  
+- [x] PRC-002 Process RPC の契約バリデータを追加  
        成果物: `tests/contract/process-rpc/process-rpc-validation.test.ts`
 
-- [ ] ACP-001 `schema.json` の対象バージョンを固定し、実装側に参照点を作成  
+- [x] ACP-001 `schema.json` の対象バージョンを固定し、実装側に参照点を作成  
        成果物: `src/contracts/acp/schema-version.ts`, `tests/contract/acp/schema-version.test.ts`
-- [ ] ACP-002 JSON-RPC envelope と ACP メソッド型を定義  
+- [x] ACP-002 JSON-RPC envelope と ACP メソッド型を定義  
        成果物: `src/contracts/acp/rpc-types.ts`, `src/contracts/acp/method-types.ts`
-- [ ] ACP-003 stable/unstable capability マトリクスを定義（feature flag込み）  
+- [x] ACP-003 stable/unstable capability マトリクスを定義（feature flag込み）  
        成果物: `src/control-plane/acp/capability-matrix.ts`
-- [ ] ACP-004 `sessionId <-> sessionKey <-> runId` の対応規約を定義  
+- [x] ACP-004 `sessionId <-> sessionKey <-> runId` の対応規約を定義  
        成果物: `src/control-plane/acp/session-registry.ts`, `doc/spec-vnext-draft.md` 更新
-- [ ] ACP-005 vendor schema による contract validator を追加  
+- [x] ACP-005 vendor schema による contract validator を追加  
        成果物: `tests/contract/acp/schema-validation.test.ts`
 
 ### Phase 2 Agent 側ACP実装（現行 agent-runner の適合）
 
-- [ ] ACP-101 `initialize` を実装（version negotiation と capability 返却）  
+- [x] ACP-101 `initialize` を実装（version negotiation と capability 返却）  
        成果物: `src/agent-worker-acp/handlers/initialize.ts`
-- [ ] ACP-102 `authenticate` を実装（v1は no-auth 返却、将来拡張点を残す）  
+- [x] ACP-102 `authenticate` を実装（v1は no-auth 返却、将来拡張点を残す）  
        成果物: `src/agent-worker-acp/handlers/authenticate.ts`
-- [ ] ACP-103 `session/new` / `session/load` を実装（`loadSession` capability gate）  
+- [x] ACP-103 `session/new` / `session/load` を実装（`loadSession` capability gate）  
        成果物: `src/agent-worker-acp/handlers/session-new.ts`, `src/agent-worker-acp/handlers/session-load.ts`
-- [ ] ACP-104 `session/prompt` を現行 `src/assistant/agent-runner.ts` に接続する adapter を実装  
+- [x] ACP-104 `session/prompt` を現行 `src/assistant/agent-runner.ts` に接続する adapter を実装  
        実装詳細: `AgentRunOptions.callbacks`（`onTextDelta`, `onToolCall`, `onTerminalRecord`）を ACP `session/update` に変換し、`SessionManager` の既存 session を ACP `sessionId` と `session-registry` で対応付ける。`onTerminalRecord` は terminal gateway 実装を意味せず、既存 runner が生成した terminal レコードの受信/表示イベント変換のみを対象とする。  
        成果物: `src/agent-worker-acp/adapters/agent-runner-adapter.ts`, `src/agent-worker-acp/adapters/session-bridge.ts`
-- [ ] ACP-105 `session/cancel` notification で run abort を反映  
+- [x] ACP-105 `session/cancel` notification で run abort を反映  
        成果物: `src/agent-worker-acp/handlers/session-cancel.ts`
-- [ ] ACP-106 `session/update` projector を実装（`agent_message_chunk` / `tool_call` / `tool_call_update` / `plan` / `current_mode_update`）  
+- [x] ACP-106 `session/update` projector を実装（`agent_message_chunk` / `tool_call` / `tool_call_update` / `plan` / `current_mode_update`）  
        成果物: `src/agent-worker-acp/session-update-projector.ts`
-- [ ] ACP-107 `session/prompt` response の `stopReason` 正規化を実装（`end_turn` / `cancelled` / `max_tokens` / `max_turn_requests` / `refusal`）  
+- [x] ACP-107 `session/prompt` response の `stopReason` 正規化を実装（`end_turn` / `cancelled` / `max_tokens` / `max_turn_requests` / `refusal`）  
        成果物: `src/agent-worker-acp/stop-reason.ts`
-- [ ] ACP-108 現行 `tool_execution_start/end` を ACP `tool_call` / `tool_call_update` に正規化する mapper を実装  
+- [x] ACP-108 現行 `tool_execution_start/end` を ACP `tool_call` / `tool_call_update` に正規化する mapper を実装  
        補足: 番号順に合わせて ACP-107 の後に実装する。  
        成果物: `src/agent-worker-acp/tool-call-mapper.ts`
 
@@ -564,6 +564,8 @@ sequenceDiagram
        成果物: `tests/integration/acp-deliver-completion-idempotency.test.ts`
 - [ ] ACP-305 ドキュメント更新（実装プロファイル、サポートメソッド、非対応メソッド）  
        成果物: `doc/spec-vnext-draft.md`, `README.md`
+- [x] OPS-401 最終品質ゲートとして `pnpm check` を実行し通過させる  
+       成果物: `pnpm check` 実行ログ（format/typecheck/test 全通過）
 
 ## 8. 完了の定義 Definition of Done
 
