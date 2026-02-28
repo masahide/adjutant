@@ -13,7 +13,7 @@
 
 - What
   - Phase A: `session/prompt` を `pi-coding-agent` 実実装へ接続し、WebUI から run 実行と `accepted -> update -> completed` を確認できるようにする。
-  - Phase B: `memory_search` / `memory_get`（`memoryScope=main` 限定）、agent audit、docker sandbox、workspace bootstrap、pre-compaction memory flush を再導入する。
+  - Phase B: `memory_search` / `memory_get`（`memoryScope=main`）と `memory_write`（`memoryWriteEnabled=true`）、markdown summary batch、agent audit、docker sandbox、workspace bootstrap、pre-compaction memory flush を再導入する。
   - 上記は `legacy/impl-20260228` に存在する同等機能を、ACP 分離後構成へ移植して成立させる。
 - Why
   - 開発速度を落とす最大ボトルネックは「対話不能な実装」であるため、先に対話導線を完成させる。
@@ -40,7 +40,8 @@
     - WebUI リロード時に、保存済みツール使用履歴を復元表示
     - WebUI 最小対話画面（入力、ストリーム表示、run 状態、エラー表示）
   - Phase B
-    - `memory_search` / `memory_get` ツール実装（`memoryScope=main` 限定）
+    - `memory_search` / `memory_get`（`memoryScope=main`）と `memory_write`（`memoryWriteEnabled=true`）のツール実装
+    - markdown summary batch（session transcript -> Markdown memory 要約反映 + watermark）
     - docker sandbox 実行 (`ADJUTANT_SANDBOX_MODE=non-main|all`)
     - agent audit ログ記録と UI 参照
     - workspace bootstrap / BOOTSTRAP context 注入
@@ -70,15 +71,19 @@
 
 - 正常系1: WebUI ユーザーがメッセージ送信し、run が完了する
   - API が `accepted` を返し、SSE で `session/update` が流れ、最終 `completed` が表示される
-- 正常系2: `memoryScope=main` セッションで memory ツールを実行する
+- 正常系2: `memoryScope=main` セッションで memory search/get を実行する
   - `memory_search` / `memory_get` が利用可能で結果が返る
+- 正常系2-b: `memoryWriteEnabled=true` の run で memory write を実行する
+  - `memory_write` が利用可能で日次/長期 memory へ反映される
 - 正常系3: `memoryScope!=main` セッションで sandbox 実行する
   - `ADJUTANT_SANDBOX_MODE=non-main|all` に応じて Docker 経由で bash が実行される
+- 正常系5: markdown summary batch が session transcript を反映する
+  - watermark を進めつつ日次/長期 memory への要約追記が行われる
 - 正常系4: WebUI をリロードしてもツール履歴が残る
   - 初期取得 (`GET /api/snapshot`) で過去 run のツールイベントが復元される
 - 異常系1: worker がクラッシュする
   - supervisor が再起動し、run は `failed` として確定される
-- 異常系2: `memoryScope!=main` セッションで memory ツールを呼ぶ
+- 異常系2: `memoryScope!=main` セッションで memory search/get を呼ぶ
   - ツールは未登録で呼び出せず、`UNSUPPORTED_CAPABILITY` 相当の失敗として扱われる
 
 ### 2.4 受け入れ条件 Acceptance Criteria
@@ -93,26 +98,35 @@
    When control-plane が復帰処理を実行する
    Then worker は既存 session を再利用し、run 継続時に新規 `session/new` を必須としない
 4. Given `memoryScope=main`
-   When agent が memory ツールを必要とする
+   When agent が memory search/get を必要とする
    Then `memory_search` / `memory_get` が利用可能で、結果が tool event として観測できる
 5. Given `memoryScope!=main`
-   When memory ツールを要求する prompt を実行する
-   Then memory ツールは利用不可のままで、run 全体はクラッシュしない
-6. Given sandbox mode が `non-main`
+   When `memory_search` / `memory_get` を要求する prompt を実行する
+   Then `memory_search` / `memory_get` は利用不可のままで、run 全体はクラッシュしない
+6. Given `memoryWriteEnabled=true`
+   When agent が `memory_write` を必要とする
+   Then `memory_write` が利用可能で、日次/長期 memory への反映が行われる
+7. Given `memoryWriteEnabled=false`
+   When agent が `memory_write` を要求する prompt を実行する
+   Then `memory_write` は未登録のままで、run 全体はクラッシュしない
+8. Given sandbox mode が `non-main`
    When `memoryScope!=main` セッションで bash ツールを実行する
    Then Docker コンテナ内で実行され、許可された範囲の結果が返る
-7. Given long context で compaction 閾値近傍
+9. Given long context で compaction 閾値近傍
    When run を実行する
    Then pre-compaction memory flush が先行し、compaction 後も run が継続できる
-8. Given `OPENAI_API_KEY` など必要設定が有効
-   When `session/prompt` を実行する
-   Then `src/assistant/agent-runner.ts` のスタブ応答ではなく、`pi-coding-agent` の実応答が `session/update` と最終 `stopReason` で返る
-9. Given run 中にツール呼び出しが発生する
-   When worker が `session/update` (`tool_call`, `tool_call_update`) を通知する
-   Then WebUI でリアルタイム表示され、run 履歴として再取得可能な形で保存される
-10. Given 過去 run にツール使用履歴が保存済み
+10. Given `OPENAI_API_KEY` など必要設定が有効
+    When `session/prompt` を実行する
+    Then `src/assistant/agent-runner.ts` のスタブ応答ではなく、`pi-coding-agent` の実応答が `session/update` と最終 `stopReason` で返る
+11. Given run 中にツール呼び出しが発生する
+    When worker が `session/update` (`tool_call`, `tool_call_update`) を通知する
+    Then WebUI でリアルタイム表示され、run 履歴として再取得可能な形で保存される
+12. Given 過去 run にツール使用履歴が保存済み
     When WebUI をリロードして初期データを再取得する
     Then 過去 run のツール使用履歴が一覧表示される
+13. Given summary batch の実行対象 transcript が存在する
+    When batch service を 1 回実行する
+    Then Markdown memory への追記と watermark 更新が成功し、次回実行で重複追記しない
 
 ### 2.5 既知の制約 Known Limitations
 
@@ -148,12 +162,14 @@
   - `GET /api/events/stream` (SSE)
 - ACP (`control-plane` <-> `agent-worker-acp`)
   - `initialize`, `session/new`, `session/prompt`, `session/cancel`, `session/update`
+  - `authenticate`（stable optional。既存実装維持）
   - `session/load`（stable optional。`ACP_ENABLE_LOAD_SESSION=1` で有効）
   - `session/list`（unstable optional。`enableUnstableSessionMethods=true` のときのみ有効）
 - 設定
   - `ADJUTANT_SANDBOX_MODE`
   - `ADJUTANT_MEMORY_SEARCH_*`
   - `ACP_ENABLE_LOAD_SESSION`
+  - `ADJUTANT_MARKDOWN_SUMMARY_BATCH_*`
 - 永続化
   - journal/cursor ファイル（tool event 履歴の正本を含む）
   - audit ログ（運用監査用途。履歴復元の正本ではない）
@@ -192,6 +208,7 @@
   - `{ runId, sessionKey, actionType: "assistant_final"|"assistant_aborted"|"assistant_error", ts, reason? }`
 - Memory tool registration rule
   - `memoryScope === "main"` のときのみ `memory_search`/`memory_get` を custom tools に追加
+  - `memory_write` は legacy 互換の `memoryWriteEnabled` 判定（run context）で有効化し、無効時は tool event を監査対象から除外する
 - pendingPermissions のデータソース
   - 正本は `PermissionGateway` (`listPending`) とし、`GET /api/snapshot` は gateway から都度構築する
   - `PermissionRegistry` の `createdAt` は API 応答で `requestedAt` へ正規化して返す（フィールド名差異は control-plane で吸収）
@@ -200,7 +217,7 @@
 ### 4.3 エラーと例外 Error Handling
 
 - エラー分類
-  - `INVALID_REQUEST`, `UNSUPPORTED_CAPABILITY`, `ACP_PROTOCOL_ERROR`, `WORKER_TIMEOUT`, `WORKER_CRASHED`, `DOWNSTREAM_ERROR`, `INVALID_RECORD`
+  - `INVALID_REQUEST`, `UNSUPPORTED_CAPABILITY`, `ACP_PROTOCOL_ERROR`, `JOURNAL_APPEND_FAILED`, `WORKER_TIMEOUT`, `WORKER_CRASHED`, `DOWNSTREAM_ERROR`, `INVALID_RECORD`
 - リトライ方針
   - worker crash は supervisor が指数バックオフで再起動（上限あり）
   - HTTP リクエスト自体の自動再試行は行わない（idempotencyKey で重複吸収）
@@ -250,7 +267,13 @@
   - `GET /api/snapshot` で最新状態を再構築できるよう、tool event 履歴を run 単位で返却する
 - ツール登録契約（Phase B）
   - `memoryScope === \"main\"` のときのみ `memory_search` / `memory_get` を custom tools に追加
+  - `memory_write` は `memoryWriteEnabled=true` の run のみ登録し、write 実体は daily/long-term Markdown へ反映する
   - sandbox mode が有効で対象セッションのとき、`bash` ツールを Docker 実行へ差し替える
+  - sandbox 初期化は `control-plane` 起動時に実施し（Docker daemon 確認 / image 確保 / container 確保）、worker には実行設定を注入する
+- markdown summary batch 契約（Phase B）
+  - `legacy/impl-20260228/src/assistant/markdown-summary-batch.ts` を移植し、session transcript を source に watermark ベースで増分処理する
+  - checkpoint は `<stateDir>/agents/<agentId>/summary-batch-watermark.json` を正本とする
+  - batch 実行は idempotent（同一 offset の重複追記なし）であることを要件化する
 - 最低限の設定契約
   - 必須: `OPENAI_API_KEY`（利用モデル要件に従う）
   - 任意: `ADJUTANT_MODEL`, `ADJUTANT_MEMORY_SEARCH_*`, `ADJUTANT_SANDBOX_MODE`
@@ -259,6 +282,7 @@
   - session factory: `legacy/impl-20260228/src/assistant/agent-session-factory.ts`
   - 実行フロー: `legacy/impl-20260228/src/assistant/agent-runner.ts`
   - compaction: `legacy/impl-20260228/src/assistant/compaction-runtime.ts`
+  - summary batch: `legacy/impl-20260228/src/assistant/markdown-summary-batch.ts`
 
 ### 4.5 代表的な例 Examples
 
@@ -294,13 +318,14 @@ data: {"runId":"session:main:run:1","delta":"hello"}
   - `doc/spec.md` 14.8 エラー分類と回復
 - ACP（control-plane <-> worker）
   - Baseline は `initialize`, `session/new`, `session/prompt`, `session/cancel`, `session/update` を必須実装とする
+  - optional stable の `authenticate` は既存実装を維持し、互換性を崩さない
   - optional stable の `session/load` は Phase A で実装対象とする
   - optional unstable の `session/list` は既定無効で、feature flag 有効時のみ許可する
 - Process RPC / HTTP
   - `collector/ingest`, `deliver/enqueue`, `deliver/completed` と `POST /api/commands`, `GET /api/snapshot`, `GET /api/events/stream` の契約を維持する
   - Phase A/B では Process RPC は「型/スキーマ/contract test」のみを担保し、collector/deliver 実プロセスの起動経路 E2E は対象外とする
 - エラー契約
-  - `UNSUPPORTED_CAPABILITY`, `ACP_PROTOCOL_ERROR`, `WORKER_TIMEOUT`, `WORKER_CRASHED`, `DOWNSTREAM_ERROR`, `INVALID_RECORD` を識別可能な形で返す
+  - `UNSUPPORTED_CAPABILITY`, `ACP_PROTOCOL_ERROR`, `JOURNAL_APPEND_FAILED`, `WORKER_TIMEOUT`, `WORKER_CRASHED`, `DOWNSTREAM_ERROR`, `INVALID_RECORD` を識別可能な形で返す
   - worker 異常終了時は supervisor 再起動と構造化ログ記録を必須とする
 - 検証方針
   - vendor ACP schema と `doc/spec.md` 境界契約の双方に対して contract test を実施し、差分を検知する
@@ -311,6 +336,7 @@ data: {"runId":"session:main:run:1","delta":"hello"}
 
 - 本計画は `control-plane` / `worker` / `ui` / 外部I/O を跨ぐためクラス図を必須とする。
 - 非同期更新（SSE, ACP）が主要なのでシーケンス図を併記する。
+- プロセス境界の基準図は `doc/spec.md` 14.3 を正とする（[プロセス接続連携図](../spec.md#143-プロセス接続連携図)）。
 
 ### 5.2 クラス図 Class Diagram
 
@@ -427,7 +453,9 @@ sequenceDiagram
 
 - 重要ロジック
   - `accepted -> update -> completed|failed` の状態遷移
-  - `memoryScope=main` 条件での memory ツール有効化
+  - `memoryScope=main` 条件での `memory_search` / `memory_get` 有効化
+  - `memoryWriteEnabled=true` 条件での `memory_write` 有効化
+  - summary batch の watermark 進行と重複追記防止
 - エラー分岐
   - worker timeout / crash / protocol mismatch
   - sandbox unavailable
@@ -485,26 +513,31 @@ sequenceDiagram
 - [ ] `Task-A-CONTRACT-001` Contract: baseline ACP methods と capability gate が `doc/spec.md` 14.5/14.7 と一致することを検証
 - [ ] `Task-A-CONTRACT-002` Contract: SSE `StreamEvent` 名が ACP 命名規約（`/` 区切り）と完全一致することを検証
 - [ ] `Task-A-CONTRACT-003` Contract: Process RPC は schema/型適合のみ検証し、collector/deliver 実経路 E2E を含めないことを固定
-- [ ] `Task-A-DOCS-001` Docs: API/SSE 例と `pi-coding-agent` 必須設定を `doc/spec.md` に反映
+- [ ] `Task-A-DOCS-001` Docs: API/SSE 例と `pi-coding-agent` 必須設定を `doc/spec.md` に反映（`src/index.ts`/`src/assistant/main.ts` の役割、§3/§13 の章間整合を含む）
 
 ### Stage 3 機能Bの実装（memory/audit/sandbox + bootstrap/compaction）
 
 - [ ] `Task-B-RED-001` Test: `memoryScope=main` のみ `memory_search`/`memory_get` が有効である失敗テスト作成
 - [ ] `Task-B-RED-002` Test: `memory_get` の path-guard（allowlist/workspace 内/symlink 拒否）の失敗テスト作成
+- [ ] `Task-B-RED-007` Test: `memory_write` の有効/無効条件（`memoryWriteEnabled`）と Markdown 反映の失敗テスト作成
 - [ ] `Task-B-RED-003` Test: `ADJUTANT_SANDBOX_MODE=off|non-main|all` の分岐と fail-closed 動作の失敗テスト作成
 - [ ] `Task-B-RED-004` Test: agent audit（run/tool）記録と API 参照の失敗テスト作成
 - [ ] `Task-B-RED-005` Test: workspace bootstrap / BOOTSTRAP context 注入条件の失敗テスト作成
 - [ ] `Task-B-RED-006` Test: pre-compaction memory flush + context compaction 連動の失敗テスト作成
+- [ ] `Task-B-RED-008` Test: markdown summary batch の watermark 増分処理と重複回避の失敗テスト作成
 - [ ] `Task-B-GREEN-001` Impl: memory ツール登録（`memoryScope` 基準）と sqlite index 接続
 - [ ] `Task-B-GREEN-006` Impl: `memory_get` path-guard（allowlist + workspace 内 + symlink 拒否）実装
+- [ ] `Task-B-GREEN-007` Impl: `memory_write` ツールと daily/long-term Markdown 更新処理を移植
 - [ ] `Task-B-GREEN-002` Impl: sandbox executor と `ADJUTANT_SANDBOX_MODE` 連携
 - [ ] `Task-B-GREEN-003` Impl: agent audit 記録と UI 参照 API
 - [ ] `Task-B-GREEN-004` Impl: workspace bootstrap / BOOTSTRAP context 注入
 - [ ] `Task-B-GREEN-005` Impl: pre-compaction memory flush + context compaction 連動（初期閾値は spec 既定値）
+- [ ] `Task-B-GREEN-008` Impl: markdown summary batch service（runOnce + watermark 保存 + transcript 増分読込）を移植
 - [ ] `Task-B-REFACTOR-001` Refactor: Phase B 機能の cross-cutting concern（設定、ログ、例外処理）統合
 - [ ] `Task-B-INTEG-001` Integration: memory/sandbox/audit 一連シナリオ E2E
 - [ ] `Task-B-INTEG-002` Integration: `memory_get` path traversal/symlink 攻撃が拒否されることを検証
-- [ ] `Task-B-DOCS-001` Docs: `spec.md` 2.2 現在実装済み項目を更新
+- [ ] `Task-B-INTEG-003` Integration: `memory_write` -> summary batch -> memory_search の一連反映を検証
+- [ ] `Task-B-DOCS-001` Docs: `spec.md` 2.2 現在実装済み項目を更新（`spec.md` §14.9 の s02 非スコープ注記を s04 実装済み状態に合わせて更新）
 
 ### Stage 4 統合と検証
 
@@ -535,3 +568,19 @@ sequenceDiagram
 
 - `pi-coding-agent` のモデル/認証設定の標準値（環境変数の正式セット）
 - live test 用 secret を管理する CI 運用（rotation、実行頻度、失敗時通知）
+
+## 10. リスクとロールバック方針 Risks and Rollback
+
+- 主要リスク
+  - run 受理後に worker が不安定化し、`accepted` のみ残る中途半端状態が増える
+  - `session/load` 導入で session 復帰情報が破損し、既存 session を再利用できなくなる
+  - Phase B で memory/sandbox/summary batch の副作用が増え、障害切り分けが難化する
+- ロールバック原則
+  - すべて feature flag で段階有効化し、障害時はフラグで即時切り戻す
+  - 永続データは append-only + cursor 管理を維持し、破損時は snapshot 再構築で復旧する
+  - ACP 境界契約違反時は worker/Process RPC 拡張を止め、baseline method のみで運用継続する
+- 具体的な切り戻し手順
+  - Phase A: `session/load` を無効化し `session/new` 固定へ戻す（`ACP_ENABLE_LOAD_SESSION=0`）
+  - Phase B(memory): `memory_write`/summary batch を無効化し read/search のみ維持
+  - Phase B(sandbox): `ADJUTANT_SANDBOX_MODE=off` へ戻してホスト実行に切り替える
+  - UI: snapshot hydrate で問題が出た場合は SSE リアルタイム表示のみで暫定運用する

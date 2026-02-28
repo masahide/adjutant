@@ -6,7 +6,7 @@
 ## 1. 目的
 
 Adjutant は Slack Desktop の CDP イベントを収集し、`NormalizedEvent` 形式で JSONL に追記保存する。
-加えて `pnpm run assistant` では、プロアクティブ通知ルーティング・Heartbeat・エージェント実行・メモリ検索を同一プロセスで提供する。
+加えて `pnpm start`（control-plane 起動）では、プロアクティブ通知ルーティング・Heartbeat・エージェント実行・メモリ検索を提供する。
 主目的は「後段で再利用しやすいイベント基盤 + 運用可能な AI アシスタント基盤」の整備である。
 
 ### 1.1 基本原則
@@ -32,7 +32,7 @@ Adjutant は Slack Desktop の CDP イベントを収集し、`NormalizedEvent` 
 - JSONL 追記保存 (`JsonlWriter`)
 - Debug UI (SSE) (`DebugUiServer`)
 - Slack 名称キャッシュ (`SlackNameCacheRepository`)
-- Assistant UI 本体（`pnpm run assistant` / `src/ui/*`）
+- Assistant UI 本体（`src/ui/*`）
 - Assistant 用検索インデックス（SQLite + sqlite-vec, `<stateDir>/memory/<agentId>.sqlite`）
 - Proactive routing pipeline v1.5（rule triage / attention window / batch classifier / global concurrency queue）
 - Timeline v1.5 (`<stateDir>/timeline.jsonl`) と sessionKey 必須化
@@ -42,7 +42,7 @@ Adjutant は Slack Desktop の CDP イベントを収集し、`NormalizedEvent` 
 - bash ツールの Docker サンドボックス実行（`ADJUTANT_SANDBOX_MODE=non-main|all`）
 - 初回実行リチュアル（workspace bootstrap / BOOTSTRAP context 注入）
 - Pre-compaction memory flush + context compaction 連動制御
-- `memory_search` / `memory_get`（main セッション限定）
+- `memory_search` / `memory_get`（main セッション限定）と `memory_write`（`memoryWriteEnabled` run 限定）
 
 ### 2.2 現在実装済み（`src/`）
 
@@ -85,7 +85,9 @@ Adjutant は Slack Desktop の CDP イベントを収集し、`NormalizedEvent` 
 - SQLite は Assistant の memory search 用インデックスとして利用
 - Slack 収集イベントを SQLite に正本保存する方式は採用しない
 
-## 3. 実行アーキテクチャ
+## 3. 収集ランタイム実行アーキテクチャ（legacy/単体参照）
+
+本章は legacy の単体収集ランタイムを説明する参照仕様である。ACP 分離後の標準構成は 14 章を正とする。
 
 ```mermaid
 flowchart LR
@@ -101,7 +103,8 @@ flowchart LR
 
 ### 3.1 起動と再接続
 
-- エントリポイントは `src/index.ts`。
+- legacy 単体収集モードでは `src/index.ts` を起点に CDP 収集を開始する。
+- ACP 標準構成では `src/index.ts` は control-plane のエントリポイントとして利用し、収集は `collector-slack` 子プロセスへ分離する。
 - 起動時に既存 JSONL を走査し、破損末尾が見つかったファイルは当該オフセットまで truncate してから収集を開始する（`listJsonlFiles` → `recoverJsonlFiles`）。
 - `resolveEndpoint()` は以下優先順位で接続先を解決する。
   1. `CDP_ENDPOINT_FILE`（既定 `.adjutant/cdp-endpoint.json`）
@@ -346,8 +349,8 @@ flowchart LR
 
 ## 9. 実行コマンド
 
-- `pnpm start`: 収集プロセスを直接起動
-- `pnpm run assistant`: 統合起動（API + UI + proactive pipeline + heartbeat）
+- `pnpm start`: `src/index.ts`（control-plane エントリポイント）を起動（`web-ui` 同居、worker は supervisor が子プロセス起動。現状は bootstrap 出力）
+- `node --import tsx src/assistant/main.ts`: 開発/デバッグ用に assistant/worker を単体起動（通常運用では不要。現状は bootstrap 出力）
 - `pnpm run sandbox:build`: sandbox 用 Docker イメージをビルド
 - `pnpm dev`: `ensureSlackWithCdp` 実行後に `pnpm start`
 - `pnpm run serve`: `dist/backend/index.js` を起動（事前に `pnpm run build:backend`）
@@ -392,9 +395,10 @@ flowchart LR
 
 ## 13. Assistant / Proactive 実装仕様
 
-### 13.1 統合ランタイム
+### 13.1 ランタイム責務（legacy と ACP の対応）
 
-- `src/assistant/main.ts` が統合エントリポイントで、API / Vite UI / channel manager / heartbeat / pending flusher を起動する。
+- legacy 統合ランタイムでは `src/assistant/main.ts` が API / UI / channel manager / heartbeat / pending flusher を単一プロセスで起動する。
+- ACP 標準構成（14章優先）では `src/index.ts` が control-plane 統合エントリポイントとなり、`src/assistant/main.ts` は worker 専用 stdio エントリとして扱う。
 - 起動時に `<stateDir>/timeline.jsonl`、`<stateDir>/idempotency.jsonl`、`<stateDir>/agents/<agentId>/sessions/*.jsonl`、`DATA_DIR` 配下 JSONL を `recoverJsonlFiles` で復旧する。
 - proactive 経路は dual-write で `<stateDir>/timeline.jsonl` と `<stateDir>/agents/<agentId>/sessions/<sessionKey>.jsonl` の両方へ追記する。
 - `ADJUTANT_AGENT_AUDIT_LOG_ENABLED=1` の場合、`<stateDir>/audit/agent-audit.ndjson`（または `ADJUTANT_AGENT_AUDIT_LOG_PATH`）へ `run.start/run.end`・`tool.start/tool.end`・`file.read/file.write` を追記する。
@@ -473,9 +477,13 @@ flowchart LR
 - `context_overflow` は `session.compact()` を優先し、失敗時のみ prompt trim fallback を使う。
 - `sessions.json` には `compactionCount`, `memoryFlushAt`, `memoryFlushCompactionCount`, `contextTokens`, `contextWindowTokens` を保存する。
 
-### 13.6 SQLite Hybrid Memory Search（Local File First）
+### 13.6 SQLite Hybrid Memory Search / Memory Write（Local File First）
 
 - `memory_search` / `memory_get` は `memoryScope=main` のセッションでのみ custom tool として登録する。
+- `memory_write` は `memoryWriteEnabled=true` の run で custom tool として登録する。
+- `memoryWriteEnabled=false` の run では `memory_write` を登録せず、`memory_write` の tool event は監査対象から除外する。
+- `memory_write` の入力は `{ content: string; scope?: "daily" | "long-term" }`。
+- `scope=daily` は `memory/YYYY-MM-DD.md` へ追記し、`scope=long-term` は `MEMORY.md` を更新する。
 - source of truth はローカル Markdown（`MEMORY.md` と `memory/**/*.md`）。
 - index DB の既定値は `<stateDir>/memory/<agentId>.sqlite`。
 - 検索は FTS5(BM25) と sqlite-vec のハイブリッドスコアで返す。
@@ -488,7 +496,7 @@ flowchart LR
 - `ADJUTANT_SANDBOX_MODE=off`（既定）では従来どおりホスト実行。
 - `ADJUTANT_SANDBOX_MODE=non-main` では `memoryScope=main` 以外（spoke）の bash 実行のみをコンテナ化。
 - `ADJUTANT_SANDBOX_MODE=all` では heartbeat を除く全セッションの bash 実行をコンテナ化。
-- 起動時 (`src/assistant/main.ts`) は以下順で fail-safe 初期化する。
+- 起動時（ACP 標準: `src/index.ts`、legacy 統合: `src/assistant/main.ts`）は以下順で fail-safe 初期化する。
   1. Docker daemon 可用性確認（不可なら起動中断）
   2. sandbox image 存在確認（未存在時は `ADJUTANT_SANDBOX_AUTO_BUILD_IMAGE=true` なら自動 build）
   3. owner nonce 付きコンテナ確保（`{prefix}-{nonce}`）
@@ -511,18 +519,21 @@ flowchart LR
 
 ### 14.2 プロセス構成
 
-- `control-plane`: 親プロセス。API 提供、ジョブ制御、worker/collector/deliver の起動監視、capability gate、journal/cursor 管理
+- `control-plane`: 親プロセス。API 提供、ジョブ制御、worker/collector/deliver の起動監視、capability gate、journal/cursor 管理、`web-ui` の同居ホスティング
 - `agent-worker-acp`: 子プロセス。ACP サーバーとして `initialize/session/*` を処理し `session/update` を通知
 - `collector-slack`: 子プロセス。Slack 由来イベントを `collector/ingest` で control-plane へ送信
 - `deliver-slack`: 子プロセス。`deliver/enqueue` を受けて外部送信し `deliver/completed` を通知
-- `web-ui` / `cli`: control-plane API（HTTP/SSE）に接続するクライアント
+- `web-ui`: `control-plane` 同一プロセス内で配信される UI（HTTP/SSE 経由で API を利用）
+- `cli`: control-plane API（HTTP）に接続する外部クライアント
+- 開発時は Vite dev server を別プロセスで起動してもよいが、本番/標準起動は同居を正とする
 
 ### 14.3 プロセス接続連携図
 
 ```mermaid
 flowchart LR
   subgraph CPG[control-plane process]
-    CP[control-plane + API]
+    CP[control-plane API]
+    WEB[web ui co located]
   end
 
   subgraph COL[collector process]
@@ -537,7 +548,6 @@ flowchart LR
     D[deliver-slack]
   end
 
-  WEB[web-ui]
   CLI[cli-ui]
   CPJ[(state/journal/control-plane/inbox.jsonl)]
   DJ[(state/journal/deliver-slack/inbox.jsonl)]
@@ -552,7 +562,7 @@ flowchart LR
   CP <-- ACP over stdio --> AW
   C <-- Process RPC over stdio --> CP
   D <-- Process RPC over stdio --> CP
-  WEB <-- HTTP + SSE --> CP
+  WEB <-- inprocess HTTP SSE --> CP
   CLI <-- HTTP --> CP
 
   CP <--> CPJ
@@ -592,6 +602,7 @@ sequenceDiagram
 - ACP（control-plane <-> worker）
   - baseline: `initialize`, `session/new`, `session/prompt`, `session/cancel`, `session/update`
   - optional stable: `authenticate`, `session/load`, `session/set_mode`, `session/set_config_option`
+  - optional stable は実装任意（phase/プロセスごとに採否を決定）。未採用時は capability 不在として `UNSUPPORTED_CAPABILITY` を返却する。
   - optional unstable: `session/list`, `session/resume`, `session/fork`, `session/set_model`（feature flag 有効時のみ）
 - Process RPC（control-plane <-> collector/deliver）
   - request/response: `collector/ingest`, `deliver/enqueue`（同期 `accepted`）
@@ -624,4 +635,4 @@ sequenceDiagram
 
 - 単一ホスト実行のみ想定
 - at-least-once 配信（exactly-once ではない）
-- terminal gateway / FS capability / pre-compaction memory flush は s02 では非スコープ
+- terminal gateway / FS capability / pre-compaction memory flush は s02 では非スコープ（s04 で pre-compaction memory flush は実装対象へ昇格）

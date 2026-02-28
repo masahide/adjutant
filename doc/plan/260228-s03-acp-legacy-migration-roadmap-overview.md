@@ -22,6 +22,8 @@
 
 ## 4. 全体フェーズ
 
+全フェーズで共通参照するプロセス境界図は `doc/spec.md` 14.3 の [プロセス接続連携図](../spec.md#143-プロセス接続連携図) を正とする。
+
 ### Phase A: pi-coding-agent と WebUI 対話の成立（最優先）
 
 - 目的: まず Web UI から coding agent と対話できる状態を成立させる。
@@ -32,9 +34,10 @@
 
 - 目的: ツール実行と運用可観測性を先に回復する。
 - 範囲: memory read/write/search, markdown summary batch, agent audit, docker sandbox。
+- 注記: ここでの memory write は `memory_write` ツールと pre-compaction memory flush の双方を指す。
 - 範囲（agent-worker-acp）:
   - Pre-compaction memory flush + context compaction 連動
-  - `memory_search` / `memory_get` ツール実装（main セッション限定）
+  - `memory_search` / `memory_get` / `memory_write` ツール実装（main セッション系）
 - 範囲（control-plane）:
   - 初回実行リチュアル（workspace bootstrap / BOOTSTRAP context 注入）
 - 完了条件: WebUI 対話中に memory/sandbox 系ツールと監査参照が一連で検証できる。
@@ -118,4 +121,4 @@
 最初に Phase A の詳細プランを作る。
 
 - 対象: API 実体、UI エントリ、`pi-coding-agent` 接続、`accepted -> update -> completed` の E2E
-- 出力先候補: `doc/plan/260228-s03-phase-a-implementation-plan.md`
+- 出力先: `doc/plan/260228-s04-phase-a-b-pi-agent-webui-memory-sandbox.md`（Phase A/B を統合した詳細計画）

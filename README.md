@@ -49,7 +49,6 @@ pnpm start               # 収集プロセスを起動 (tsx src/index.ts)
 pnpm dev                 # CDP 利用可否を確認して pnpm start を起動
 pnpm run build:backend   # dist/backend/index.js をビルド
 pnpm run serve           # dist/backend/index.js を運用モード起動
-pnpm run assistant       # AI アシスタント起動（API :3100 + Web UI :5173）
 pnpm run sandbox:build   # sandbox 用 Docker イメージをビルド
 pnpm run typecheck
 pnpm run lint
@@ -108,7 +107,7 @@ pnpm check               # format -> typecheck -> test
 
 ```bash
 pnpm run sandbox:build
-ADJUTANT_SANDBOX_MODE=all pnpm run assistant
+ADJUTANT_SANDBOX_MODE=all pnpm start
 ```
 
 - `off`: ホスト実行（既定）

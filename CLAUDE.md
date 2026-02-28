@@ -14,7 +14,6 @@ pnpm start                  # 収集プロセス起動 (tsx src/index.ts)
 pnpm dev                    # CDP 利用可否確認後に起動
 pnpm run build:backend      # tsc コンパイル → dist/backend/
 pnpm run serve              # dist/backend/index.js を運用モード起動（要 build:backend）
-pnpm run assistant          # AI アシスタント起動（API + Web UI）
 pnpm run typecheck          # 型チェック
 pnpm run lint               # ESLint
 pnpm run lint:fix           # ESLint 自動修正
