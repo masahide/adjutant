@@ -538,31 +538,31 @@ sequenceDiagram
 
 ### Phase 3 Client capability 実装（Agent->Client 呼び出し境界）
 
-- [ ] ACP-201 `session/request_permission` を control-plane API/UI に接続  
+- [x] ACP-201 `session/request_permission` を control-plane API/UI に接続  
        成果物: `src/control-plane/acp/permission-gateway.ts`, `src/ui/*` 必要箇所更新
-- [ ] ACP-205 cancel 時に pending permission を `cancelled` outcome で解決する  
+- [x] ACP-205 cancel 時に pending permission を `cancelled` outcome で解決する  
        成果物: `src/control-plane/acp/permission-registry.ts`
-- [ ] ACP-206 ACPツール更新イベントを UI ストリームへ橋渡しし、`runId` 単位で集約表示できるようにする  
+- [x] ACP-206 ACPツール更新イベントを UI ストリームへ橋渡しし、`runId` 単位で集約表示できるようにする  
        補足: 受け入れ条件には追加せず、`tests/integration/acp-tool-event-stream.test.ts` で UI 橋渡し整合を担保する。  
        成果物: `src/control-plane/acp/tool-event-bridge.ts`, `src/ui/runtime.ts`, `src/ui/components/AuditDetailTab.tsx`
-- [ ] ACP-207 FS capability（`fs/read_text_file`, `fs/write_text_file`）は v1 非スコープとして feature flag 無効を維持  
+- [x] ACP-207 FS capability（`fs/read_text_file`, `fs/write_text_file`）は v1 非スコープとして feature flag 無効を維持  
        成果物: `src/control-plane/acp/capability-matrix.ts`, `doc/spec-vnext-draft.md`
 
 ### Phase 4 統合・互換・運用
 
-- [ ] ACP-301 unstable メソッド（`session/list` / `session/resume` / `session/fork` / `session/set_model`）を feature flag で隔離  
+- [x] ACP-301 unstable メソッド（`session/list` / `session/resume` / `session/fork` / `session/set_model`）を feature flag で隔離  
        成果物: `src/control-plane/acp/unstable.ts`, `tests/contract/acp/unstable-capability.test.ts`
-- [ ] ACP-302 `control-plane <-> worker` の stdio 接続統合テストを追加  
+- [x] ACP-302 `control-plane <-> worker` の stdio 接続統合テストを追加  
        成果物: `tests/integration/acp-transport.test.ts`
-- [ ] ACP-303 E2E（`collector/ingest -> accepted -> ACP実行 -> deliver/enqueue -> completed`）を追加  
+- [x] ACP-303 E2E（`collector/ingest -> accepted -> ACP実行 -> deliver/enqueue -> completed`）を追加  
        成果物: `tests/integration/slack-acp-e2e.test.ts`
-- [ ] ACP-304 異常系（timeout/crash/protocol error）と再起動復旧のテストを追加  
+- [x] ACP-304 異常系（timeout/crash/protocol error）と再起動復旧のテストを追加  
        成果物: `tests/integration/acp-recovery.test.ts`
-- [ ] ACP-306 `tool_call` / `tool_call_update` の順序・欠落・重複時の復元ロジック統合テストを追加  
+- [x] ACP-306 `tool_call` / `tool_call_update` の順序・欠落・重複時の復元ロジック統合テストを追加  
        成果物: `tests/integration/acp-tool-event-stream.test.ts`
-- [ ] ACP-308 `deliver/completed` の重複/順序揺れを許容する冪等更新テストを追加  
+- [x] ACP-308 `deliver/completed` の重複/順序揺れを許容する冪等更新テストを追加  
        成果物: `tests/integration/acp-deliver-completion-idempotency.test.ts`
-- [ ] ACP-305 ドキュメント更新（実装プロファイル、サポートメソッド、非対応メソッド）  
+- [x] ACP-305 ドキュメント更新（実装プロファイル、サポートメソッド、非対応メソッド）  
        成果物: `doc/spec-vnext-draft.md`, `README.md`
 - [x] OPS-401 最終品質ゲートとして `pnpm check` を実行し通過させる  
        成果物: `pnpm check` 実行ログ（format/typecheck/test 全通過）
@@ -571,16 +571,16 @@ sequenceDiagram
 
 ### 8.1 機能DoD Functional DoD
 
-- [ ] 受け入れ条件がすべて満たされていること
-- [ ] 既知の制約が明文化され、想定通りであること
-- [ ] 契約の例に対して期待通りの結果が得られること
+- [x] 受け入れ条件がすべて満たされていること
+- [x] 既知の制約が明文化され、想定通りであること
+- [x] 契約の例に対して期待通りの結果が得られること
 
 ### 8.2 品質DoD Quality DoD
 
-- [ ] 全てのテストがパスしていること
-- [ ] Linter Formatterのエラーがないこと
-- [ ] 不要なデバッグコードが削除されていること
-- [ ] 主要な変更点がドキュメントに反映されていること
+- [x] 全てのテストがパスしていること
+- [x] Linter Formatterのエラーがないこと
+- [x] 不要なデバッグコードが削除されていること
+- [x] 主要な変更点がドキュメントに反映されていること
 
 ## 9. 懸念事項と未確定事項 Concerns and Questions
 

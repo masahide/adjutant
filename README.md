@@ -180,3 +180,17 @@ ADJUTANT_DISABLE_DOM_CAPTURE=1 pnpm start
 - リアクション本文取得は DOM キャプチャ依存です。対象メッセージが画面上にない場合、本文を補完できないことがあります。
 - DOM キャプチャは `/api/reactions.*` の POST を起点に動作し、他ユーザー由来の WebSocket 通知だけでは発火しません。
 - デバッグログには機密情報が含まれる可能性があるため、共有前に必ずマスクしてください。
+
+## ACP 実装プロファイル（s02）
+
+現時点の `agent-worker-acp` は最小プロファイルで動作します。
+
+- stable 対応: `initialize`, `authenticate`, `session/new`, `session/load`（capability有効時）, `session/prompt`, `session/cancel`, `session/update`
+- unstable: `session/list`, `session/resume`, `session/fork`, `session/set_model`（feature flag で隔離、既定無効）
+- v1 非スコープ: FS capability（`fs/read_text_file`, `fs/write_text_file`）と terminal gateway 一式
+
+stdio 起動例:
+
+```bash
+node --import tsx src/agent-worker-acp/stdio-server.ts
+```

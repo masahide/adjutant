@@ -278,3 +278,50 @@ core（assistant-gateway）は共通契約だけを扱い、source/sink 固有�
 3. `runId`: 1セッション内の実行単位キー。`session:${sessionId}:run:${n}`
 
 この規約により、`session/load` 再開時に `sessionKey` を固定しつつ、`session/prompt` ごとの実行を `runId` で追跡できる。
+
+## 16. ACP capability gate 方針（s02追記）
+
+### 16.1 FS capability（v1 非スコープ）
+
+- `fs/read_text_file` / `fs/write_text_file` は v1 では無効固定とする。
+- `capability-matrix` では `enableFsCapability=true` が指定されても有効化しない。
+- 将来計画で扱う場合は、この固定値を解除する専用タスクで有効化する。
+
+### 16.2 unstable method 隔離
+
+- `session/list` / `session/resume` / `session/fork` / `session/set_model` は unstable として隔離する。
+- 既定では呼び出し不可とし、`enableUnstableSessionMethods=true` のときのみ許可する。
+- ゲートで拒否した場合のエラーは `UNSUPPORTED_CAPABILITY` を返す。
+
+## 17. ACP 実装プロファイル（s02時点）
+
+### 17.1 サポート済み（stable）
+
+- `initialize`
+- `authenticate`（no-auth 返却）
+- `session/new`
+- `session/load`（`loadSession` capability が有効時のみ）
+- `session/prompt`
+- `session/cancel`（notification）
+- `session/update`（notification）
+
+### 17.2 feature flag で隔離（unstable）
+
+- `session/list`
+- `session/resume`
+- `session/fork`
+- `session/set_model`
+
+既定では無効。`enableUnstableSessionMethods=true` のときのみ許可する。
+
+### 17.3 v1 非対応
+
+- `fs/read_text_file`
+- `fs/write_text_file`
+- `terminal/create`
+- `terminal/output`
+- `terminal/wait_for_exit`
+- `terminal/kill`
+- `terminal/release`
+
+これらは v1 非スコープとして capability を advertise しない。

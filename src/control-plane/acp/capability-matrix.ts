@@ -20,6 +20,9 @@ export interface CapabilityMatrix {
   enabledClientMethods: ReadonlySet<AcpClientMethod>;
 }
 
+// ACP-207: FS capability stays disabled in v1 even if experimental flags are provided.
+export const ACP_V1_FS_CAPABILITY_ENABLED = false;
+
 const BASE_CLIENT_METHODS: AcpClientMethod[] = [
   ACP_CLIENT_METHODS.SESSION_UPDATE,
   ACP_CLIENT_METHODS.SESSION_REQUEST_PERMISSION,
@@ -47,7 +50,7 @@ export function buildCapabilityMatrix(flags: CapabilityFlags = {}): CapabilityMa
   }
 
   const client = new Set<AcpClientMethod>(BASE_CLIENT_METHODS);
-  if (flags.enableFsCapability === true) {
+  if (flags.enableFsCapability === true && ACP_V1_FS_CAPABILITY_ENABLED) {
     FS_CLIENT_METHODS.forEach((method) => client.add(method));
   }
   if (flags.enableTerminalGateway === true) {
