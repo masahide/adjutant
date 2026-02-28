@@ -1,6 +1,7 @@
-# Adjutant 仕様書 v0.3
+# Adjutant 仕様書 v0.4
 
 この文書は、`src/` の現行実装に対応した統合仕様書である（旧 `doc/spec-unified.md` を統合）。
+なお、ACP 分離アーキテクチャに関する最新の全体仕様は本書 14 章を優先する。
 
 ## 1. 目的
 
@@ -19,7 +20,7 @@ Adjutant は Slack Desktop の CDP イベントを収集し、`NormalizedEvent` 
 
 ## 2. 実装スコープ
 
-### 2.1 実装済み
+### 2.1 レガシー実装済み
 
 - Slack CDP 接続 (`connectToSlackPage`)
 - Slack 収集アダプタ (`SlackAdapter`)
@@ -37,12 +38,34 @@ Adjutant は Slack Desktop の CDP イベントを収集し、`NormalizedEvent` 
 - Timeline v1.5 (`<stateDir>/timeline.jsonl`) と sessionKey 必須化
 - Pending Flusher + Watermark store (`<stateDir>/watermarks.json`)
 - Agent 終端レコード（`assistant_final` / `assistant_aborted` / `assistant_error`）
+- ラン終端状態の内部確定（終端レコードを復旧・冪等吸収・後段制御の基準として利用）
 - bash ツールの Docker サンドボックス実行（`ADJUTANT_SANDBOX_MODE=non-main|all`）
 - 初回実行リチュアル（workspace bootstrap / BOOTSTRAP context 注入）
 - Pre-compaction memory flush + context compaction 連動制御
 - `memory_search` / `memory_get`（main セッション限定）
 
-### 2.2 未実装
+### 2.2 現在実装済み（`src/`）
+
+- ACP / Process RPC のメソッド定義と型・バリデータ（`src/contracts/*`）
+- ACP vendor schema meta の読み込みと envelope 検証（`schema-version.ts`, `schema-validator.ts`）
+- agent-worker ACP stdio サーバー（`initialize`, `authenticate`, `session/new`, `session/prompt`, `session/cancel`, `session/load`）
+- `session/load` の capability gate（`ACP_ENABLE_LOAD_SESSION=1` のときのみ有効）
+- Worker のインメモリ session store（`WorkerSessionStore`）
+- sessionId/sessionKey/runId のレジストリ管理（`SessionRegistry`, `SessionBridge`）
+- `runAgent` 呼び出しを `session/update` 通知へ中継する adapter（`AgentRunnerAdapter`）
+- tool call イベントの ACP 形式マッピング（`tool_call` / `tool_call_update`）
+- stopReason の ACP 正規化（`normalizeStopReason`）
+- worker supervisor（子プロセス spawn、JSON-RPC request/timeout、クラッシュ時再起動）
+- ACP capability matrix（unstable gate / FS capability v1 無効固定）
+- permission request/resolve/cancel の registry + gateway
+- run 単位の tool event bridge（重複判定付き）
+- `deliver/completed` の冪等最終状態ストア（completed 優先）
+- JSONL journal append/drain、cursor load/commit、journal compaction
+- UI runtime の pending permission 管理と tool event 参照
+- AuditDetailTab 向け view model 生成（ツールイベント表示用）
+- Assistant runner は現状スタブ実装（入力 prompt をそのまま返す）
+
+### 2.3 未実装
 
 - GitHub / git-local の収集
 - `POLICY_ROUTING.json` の実ルーティング適用（将来実装: priority/quiet-hours/cooldown の反映）
@@ -51,8 +74,10 @@ Adjutant は Slack Desktop の CDP イベントを収集し、`NormalizedEvent` 
 - session transcript の `memory_search` 索引統合
 - Heartbeat 誤通知削減のための専用重要イベント分類器
 - マルチチャネル本番接続（Slack 以外）
+- `src/index.ts` の control-plane 統合起動（現状は bootstrap 出力のみ）
+- `src/assistant/main.ts` の assistant 実運用起動（現状は bootstrap 出力のみ）
 
-### 2.3 保存基盤（部分実装）
+### 2.4 保存基盤（部分実装）
 
 - 永続データの正本はファイル保存
 - イベント/メッセージデータは JSONL を正本として保存
@@ -471,3 +496,132 @@ flowchart LR
 - コンテナ生成時は `adjutant.sandbox.owner=<nonce>` を付与し、shutdown 時は owner 一致時のみ `docker rm -f` を実行する（他プロセスのコンテナは破壊しない）。
 - bash 実行は `docker exec -i -w <mappedCwd> <container> bash -lc "<command>"` を使用し、ホスト workspace は bind mount で共有する。
 - sandbox イメージには `bash` / `git` / `curl` / `jq` / `rg`（ripgrep）を同梱する。
+
+## 14. ACP 分離アーキテクチャ（s02 基準）
+
+この章は旧 s02 計画の全体像を `spec.md` 向けに統合したものである。  
+本章と他章に差分がある場合は、本章を優先する。
+
+### 14.1 目的と方針
+
+- AI 実行部を `agent-worker-acp` として分離し、`control-plane` と ACP（JSON-RPC over stdio）で接続する。
+- `collector` / `deliver` は Process RPC（JSON-RPC over stdio）で `control-plane` と接続する。
+- 各プロセスは受信メッセージを処理前に inbound journal（JSONL）へ追記し、同期 `accepted` と非同期 `completed|failed` を分離する。
+- v1 は単一ホスト前提、at-least-once 前提、重複は dedupe と冪等更新で吸収する。
+
+### 14.2 プロセス構成
+
+- `control-plane`: 親プロセス。API 提供、ジョブ制御、worker/collector/deliver の起動監視、capability gate、journal/cursor 管理
+- `agent-worker-acp`: 子プロセス。ACP サーバーとして `initialize/session/*` を処理し `session/update` を通知
+- `collector-slack`: 子プロセス。Slack 由来イベントを `collector/ingest` で control-plane へ送信
+- `deliver-slack`: 子プロセス。`deliver/enqueue` を受けて外部送信し `deliver/completed` を通知
+- `web-ui` / `cli`: control-plane API（HTTP/SSE）に接続するクライアント
+
+### 14.3 プロセス接続連携図
+
+```mermaid
+flowchart LR
+  subgraph CPG[control-plane process]
+    CP[control-plane + API]
+  end
+
+  subgraph COL[collector process]
+    C[collector-slack]
+  end
+
+  subgraph WRK[worker process]
+    AW[agent-worker-acp]
+  end
+
+  subgraph DLV[deliver process]
+    D[deliver-slack]
+  end
+
+  WEB[web-ui]
+  CLI[cli-ui]
+  CPJ[(state/journal/control-plane/inbox.jsonl)]
+  DJ[(state/journal/deliver-slack/inbox.jsonl)]
+  CPCUR[(state/cursor/control-plane.inbox.json)]
+  DCUR[(state/cursor/deliver-slack.inbox.json)]
+  SVC[Slack / External APIs]
+
+  CP -->|spawn/monitor/signal| C
+  CP -->|spawn/monitor/signal| AW
+  CP -->|spawn/monitor/signal| D
+
+  CP <-- ACP over stdio --> AW
+  C <-- Process RPC over stdio --> CP
+  D <-- Process RPC over stdio --> CP
+  WEB <-- HTTP + SSE --> CP
+  CLI <-- HTTP --> CP
+
+  CP <--> CPJ
+  D <--> DJ
+  CP <--> CPCUR
+  D <--> DCUR
+
+  C -->|ingest| SVC
+  D -->|post| SVC
+```
+
+### 14.4 代表シーケンス（accepted/completed 分離）
+
+```mermaid
+sequenceDiagram
+  participant C as collector-slack
+  participant CP as control-plane
+  participant AW as agent-worker(ACP)
+  participant D as deliver-slack
+  participant J1 as cp journal
+  participant J2 as deliver journal
+
+  C->>CP: collector/ingest(event)
+  CP->>J1: append inbound
+  CP-->>C: accepted(messageId)
+  CP->>AW: initialize/session.new/session.prompt
+  AW-->>CP: session/update stream
+  CP->>D: deliver/enqueue(command)
+  D->>J2: append inbound
+  D-->>CP: accepted(messageId)
+  D->>Slack: send message
+  D-->>CP: deliver/completed(messageId)
+```
+
+### 14.5 境界契約
+
+- ACP（control-plane <-> worker）
+  - baseline: `initialize`, `session/new`, `session/prompt`, `session/cancel`, `session/update`
+  - optional stable: `authenticate`, `session/load`, `session/set_mode`, `session/set_config_option`
+  - optional unstable: `session/list`, `session/resume`, `session/fork`, `session/set_model`（feature flag 有効時のみ）
+- Process RPC（control-plane <-> collector/deliver）
+  - request/response: `collector/ingest`, `deliver/enqueue`（同期 `accepted`）
+  - notification: `deliver/completed`（非同期、at-least-once）
+- HTTP API（control-plane）
+  - `POST /api/commands`
+  - `GET /api/snapshot`
+  - `GET /api/events/stream`
+
+### 14.6 Journal / Cursor / 冪等規約
+
+- 各プロセスは自プロセス所有 inbox の cursor のみ commit する。
+- cursor commit は `completed|failed` など最終状態確定後に行い、`accepted` 時点では進めない。
+- `deliver/completed` の冪等更新は `messageId` を主キーとする。
+- `completed` と `failed` が競合した場合、`completed` を最終状態として優先する。
+
+### 14.7 Capability Gate 方針
+
+- unstable method は既定無効、`enableUnstableSessionMethods=true` のときのみ許可する。
+- FS capability（`fs/read_text_file`, `fs/write_text_file`）は v1 非スコープとして無効固定とする。
+- capability 不在時は呼び出しを行わず `UNSUPPORTED_CAPABILITY` を返却する。
+
+### 14.8 エラー分類と回復
+
+- 代表エラー: `UNSUPPORTED_CAPABILITY`, `ACP_PROTOCOL_ERROR`, `JOURNAL_APPEND_FAILED`, `WORKER_TIMEOUT`, `WORKER_CRASHED`, `DOWNSTREAM_ERROR`, `INVALID_RECORD`
+- worker 異常終了時は supervisor が再起動を試行し、構造化ログへ理由を記録する。
+- process 再起動時は journal + cursor から未処理のみ再開する。
+
+### 14.9 v1 制約
+
+- 単一ホスト実行のみ想定
+- at-least-once 配信（exactly-once ではない）
+- terminal gateway / FS capability / pre-compaction memory flush は s02 では非スコープ
