@@ -195,19 +195,23 @@ ToolHub は in-process のハブを維持し、個別ツールは外部コマン
 Input:
 
 ```json
-{"id":"call_123","tool":"memory_search","args":{"query":"..."}}
+{ "id": "call_123", "tool": "memory_search", "args": { "query": "..." } }
 ```
 
 Output:
 
 ```json
-{"id":"call_123","ok":true,"result":{"items":[]}}
+{ "id": "call_123", "ok": true, "result": { "items": [] } }
 ```
 
 Error:
 
 ```json
-{"id":"call_123","ok":false,"error":{"code":"TIMEOUT","message":"...","retryable":true}}
+{
+  "id": "call_123",
+  "ok": false,
+  "error": { "code": "TIMEOUT", "message": "...", "retryable": true }
+}
 ```
 
 ## 9. UI 境界

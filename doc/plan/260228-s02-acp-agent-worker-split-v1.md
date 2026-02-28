@@ -20,10 +20,10 @@
 - Why  
   現状の統合実装では責務が集中し、差し替え性、障害分離、将来の複数エージェント並列運用に制約がある。ACP境界を導入することで、`agent-worker` を交換可能にしつつ、制御責務を `control-plane` に集約できる。
 - How  
-  `control-plane` を親プロセスとして `collector`/`agent-worker`/`deliver` を子プロセス起動し、以下で接続する。  
-  1. `control-plane <-> agent-worker`: ACP over stdio（JSON-RPC）  
-  2. `control-plane <-> collector/deliver`: stdio JSON-RPC（受信側でJSONL永続化して `accepted` 応答）  
-  3. `control-plane <-> child`: OSプロセス管理（spawn/exit/signal）  
+  `control-plane` を親プロセスとして `collector`/`agent-worker`/`deliver` を子プロセス起動し、以下で接続する。
+  1. `control-plane <-> agent-worker`: ACP over stdio（JSON-RPC）
+  2. `control-plane <-> collector/deliver`: stdio JSON-RPC（受信側でJSONL永続化して `accepted` 応答）
+  3. `control-plane <-> child`: OSプロセス管理（spawn/exit/signal）
   4. 各プロセスは受信メッセージを処理前に `inbound journal(JSONL)` へ追記し、処理結果は非同期 `completed/failed` 通知で返す
   5. 本計画は `journal/cursor/compaction` 基盤を **s02内で自己完結実装** し、s01 別計画を前提にしない
   6. `doc/spec-vnext-draft.md` との関係は、s02の実装契約を優先（必要箇所は s02完了時に spec を更新して整合させる）
@@ -252,8 +252,21 @@ pnpm run start
 ```json
 {
   "request": { "method": "deliver/enqueue", "params": { "messageId": "msg_01", "payload": {} } },
-  "response": { "result": { "messageId": "msg_01", "status": "accepted", "acceptedAt": "2026-02-28T12:00:00.000Z" } },
-  "async_event": { "method": "deliver/completed", "params": { "messageId": "msg_01", "status": "completed", "finishedAt": "2026-02-28T12:00:02.000Z" } }
+  "response": {
+    "result": {
+      "messageId": "msg_01",
+      "status": "accepted",
+      "acceptedAt": "2026-02-28T12:00:00.000Z"
+    }
+  },
+  "async_event": {
+    "method": "deliver/completed",
+    "params": {
+      "messageId": "msg_01",
+      "status": "completed",
+      "finishedAt": "2026-02-28T12:00:02.000Z"
+    }
+  }
 }
 ```
 
@@ -284,7 +297,9 @@ pnpm run start
         "toolCallId": "call_001",
         "status": "completed",
         "rawOutput": { "exitCode": 0 },
-        "content": [{ "type": "content", "content": { "type": "text", "text": "all tests passed" } }]
+        "content": [
+          { "type": "content", "content": { "type": "text", "text": "all tests passed" } }
+        ]
       }
     }
   }
@@ -479,76 +494,76 @@ sequenceDiagram
 ### Phase 1 基盤契約固定（journal + Process RPC + ACP）
 
 - [ ] JRN-001 `JournalStore.append` / `JournalStore.drain` を実装（追記専用JSONL + cursor読み）  
-  成果物: `src/runtime/journal-store.ts`, `tests/unit/journal-store.test.ts`
+       成果物: `src/runtime/journal-store.ts`, `tests/unit/journal-store.test.ts`
 - [ ] JRN-002 `CursorStore.commit` を原子的更新で実装（temp file -> rename）  
-  成果物: `src/runtime/cursor-store.ts`, `tests/unit/cursor-store.test.ts`
+       成果物: `src/runtime/cursor-store.ts`, `tests/unit/cursor-store.test.ts`
 - [ ] JRN-003 `JournalCompactor.compact` を実装（所有プロセスcursor到達済みセグメントのみ対象）  
-  成果物: `src/runtime/journal-compactor.ts`, `tests/integration/journal-compaction.test.ts`
+       成果物: `src/runtime/journal-compactor.ts`, `tests/integration/journal-compaction.test.ts`
 - [ ] PRC-001 Process RPC（`collector/ingest`, `deliver/enqueue`, `deliver/completed`）の型を定義  
-  成果物: `src/contracts/process-rpc/rpc-types.ts`, `src/contracts/process-rpc/method-types.ts`
+       成果物: `src/contracts/process-rpc/rpc-types.ts`, `src/contracts/process-rpc/method-types.ts`
 - [ ] PRC-002 Process RPC の契約バリデータを追加  
-  成果物: `tests/contract/process-rpc/process-rpc-validation.test.ts`
+       成果物: `tests/contract/process-rpc/process-rpc-validation.test.ts`
 
 - [ ] ACP-001 `schema.json` の対象バージョンを固定し、実装側に参照点を作成  
-  成果物: `src/contracts/acp/schema-version.ts`, `tests/contract/acp/schema-version.test.ts`
+       成果物: `src/contracts/acp/schema-version.ts`, `tests/contract/acp/schema-version.test.ts`
 - [ ] ACP-002 JSON-RPC envelope と ACP メソッド型を定義  
-  成果物: `src/contracts/acp/rpc-types.ts`, `src/contracts/acp/method-types.ts`
+       成果物: `src/contracts/acp/rpc-types.ts`, `src/contracts/acp/method-types.ts`
 - [ ] ACP-003 stable/unstable capability マトリクスを定義（feature flag込み）  
-  成果物: `src/control-plane/acp/capability-matrix.ts`
+       成果物: `src/control-plane/acp/capability-matrix.ts`
 - [ ] ACP-004 `sessionId <-> sessionKey <-> runId` の対応規約を定義  
-  成果物: `src/control-plane/acp/session-registry.ts`, `doc/spec-vnext-draft.md` 更新
+       成果物: `src/control-plane/acp/session-registry.ts`, `doc/spec-vnext-draft.md` 更新
 - [ ] ACP-005 vendor schema による contract validator を追加  
-  成果物: `tests/contract/acp/schema-validation.test.ts`
+       成果物: `tests/contract/acp/schema-validation.test.ts`
 
 ### Phase 2 Agent 側ACP実装（現行 agent-runner の適合）
 
 - [ ] ACP-101 `initialize` を実装（version negotiation と capability 返却）  
-  成果物: `src/agent-worker-acp/handlers/initialize.ts`
+       成果物: `src/agent-worker-acp/handlers/initialize.ts`
 - [ ] ACP-102 `authenticate` を実装（v1は no-auth 返却、将来拡張点を残す）  
-  成果物: `src/agent-worker-acp/handlers/authenticate.ts`
+       成果物: `src/agent-worker-acp/handlers/authenticate.ts`
 - [ ] ACP-103 `session/new` / `session/load` を実装（`loadSession` capability gate）  
-  成果物: `src/agent-worker-acp/handlers/session-new.ts`, `src/agent-worker-acp/handlers/session-load.ts`
+       成果物: `src/agent-worker-acp/handlers/session-new.ts`, `src/agent-worker-acp/handlers/session-load.ts`
 - [ ] ACP-104 `session/prompt` を現行 `src/assistant/agent-runner.ts` に接続する adapter を実装  
-  実装詳細: `AgentRunOptions.callbacks`（`onTextDelta`, `onToolCall`, `onTerminalRecord`）を ACP `session/update` に変換し、`SessionManager` の既存 session を ACP `sessionId` と `session-registry` で対応付ける。`onTerminalRecord` は terminal gateway 実装を意味せず、既存 runner が生成した terminal レコードの受信/表示イベント変換のみを対象とする。  
-  成果物: `src/agent-worker-acp/adapters/agent-runner-adapter.ts`, `src/agent-worker-acp/adapters/session-bridge.ts`
+       実装詳細: `AgentRunOptions.callbacks`（`onTextDelta`, `onToolCall`, `onTerminalRecord`）を ACP `session/update` に変換し、`SessionManager` の既存 session を ACP `sessionId` と `session-registry` で対応付ける。`onTerminalRecord` は terminal gateway 実装を意味せず、既存 runner が生成した terminal レコードの受信/表示イベント変換のみを対象とする。  
+       成果物: `src/agent-worker-acp/adapters/agent-runner-adapter.ts`, `src/agent-worker-acp/adapters/session-bridge.ts`
 - [ ] ACP-105 `session/cancel` notification で run abort を反映  
-  成果物: `src/agent-worker-acp/handlers/session-cancel.ts`
+       成果物: `src/agent-worker-acp/handlers/session-cancel.ts`
 - [ ] ACP-106 `session/update` projector を実装（`agent_message_chunk` / `tool_call` / `tool_call_update` / `plan` / `current_mode_update`）  
-  成果物: `src/agent-worker-acp/session-update-projector.ts`
+       成果物: `src/agent-worker-acp/session-update-projector.ts`
 - [ ] ACP-107 `session/prompt` response の `stopReason` 正規化を実装（`end_turn` / `cancelled` / `max_tokens` / `max_turn_requests` / `refusal`）  
-  成果物: `src/agent-worker-acp/stop-reason.ts`
+       成果物: `src/agent-worker-acp/stop-reason.ts`
 - [ ] ACP-108 現行 `tool_execution_start/end` を ACP `tool_call` / `tool_call_update` に正規化する mapper を実装  
-  補足: 番号順に合わせて ACP-107 の後に実装する。  
-  成果物: `src/agent-worker-acp/tool-call-mapper.ts`
+       補足: 番号順に合わせて ACP-107 の後に実装する。  
+       成果物: `src/agent-worker-acp/tool-call-mapper.ts`
 
 ### Phase 3 Client capability 実装（Agent->Client 呼び出し境界）
 
 - [ ] ACP-201 `session/request_permission` を control-plane API/UI に接続  
-  成果物: `src/control-plane/acp/permission-gateway.ts`, `src/ui/*` 必要箇所更新
+       成果物: `src/control-plane/acp/permission-gateway.ts`, `src/ui/*` 必要箇所更新
 - [ ] ACP-205 cancel 時に pending permission を `cancelled` outcome で解決する  
-  成果物: `src/control-plane/acp/permission-registry.ts`
+       成果物: `src/control-plane/acp/permission-registry.ts`
 - [ ] ACP-206 ACPツール更新イベントを UI ストリームへ橋渡しし、`runId` 単位で集約表示できるようにする  
-  補足: 受け入れ条件には追加せず、`tests/integration/acp-tool-event-stream.test.ts` で UI 橋渡し整合を担保する。  
-  成果物: `src/control-plane/acp/tool-event-bridge.ts`, `src/ui/runtime.ts`, `src/ui/components/AuditDetailTab.tsx`
+       補足: 受け入れ条件には追加せず、`tests/integration/acp-tool-event-stream.test.ts` で UI 橋渡し整合を担保する。  
+       成果物: `src/control-plane/acp/tool-event-bridge.ts`, `src/ui/runtime.ts`, `src/ui/components/AuditDetailTab.tsx`
 - [ ] ACP-207 FS capability（`fs/read_text_file`, `fs/write_text_file`）は v1 非スコープとして feature flag 無効を維持  
-  成果物: `src/control-plane/acp/capability-matrix.ts`, `doc/spec-vnext-draft.md`
+       成果物: `src/control-plane/acp/capability-matrix.ts`, `doc/spec-vnext-draft.md`
 
 ### Phase 4 統合・互換・運用
 
 - [ ] ACP-301 unstable メソッド（`session/list` / `session/resume` / `session/fork` / `session/set_model`）を feature flag で隔離  
-  成果物: `src/control-plane/acp/unstable.ts`, `tests/contract/acp/unstable-capability.test.ts`
+       成果物: `src/control-plane/acp/unstable.ts`, `tests/contract/acp/unstable-capability.test.ts`
 - [ ] ACP-302 `control-plane <-> worker` の stdio 接続統合テストを追加  
-  成果物: `tests/integration/acp-transport.test.ts`
+       成果物: `tests/integration/acp-transport.test.ts`
 - [ ] ACP-303 E2E（`collector/ingest -> accepted -> ACP実行 -> deliver/enqueue -> completed`）を追加  
-  成果物: `tests/integration/slack-acp-e2e.test.ts`
+       成果物: `tests/integration/slack-acp-e2e.test.ts`
 - [ ] ACP-304 異常系（timeout/crash/protocol error）と再起動復旧のテストを追加  
-  成果物: `tests/integration/acp-recovery.test.ts`
+       成果物: `tests/integration/acp-recovery.test.ts`
 - [ ] ACP-306 `tool_call` / `tool_call_update` の順序・欠落・重複時の復元ロジック統合テストを追加  
-  成果物: `tests/integration/acp-tool-event-stream.test.ts`
+       成果物: `tests/integration/acp-tool-event-stream.test.ts`
 - [ ] ACP-308 `deliver/completed` の重複/順序揺れを許容する冪等更新テストを追加  
-  成果物: `tests/integration/acp-deliver-completion-idempotency.test.ts`
+       成果物: `tests/integration/acp-deliver-completion-idempotency.test.ts`
 - [ ] ACP-305 ドキュメント更新（実装プロファイル、サポートメソッド、非対応メソッド）  
-  成果物: `doc/spec-vnext-draft.md`, `README.md`
+       成果物: `doc/spec-vnext-draft.md`, `README.md`
 
 ## 8. 完了の定義 Definition of Done
 

@@ -245,7 +245,12 @@ adjutant-supervisor \
 - 例4: notify payload
 
 ```json
-{ "type": "queue_appended", "queue": "outbox", "segment": "20260228T012500Z-0001.open.jsonl", "hintOffset": 2048 }
+{
+  "type": "queue_appended",
+  "queue": "outbox",
+  "segment": "20260228T012500Z-0001.open.jsonl",
+  "hintOffset": 2048
+}
 ```
 
 ## 5. アーキテクチャと設計図 Architecture and Diagrams
