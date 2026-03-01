@@ -5,6 +5,7 @@ on:
     branches:
       - main
   pull_request:
+  workflow_dispatch:
 
 jobs:
   qa:
@@ -21,4 +22,24 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Run QA suite
-        run: pnpm run qa
+        run: pnpm run check
+
+  live-agent:
+    runs-on: ubuntu-latest
+    needs: qa
+    if: ${{ secrets.OPENAI_API_KEY != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Run live agent tests
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: pnpm run test:live-agent

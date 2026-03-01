@@ -118,7 +118,7 @@
 
 ## 8. 次アクション
 
-最初に Phase A の詳細プランを作る。
+Phase A/B は完了済みのため、次は Phase C（collector-slack 本移植）を実装する。
 
-- 対象: API 実体、UI エントリ、`pi-coding-agent` 接続、`accepted -> update -> completed` の E2E
-- 出力先: `doc/plan/260228-s04-phase-a-b-pi-agent-webui-memory-sandbox.md`（Phase A/B を統合した詳細計画）
+- 対象: Slack CDP 接続、SlackAdapter、DOM capture、名称キャッシュ、JSONL 保存、`collector/ingest` 連携
+- 出力先: `doc/plan/260301-s01-phase-c-collector-slack-migration.md`

@@ -92,3 +92,45 @@ test("AgentRunnerAdapter.cancelSession aborts active run", async () => {
   assert.equal(observedAbort, true);
   assert.equal(result.stopReason, "cancelled");
 });
+
+test("AgentRunnerAdapter.prompt propagates session meta to runAgent options", async () => {
+  let observed: {
+    sessionKey: string;
+    memoryScope?: "main" | "spoke";
+    memoryWriteEnabled?: boolean;
+  } | null = null;
+
+  const runAgentMock: AgentRunner = async (options) => {
+    observed = {
+      sessionKey: options.sessionKey,
+      memoryScope: options.memoryScope,
+      memoryWriteEnabled: options.memoryWriteEnabled,
+    };
+    return {
+      runId: options.runId,
+      text: "ok",
+      stopReason: "end_turn",
+    };
+  };
+
+  const adapter = new AgentRunnerAdapter({
+    runAgent: runAgentMock,
+    emitNotification: () => {},
+  });
+
+  await adapter.prompt({
+    sessionId: "sess_meta",
+    prompt: "hello",
+    meta: {
+      sessionKey: "main",
+      memoryScope: "main",
+      memoryWriteEnabled: true,
+    },
+  });
+
+  assert.deepEqual(observed, {
+    sessionKey: "main",
+    memoryScope: "main",
+    memoryWriteEnabled: true,
+  });
+});

@@ -50,3 +50,27 @@ test("worker supervisor handles protocol error, timeout, crash restart recovery"
     true
   );
 });
+
+test("worker supervisor rejects in-flight request immediately when child exits", async (t) => {
+  const supervisor = new WorkerSupervisor({
+    command: process.execPath,
+    args: ["-e", "setInterval(() => {}, 10_000)"],
+    cwd: process.cwd(),
+    maxRestarts: 0,
+  });
+
+  await supervisor.start();
+  t.after(async () => {
+    await supervisor.stop();
+  });
+
+  const startedAt = Date.now();
+  const pending = supervisor.request("initialize", { protocolVersion: 1 }, { timeoutMs: 5000 });
+  supervisor.killChildForTest();
+
+  await assert.rejects(async () => {
+    await pending;
+  }, /WORKER_CRASHED|WORKER_IO_ERROR/);
+
+  assert.equal(Date.now() - startedAt < 3000, true);
+});

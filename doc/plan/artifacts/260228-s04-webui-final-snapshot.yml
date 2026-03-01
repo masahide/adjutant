@@ -1,0 +1,7 @@
+- generic [ref=e1]:
+    - heading "Adjutant Web UI (co-located)" [level=1] [ref=e2]
+    - generic [ref=e3]:
+        - textbox [ref=e4]: main
+        - textbox "message" [ref=e5]: playwright reload
+        - button "Send" [active] [ref=e6]
+    - generic [ref=e7]: '[run/accepted] {"messageId":"msg_6665f5ef-0e47-4d88-9d0d-9df0686af129","status":"accepted","acceptedAt":"2026-02-28T23:51:29.817Z","runId":"session:sess_e5e887e9-b727-4255-80c7-717f837b3631:run:2","sessionId":"sess_e5e887e9-b727-4255-80c7-717f837b3631"} [run/update] {"runId":"session:sess_e5e887e9-b727-4255-80c7-717f837b3631:run:2","sessionId":"sess_e5e887e9-b727-4255-80c7-717f837b3631","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"mock-stream-chunk"}}} [run/completed] {"runId":"session:sess_e5e887e9-b727-4255-80c7-717f837b3631:run:2","sessionId":"sess_e5e887e9-b727-4255-80c7-717f837b3631","stopReason":"end_turn","text":"mock-final-text"} [accepted] {"messageId":"msg_6665f5ef-0e47-4d88-9d0d-9df0686af129","status":"accepted","acceptedAt":"2026-02-28T23:51:29.817Z","runId":"session:sess_e5e887e9-b727-4255-80c7-717f837b3631:run:2"}'

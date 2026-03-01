@@ -54,13 +54,22 @@ export class AgentRunnerAdapter {
     const session = this.sessionBridge.ensureSession(params.sessionId);
     const run = this.sessionBridge.startRun(params.sessionId);
     const controller = new AbortController();
+    const requestSessionKey = this.resolveSessionKey(params, session.sessionKey);
+    const requestMemoryScope = this.resolveMemoryScope(params, requestSessionKey);
+    const memoryWriteEnabled = this.resolveMemoryWriteEnabled(params);
+    const origin = this.resolveOrigin(params);
+    const isHeartbeat = this.resolveIsHeartbeat(params);
     this.activeRuns.set(params.sessionId, controller);
 
     try {
       const runResult = await this.runAgentImpl({
         runId: run.runId,
         sessionId: params.sessionId,
-        sessionKey: session.sessionKey,
+        sessionKey: requestSessionKey,
+        memoryScope: requestMemoryScope,
+        memoryWriteEnabled,
+        origin,
+        isHeartbeat,
         prompt: params.prompt,
         signal: controller.signal,
         callbacks: {
@@ -142,5 +151,42 @@ export class AgentRunnerAdapter {
 
   private async emitUpdate(sessionId: string, update: ProjectedSessionUpdate): Promise<void> {
     await this.emitNotification(toSessionUpdateNotification(sessionId, update));
+  }
+
+  private resolveSessionKey(params: SessionPromptParams, fallback: string): string {
+    const meta = params.meta;
+    if (meta === undefined) {
+      return fallback;
+    }
+    const candidate = meta.sessionKey;
+    return typeof candidate === "string" && candidate.trim().length > 0
+      ? candidate.trim()
+      : fallback;
+  }
+
+  private resolveMemoryScope(params: SessionPromptParams, sessionKey: string): "main" | "spoke" {
+    const meta = params.meta;
+    if (meta !== undefined && (meta.memoryScope === "main" || meta.memoryScope === "spoke")) {
+      return meta.memoryScope;
+    }
+    return sessionKey === "main" ? "main" : "spoke";
+  }
+
+  private resolveMemoryWriteEnabled(params: SessionPromptParams): boolean {
+    const meta = params.meta;
+    return meta !== undefined && meta.memoryWriteEnabled === true;
+  }
+
+  private resolveOrigin(params: SessionPromptParams): "user" | "system" {
+    const meta = params.meta;
+    if (meta !== undefined && meta.origin === "user") {
+      return "user";
+    }
+    return "system";
+  }
+
+  private resolveIsHeartbeat(params: SessionPromptParams): boolean {
+    const meta = params.meta;
+    return meta !== undefined && meta.isHeartbeat === true;
   }
 }

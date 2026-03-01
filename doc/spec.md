@@ -59,11 +59,24 @@ Adjutant は Slack Desktop の CDP イベントを収集し、`NormalizedEvent` 
 - ACP capability matrix（unstable gate / FS capability v1 無効固定）
 - permission request/resolve/cancel の registry + gateway
 - run 単位の tool event bridge（重複判定付き）
+- control-plane HTTP/SSE API（`POST /api/commands`, `GET /api/snapshot`, `GET /api/events/stream`）
+- `POST /api/commands` の idempotency 重複吸収（同一 `sessionKey+idempotencyKey+message` は同一 `runId` を再返却）
+- `POST /api/commands` の idempotency 競合検知（同一 key で payload 差分時は `409 INVALID_REQUEST`）
+- control-plane 同居 WebUI の最小画面配信（`GET /`）
+- session recovery（`sessionKey -> sessionId`）の journal/snapshot/replay 永続化
 - `deliver/completed` の冪等最終状態ストア（completed 優先）
 - JSONL journal append/drain、cursor load/commit、journal compaction
 - UI runtime の pending permission 管理と tool event 参照
 - AuditDetailTab 向け view model 生成（ツールイベント表示用）
-- Assistant runner は現状スタブ実装（入力 prompt をそのまま返す）
+- Assistant runner は `OPENAI_API_KEY` 有効時に `pi-coding-agent` 実接続、未設定時は echo fallback
+- `PiAgentSessionFactory` による `createAgentSession` 初期化（`AuthStorage`/`ModelRegistry`/`SettingsManager.inMemory()`）
+- workspace bootstrap / BOOTSTRAP context 注入（`origin=user` かつ `sessionKey=main` / `memoryScope=main`）
+- pre-compaction memory flush（閾値判定）と context overflow 時の `session.compact()` 再試行
+- compaction メタデータの永続化（`<stateDir>/worker/sessions.json`）
+- markdown summary batch service（`runOnce`, watermark 保存, transcript 増分読込）
+- `memory_write` ツール（`memoryWriteEnabled=true` の run 限定）
+- sandbox 実行設定の session factory 連携（`ADJUTANT_SANDBOX_MODE=off|non-main|all`）
+- Phase B 統合テスト（memory/sandbox/audit、path traversal/symlink 拒否、memory_write->summary->memory_search）
 
 ### 2.3 未実装
 
@@ -74,8 +87,7 @@ Adjutant は Slack Desktop の CDP イベントを収集し、`NormalizedEvent` 
 - session transcript の `memory_search` 索引統合
 - Heartbeat 誤通知削減のための専用重要イベント分類器
 - マルチチャネル本番接続（Slack 以外）
-- `src/index.ts` の control-plane 統合起動（現状は bootstrap 出力のみ）
-- `src/assistant/main.ts` の assistant 実運用起動（現状は bootstrap 出力のみ）
+- `src/assistant/main.ts` の役割整理（ACP 標準では `src/agent-worker-acp/stdio-server.ts` が worker entry）
 
 ### 2.4 保存基盤（部分実装）
 
@@ -349,8 +361,8 @@ flowchart LR
 
 ## 9. 実行コマンド
 
-- `pnpm start`: `src/index.ts`（control-plane エントリポイント）を起動（`web-ui` 同居、worker は supervisor が子プロセス起動。現状は bootstrap 出力）
-- `node --import tsx src/assistant/main.ts`: 開発/デバッグ用に assistant/worker を単体起動（通常運用では不要。現状は bootstrap 出力）
+- `pnpm start`: `src/index.ts`（control-plane エントリポイント）を起動（`web-ui` 同居、worker は supervisor が子プロセス起動）
+- `node --import tsx src/agent-worker-acp/stdio-server.ts`: 開発/デバッグ用に worker（ACP stdio）を単体起動
 - `pnpm run sandbox:build`: sandbox 用 Docker イメージをビルド
 - `pnpm dev`: `ensureSlackWithCdp` 実行後に `pnpm start`
 - `pnpm run serve`: `dist/backend/index.js` を起動（事前に `pnpm run build:backend`）
@@ -397,8 +409,9 @@ flowchart LR
 
 ### 13.1 ランタイム責務（legacy と ACP の対応）
 
-- legacy 統合ランタイムでは `src/assistant/main.ts` が API / UI / channel manager / heartbeat / pending flusher を単一プロセスで起動する。
-- ACP 標準構成（14章優先）では `src/index.ts` が control-plane 統合エントリポイントとなり、`src/assistant/main.ts` は worker 専用 stdio エントリとして扱う。
+- legacy 統合ランタイムでは `legacy/impl-20260228/src/assistant/main.ts` が API / UI / channel manager / heartbeat / pending flusher を単一プロセスで起動する。
+- ACP 標準構成（14章優先）では `src/index.ts` が control-plane 統合エントリポイントとなり、worker entry は `src/agent-worker-acp/stdio-server.ts` を正とする。
+- `src/assistant/main.ts` は legacy 互換のスタブであり、標準起動導線（`pnpm start`）では使用しない。
 - 起動時に `<stateDir>/timeline.jsonl`、`<stateDir>/idempotency.jsonl`、`<stateDir>/agents/<agentId>/sessions/*.jsonl`、`DATA_DIR` 配下 JSONL を `recoverJsonlFiles` で復旧する。
 - proactive 経路は dual-write で `<stateDir>/timeline.jsonl` と `<stateDir>/agents/<agentId>/sessions/<sessionKey>.jsonl` の両方へ追記する。
 - `ADJUTANT_AGENT_AUDIT_LOG_ENABLED=1` の場合、`<stateDir>/audit/agent-audit.ndjson`（または `ADJUTANT_AGENT_AUDIT_LOG_PATH`）へ `run.start/run.end`・`tool.start/tool.end`・`file.read/file.write` を追記する。
@@ -496,7 +509,7 @@ flowchart LR
 - `ADJUTANT_SANDBOX_MODE=off`（既定）では従来どおりホスト実行。
 - `ADJUTANT_SANDBOX_MODE=non-main` では `memoryScope=main` 以外（spoke）の bash 実行のみをコンテナ化。
 - `ADJUTANT_SANDBOX_MODE=all` では heartbeat を除く全セッションの bash 実行をコンテナ化。
-- 起動時（ACP 標準: `src/index.ts`、legacy 統合: `src/assistant/main.ts`）は以下順で fail-safe 初期化する。
+- 起動時（ACP 標準: `src/index.ts`、legacy 統合: `legacy/impl-20260228/src/assistant/main.ts`）は以下順で fail-safe 初期化する。
   1. Docker daemon 可用性確認（不可なら起動中断）
   2. sandbox image 存在確認（未存在時は `ADJUTANT_SANDBOX_AUTO_BUILD_IMAGE=true` なら自動 build）
   3. owner nonce 付きコンテナ確保（`{prefix}-{nonce}`）
@@ -611,6 +624,39 @@ sequenceDiagram
   - `POST /api/commands`
   - `GET /api/snapshot`
   - `GET /api/events/stream`
+  - `POST /api/commands` は `idempotencyKey` を受け付け、同一 payload 再送時は run を再作成せず既存 `runId` を返す
+  - 同一 `idempotencyKey` で payload が異なる場合は `409 INVALID_REQUEST` を返す
+
+#### API/SSE 例
+
+```bash
+curl -sS -X POST http://127.0.0.1:3100/api/commands \
+  -H 'content-type: application/json' \
+  -d '{"sessionKey":"main","message":"hello"}'
+```
+
+```json
+{
+  "messageId": "msg_xxx",
+  "status": "accepted",
+  "acceptedAt": "2026-02-28T10:00:00.000Z",
+  "runId": "session:sess_xxx:run:1"
+}
+```
+
+```bash
+curl -N http://127.0.0.1:3100/api/events/stream
+```
+
+```text
+event: run/update
+data: {"runId":"session:sess_xxx:run:1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"hello"}}}
+```
+
+#### `pi-coding-agent` 必須設定（Phase A）
+
+- `OPENAI_API_KEY`: 必須（未設定時は runner が echo fallback に切り替わる）
+- `ADJUTANT_MODEL`: 任意（`provider/model` 形式、例: `openai/gpt-4.1`）
 
 ### 14.6 Journal / Cursor / 冪等規約
 
@@ -624,15 +670,20 @@ sequenceDiagram
 - unstable method は既定無効、`enableUnstableSessionMethods=true` のときのみ許可する。
 - FS capability（`fs/read_text_file`, `fs/write_text_file`）は v1 非スコープとして無効固定とする。
 - capability 不在時は呼び出しを行わず `UNSUPPORTED_CAPABILITY` を返却する。
+- Phase B 機能の段階リリースは `ADJUTANT_PHASE_B_ROLLOUT_SCOPE` で制御する。
+  - `main`（既定）: main セッションのみ有効
+  - `all`: spoke まで展開
 
 ### 14.8 エラー分類と回復
 
 - 代表エラー: `UNSUPPORTED_CAPABILITY`, `ACP_PROTOCOL_ERROR`, `JOURNAL_APPEND_FAILED`, `WORKER_TIMEOUT`, `WORKER_CRASHED`, `DOWNSTREAM_ERROR`, `INVALID_RECORD`
 - worker 異常終了時は supervisor が再起動を試行し、構造化ログへ理由を記録する。
 - process 再起動時は journal + cursor から未処理のみ再開する。
+- 運用ロールバック手順は `doc/runbook/phase-b-rollback.md` を正本とする。
 
 ### 14.9 v1 制約
 
 - 単一ホスト実行のみ想定
 - at-least-once 配信（exactly-once ではない）
-- terminal gateway / FS capability / pre-compaction memory flush は s02 では非スコープ（s04 で pre-compaction memory flush は実装対象へ昇格）
+- terminal gateway / FS capability は v1 非スコープ
+- pre-compaction memory flush は s02 では非スコープだったが、s04 で実装済み

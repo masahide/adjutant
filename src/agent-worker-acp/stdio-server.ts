@@ -41,7 +41,13 @@ function isObject(value: unknown): value is Record<string, unknown> {
 }
 
 async function main(): Promise<void> {
-  const sessionStore = new WorkerSessionStore();
+  const sessionStore = new WorkerSessionStore({
+    filePath:
+      typeof process.env.ACP_WORKER_SESSION_STORE_PATH === "string" &&
+      process.env.ACP_WORKER_SESSION_STORE_PATH.trim().length > 0
+        ? process.env.ACP_WORKER_SESSION_STORE_PATH.trim()
+        : undefined,
+  });
   const enableLoadSession = process.env.ACP_ENABLE_LOAD_SESSION === "1";
 
   const adapter = new AgentRunnerAdapter({
@@ -164,6 +170,7 @@ async function main(): Promise<void> {
           {
             sessionId: params.sessionId,
             prompt: params.prompt,
+            meta: isObject(params.meta) ? params.meta : undefined,
           },
           { adapter }
         );

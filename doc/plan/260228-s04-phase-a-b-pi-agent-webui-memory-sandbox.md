@@ -20,7 +20,7 @@
   - 次にツール利用可能性（memory/sandbox）と運用可観測性（audit）を入れることで、実運用に近い検証が可能になる。
 - How
   - `src/index.ts` を control-plane の唯一の listen エントリポイントとし、HTTP/SSE API と run 管理を起動する。
-  - `src/index.ts` で worker supervisor を起動し、`src/assistant/main.ts` は worker 専用 bootstrap（stdio）に限定する。
+  - `src/index.ts` で worker supervisor を起動し、worker entry は `src/agent-worker-acp/stdio-server.ts` を利用する。
   - `agent-worker-acp` で `runAgent` スタブを廃止し `@mariozechner/pi-coding-agent` へ委譲。
   - `ui` は SSE を購読し run 状態・tool event・audit を表示。
   - memory/sandbox/bootstrap/compaction は既存 legacy 実装を責務単位で移植する。
@@ -424,8 +424,9 @@ sequenceDiagram
 - `src/index.ts`（control-plane entry）
   - `main()` で `ControlPlaneServer` を生成し `listen` を開始する唯一の入口
   - 起動時に `WorkerSupervisor.start()`、`UiRuntime`、`PermissionGateway`、journal/cursor ストアを初期化
+  - `web-ui` は同一プロセスで配信する（`/` を control-plane でホストし、HTTP/SSE API と同居）
   - shutdown hook（SIGINT/SIGTERM）で supervisor stop と flush を実行
-- `src/assistant/main.ts`（worker entry）
+- `src/agent-worker-acp/stdio-server.ts`（worker entry）
   - ACP stdio server のみ起動し、HTTP listen は持たない
   - `initialize/session/*` を処理し、`session/update` を通知
 - 配置方針
@@ -477,92 +478,92 @@ sequenceDiagram
 
 ### Stage 1 設計と準備
 
-- [ ] `Task-AB-000` legacy 移植マッピング表の作成（保存先: `doc/plan/artifacts/260228-s04-legacy-mapping.md`、形式: `移植元|移植先|契約ID|差分|テストID|状態` テーブル、完了条件: Phase A/B 対象責務を 100% 網羅）
-- [ ] `Task-AB-001` インターフェース契約の確定（HTTP/SSE/ACP 境界、エラーコード、run 状態、イベント命名規約）
-- [ ] `Task-AB-002` Mermaid 図を `doc/spec.md` と本計画に同期
-- [ ] `Task-AB-003` 型定義の追加（`src/control-plane/contracts/*.ts` 予定）
-- [ ] `Task-AB-004` テスト基盤確認（`tests/integration`, `tests/contract`, `tests/unit` の雛形更新）
-- [ ] `Task-AB-005` `doc/spec.md` 14.5/14.7/14.8 を実装チェックリスト化（必須/任意/非スコープ）
-- [ ] `Task-AB-006` 実 API 依存テストの CI 実行方針を確定（default job では skip、secret job で live 実行）
-- [ ] `Task-AB-007` `package.json` に `test:live-agent` スクリプトを追加し、`OPENAI_API_KEY` 未設定時は skip で終了する実行ラッパを整備
+- [x] `Task-AB-000` legacy 移植マッピング表の作成（保存先: `doc/plan/artifacts/260228-s04-legacy-mapping.md`、形式: `移植元|移植先|契約ID|差分|テストID|状態` テーブル、完了条件: Phase A/B 対象責務を 100% 網羅）
+- [x] `Task-AB-001` インターフェース契約の確定（HTTP/SSE/ACP 境界、エラーコード、run 状態、イベント命名規約）
+- [x] `Task-AB-002` Mermaid 図を `doc/spec.md` と本計画に同期
+- [x] `Task-AB-003` 型定義の追加（`src/control-plane/contracts/*.ts` 予定）
+- [x] `Task-AB-004` テスト基盤確認（`tests/integration`, `tests/contract`, `tests/unit` の雛形更新）
+- [x] `Task-AB-005` `doc/spec.md` 14.5/14.7/14.8 を実装チェックリスト化（必須/任意/非スコープ）
+- [x] `Task-AB-006` 実 API 依存テストの CI 実行方針を確定（default job では skip、secret job で live 実行）
+- [x] `Task-AB-007` `package.json` に `test:live-agent` スクリプトを追加し、`OPENAI_API_KEY` 未設定時は skip で終了する実行ラッパを整備
 
 ### Stage 2 機能Aの実装（pi-coding-agent + WebUI 対話）
 
-- [ ] `Task-A-RED-000` Test: `src/index.ts` 起動で HTTP listen と worker supervisor 起動が同時に成立する失敗テスト作成
-- [ ] `Task-A-RED-001` Test: `POST /api/commands` -> `accepted` -> SSE 更新 -> `completed` の失敗テスト作成
-- [ ] `Task-A-RED-002` Test: `runAgent` が prompt エコーではなく外部ランナー呼び出しになることを失敗テストで固定
-- [ ] `Task-A-RED-003` Test: `session/load` 利用時に既存 session を復帰できることの失敗テスト作成
-- [ ] `Task-A-RED-004` Test: `session/update` の `tool_call` / `tool_call_update` が UI 表示・履歴へ反映される失敗テスト作成
-- [ ] `Task-A-RED-005` Test: WebUI リロード後に `GET /api/snapshot` から過去ツール履歴を復元表示できる失敗テスト作成
-- [ ] `Task-A-RED-006` Test: session recovery 永続化（journal/snapshot/replay）と破損復旧の失敗テスト作成
-- [ ] `Task-A-RED-007` Test: `pendingPermissions` が `PermissionGateway` 正本から snapshot 復元される失敗テスト作成
-- [ ] `Task-A-GREEN-000` Impl: `src/index.ts` を control-plane composition root として実装（listen + supervisor 起動 + shutdown hook）
-- [ ] `Task-A-GREEN-001` Impl: `control-plane` API サーバーと run orchestrator 最小実装
-- [ ] `Task-A-GREEN-002` Impl: `PiAgentSessionFactory`（仮名）を追加し `createAgentSession` 初期化を実装
-- [ ] `Task-A-GREEN-003` Impl: `src/assistant/agent-runner.ts` を `pi-coding-agent` 実接続へ置換（stream/cancel/stopReason）
-- [ ] `Task-A-GREEN-004` Impl: `sessionKey -> sessionId` 永続化（journal + snapshot）と `session/load` 復帰フローを実装
-- [ ] `Task-A-GREEN-005` Impl: `src/ui` に最小対話画面（送信、更新表示、完了状態、ツール通知）を実装
-- [ ] `Task-A-GREEN-006` Impl: `GET /api/snapshot` に `toolEventsByRun` を実装し、UI 初期化時に履歴を hydrate
-- [ ] `Task-A-GREEN-007` Impl: `GET /api/snapshot.pendingPermissions` を `PermissionGateway.listPending()` から構築
-- [ ] `Task-A-REFACTOR-001` Refactor: run 状態管理、エラー整形、イベント配信の責務分離
-- [ ] `Task-A-INTEG-001` Integration: worker crash/timeout の回復テストを追加
-- [ ] `Task-A-INTEG-002` Integration: mock runner で `session/prompt` 実行時の `agent_message_chunk` と最終 `stopReason` を検証
-- [ ] `Task-A-INTEG-003` Integration: `session/load` 復帰と `tool_call` 履歴再取得を検証
-- [ ] `Task-A-INTEG-004` Integration: ページリロード相当の再初期化で過去ツール履歴が表示されることを検証
-- [ ] `Task-A-INTEG-005` Integration: WebUI コンポーネント smoke test（RTL）で送信・ツール履歴・pending permission 表示を検証
-- [ ] `Task-A-CONTRACT-001` Contract: baseline ACP methods と capability gate が `doc/spec.md` 14.5/14.7 と一致することを検証
-- [ ] `Task-A-CONTRACT-002` Contract: SSE `StreamEvent` 名が ACP 命名規約（`/` 区切り）と完全一致することを検証
-- [ ] `Task-A-CONTRACT-003` Contract: Process RPC は schema/型適合のみ検証し、collector/deliver 実経路 E2E を含めないことを固定
-- [ ] `Task-A-DOCS-001` Docs: API/SSE 例と `pi-coding-agent` 必須設定を `doc/spec.md` に反映（`src/index.ts`/`src/assistant/main.ts` の役割、§3/§13 の章間整合を含む）
+- [x] `Task-A-RED-000` Test: `src/index.ts` 起動で HTTP listen と worker supervisor 起動が同時に成立する失敗テスト作成
+- [x] `Task-A-RED-001` Test: `POST /api/commands` -> `accepted` -> SSE 更新 -> `completed` の失敗テスト作成
+- [x] `Task-A-RED-002` Test: `runAgent` が prompt エコーではなく外部ランナー呼び出しになることを失敗テストで固定
+- [x] `Task-A-RED-003` Test: `session/load` 利用時に既存 session を復帰できることの失敗テスト作成
+- [x] `Task-A-RED-004` Test: `session/update` の `tool_call` / `tool_call_update` が UI 表示・履歴へ反映される失敗テスト作成
+- [x] `Task-A-RED-005` Test: WebUI リロード後に `GET /api/snapshot` から過去ツール履歴を復元表示できる失敗テスト作成
+- [x] `Task-A-RED-006` Test: session recovery 永続化（journal/snapshot/replay）と破損復旧の失敗テスト作成
+- [x] `Task-A-RED-007` Test: `pendingPermissions` が `PermissionGateway` 正本から snapshot 復元される失敗テスト作成
+- [x] `Task-A-GREEN-000` Impl: `src/index.ts` を control-plane composition root として実装（listen + supervisor 起動 + shutdown hook）
+- [x] `Task-A-GREEN-001` Impl: `control-plane` API サーバーと run orchestrator 最小実装
+- [x] `Task-A-GREEN-002` Impl: `PiAgentSessionFactory`（仮名）を追加し `createAgentSession` 初期化を実装
+- [x] `Task-A-GREEN-003` Impl: `src/assistant/agent-runner.ts` を `pi-coding-agent` 実接続へ置換（stream/cancel/stopReason）
+- [x] `Task-A-GREEN-004` Impl: `sessionKey -> sessionId` 永続化（journal + snapshot）と `session/load` 復帰フローを実装
+- [x] `Task-A-GREEN-005` Impl: `src/ui` に最小対話画面（送信、更新表示、完了状態、ツール通知）を実装
+- [x] `Task-A-GREEN-006` Impl: `GET /api/snapshot` に `toolEventsByRun` を実装し、UI 初期化時に履歴を hydrate
+- [x] `Task-A-GREEN-007` Impl: `GET /api/snapshot.pendingPermissions` を `PermissionGateway.listPending()` から構築
+- [x] `Task-A-REFACTOR-001` Refactor: run 状態管理、エラー整形、イベント配信の責務分離
+- [x] `Task-A-INTEG-001` Integration: worker crash/timeout の回復テストを追加
+- [x] `Task-A-INTEG-002` Integration: mock runner で `session/prompt` 実行時の `agent_message_chunk` と最終 `stopReason` を検証
+- [x] `Task-A-INTEG-003` Integration: `session/load` 復帰と `tool_call` 履歴再取得を検証
+- [x] `Task-A-INTEG-004` Integration: ページリロード相当の再初期化で過去ツール履歴が表示されることを検証
+- [x] `Task-A-INTEG-005` Integration: WebUI コンポーネント smoke test（RTL）で送信・ツール履歴・pending permission 表示を検証
+- [x] `Task-A-CONTRACT-001` Contract: baseline ACP methods と capability gate が `doc/spec.md` 14.5/14.7 と一致することを検証
+- [x] `Task-A-CONTRACT-002` Contract: SSE `StreamEvent` 名が ACP 命名規約（`/` 区切り）と完全一致することを検証
+- [x] `Task-A-CONTRACT-003` Contract: Process RPC は schema/型適合のみ検証し、collector/deliver 実経路 E2E を含めないことを固定
+- [x] `Task-A-DOCS-001` Docs: API/SSE 例と `pi-coding-agent` 必須設定を `doc/spec.md` に反映（`src/index.ts`/`src/assistant/main.ts` の役割、§3/§13 の章間整合を含む）
 
 ### Stage 3 機能Bの実装（memory/audit/sandbox + bootstrap/compaction）
 
-- [ ] `Task-B-RED-001` Test: `memoryScope=main` のみ `memory_search`/`memory_get` が有効である失敗テスト作成
-- [ ] `Task-B-RED-002` Test: `memory_get` の path-guard（allowlist/workspace 内/symlink 拒否）の失敗テスト作成
-- [ ] `Task-B-RED-007` Test: `memory_write` の有効/無効条件（`memoryWriteEnabled`）と Markdown 反映の失敗テスト作成
-- [ ] `Task-B-RED-003` Test: `ADJUTANT_SANDBOX_MODE=off|non-main|all` の分岐と fail-closed 動作の失敗テスト作成
-- [ ] `Task-B-RED-004` Test: agent audit（run/tool）記録と API 参照の失敗テスト作成
-- [ ] `Task-B-RED-005` Test: workspace bootstrap / BOOTSTRAP context 注入条件の失敗テスト作成
-- [ ] `Task-B-RED-006` Test: pre-compaction memory flush + context compaction 連動の失敗テスト作成
-- [ ] `Task-B-RED-008` Test: markdown summary batch の watermark 増分処理と重複回避の失敗テスト作成
-- [ ] `Task-B-GREEN-001` Impl: memory ツール登録（`memoryScope` 基準）と sqlite index 接続
-- [ ] `Task-B-GREEN-006` Impl: `memory_get` path-guard（allowlist + workspace 内 + symlink 拒否）実装
-- [ ] `Task-B-GREEN-007` Impl: `memory_write` ツールと daily/long-term Markdown 更新処理を移植
-- [ ] `Task-B-GREEN-002` Impl: sandbox executor と `ADJUTANT_SANDBOX_MODE` 連携
-- [ ] `Task-B-GREEN-003` Impl: agent audit 記録と UI 参照 API
-- [ ] `Task-B-GREEN-004` Impl: workspace bootstrap / BOOTSTRAP context 注入
-- [ ] `Task-B-GREEN-005` Impl: pre-compaction memory flush + context compaction 連動（初期閾値は spec 既定値）
-- [ ] `Task-B-GREEN-008` Impl: markdown summary batch service（runOnce + watermark 保存 + transcript 増分読込）を移植
-- [ ] `Task-B-REFACTOR-001` Refactor: Phase B 機能の cross-cutting concern（設定、ログ、例外処理）統合
-- [ ] `Task-B-INTEG-001` Integration: memory/sandbox/audit 一連シナリオ E2E
-- [ ] `Task-B-INTEG-002` Integration: `memory_get` path traversal/symlink 攻撃が拒否されることを検証
-- [ ] `Task-B-INTEG-003` Integration: `memory_write` -> summary batch -> memory_search の一連反映を検証
-- [ ] `Task-B-DOCS-001` Docs: `spec.md` 2.2 現在実装済み項目を更新（`spec.md` §14.9 の s02 非スコープ注記を s04 実装済み状態に合わせて更新）
+- [x] `Task-B-RED-001` Test: `memoryScope=main` のみ `memory_search`/`memory_get` が有効である失敗テスト作成
+- [x] `Task-B-RED-002` Test: `memory_get` の path-guard（allowlist/workspace 内/symlink 拒否）の失敗テスト作成
+- [x] `Task-B-RED-007` Test: `memory_write` の有効/無効条件（`memoryWriteEnabled`）と Markdown 反映の失敗テスト作成
+- [x] `Task-B-RED-003` Test: `ADJUTANT_SANDBOX_MODE=off|non-main|all` の分岐と fail-closed 動作の失敗テスト作成
+- [x] `Task-B-RED-004` Test: agent audit（run/tool）記録と API 参照の失敗テスト作成
+- [x] `Task-B-RED-005` Test: workspace bootstrap / BOOTSTRAP context 注入条件の失敗テスト作成
+- [x] `Task-B-RED-006` Test: pre-compaction memory flush + context compaction 連動の失敗テスト作成
+- [x] `Task-B-RED-008` Test: markdown summary batch の watermark 増分処理と重複回避の失敗テスト作成
+- [x] `Task-B-GREEN-001` Impl: memory ツール登録（`memoryScope` 基準）と sqlite index 接続
+- [x] `Task-B-GREEN-006` Impl: `memory_get` path-guard（allowlist + workspace 内 + symlink 拒否）実装
+- [x] `Task-B-GREEN-007` Impl: `memory_write` ツールと daily/long-term Markdown 更新処理を移植
+- [x] `Task-B-GREEN-002` Impl: sandbox executor と `ADJUTANT_SANDBOX_MODE` 連携
+- [x] `Task-B-GREEN-003` Impl: agent audit 記録と UI 参照 API
+- [x] `Task-B-GREEN-004` Impl: workspace bootstrap / BOOTSTRAP context 注入
+- [x] `Task-B-GREEN-005` Impl: pre-compaction memory flush + context compaction 連動（初期閾値は spec 既定値）
+- [x] `Task-B-GREEN-008` Impl: markdown summary batch service（runOnce + watermark 保存 + transcript 増分読込）を移植
+- [x] `Task-B-REFACTOR-001` Refactor: Phase B 機能の cross-cutting concern（設定、ログ、例外処理）統合
+- [x] `Task-B-INTEG-001` Integration: memory/sandbox/audit 一連シナリオ E2E
+- [x] `Task-B-INTEG-002` Integration: `memory_get` path traversal/symlink 攻撃が拒否されることを検証
+- [x] `Task-B-INTEG-003` Integration: `memory_write` -> summary batch -> memory_search の一連反映を検証
+- [x] `Task-B-DOCS-001` Docs: `spec.md` 2.2 現在実装済み項目を更新（`spec.md` §14.9 の s02 非スコープ注記を s04 実装済み状態に合わせて更新）
 
 ### Stage 4 統合と検証
 
-- [ ] `Task-AB-VERIFY-001` `pnpm check` 実行
-- [ ] `Task-AB-VERIFY-002` エッジケース検証（キャンセル、重複 idempotencyKey、long context）
-- [ ] `Task-AB-VERIFY-003` ログ/例外確認（timeout、worker crash、sandbox unavailable）
-- [ ] `Task-AB-VERIFY-004` `doc/spec.md` 14.5/14.7/14.8 との差分がないことを contract テストで確認
-- [ ] `Task-AB-VERIFY-006` `Task-AB-007` で追加した `pnpm run test:live-agent` を `OPENAI_API_KEY` あり環境で実行し、結果を別レポートに記録
-- [ ] `Task-AB-VERIFY-005` ドキュメント更新（仕様、契約、図）
+- [x] `Task-AB-VERIFY-001` `pnpm check` 実行
+- [x] `Task-AB-VERIFY-002` エッジケース検証（キャンセル、重複 idempotencyKey、long context）
+- [x] `Task-AB-VERIFY-003` ログ/例外確認（timeout、worker crash、sandbox unavailable）
+- [x] `Task-AB-VERIFY-004` `doc/spec.md` 14.5/14.7/14.8 との差分がないことを contract テストで確認
+- [x] `Task-AB-VERIFY-006` `Task-AB-007` で追加した `pnpm run test:live-agent` を `OPENAI_API_KEY` あり環境で実行し、結果を別レポートに記録
+- [x] `Task-AB-VERIFY-005` ドキュメント更新（仕様、契約、図）
 
 ## 8. 完了の定義 Definition of Done
 
 ### 8.1 機能DoD Functional DoD
 
-- [ ] 受け入れ条件がすべて満たされていること
-- [ ] 既知の制約が明文化され、想定通りであること
-- [ ] 契約の例に対して期待通りの結果が得られること
+- [x] 受け入れ条件がすべて満たされていること
+- [x] 既知の制約が明文化され、想定通りであること
+- [x] 契約の例に対して期待通りの結果が得られること
 
 ### 8.2 品質DoD Quality DoD
 
-- [ ] 全てのテストがパスしていること
-- [ ] Linter Formatter のエラーがないこと
-- [ ] 不要なデバッグコードが削除されていること
-- [ ] 主要な変更点がドキュメントに反映されていること
-- [ ] `doc/spec.md` 14.5/14.7/14.8 に対する境界契約テストがグリーンであること
+- [x] 全てのテストがパスしていること
+- [x] Linter Formatter のエラーがないこと
+- [x] 不要なデバッグコードが削除されていること
+- [x] 主要な変更点がドキュメントに反映されていること
+- [x] `doc/spec.md` 14.5/14.7/14.8 に対する境界契約テストがグリーンであること
 
 ## 9. 懸念事項と未確定事項 Concerns and Questions
 

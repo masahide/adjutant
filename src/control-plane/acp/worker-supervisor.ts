@@ -10,6 +10,8 @@ interface JsonRpcRequest {
 interface JsonRpcResponse {
   jsonrpc: "2.0";
   id?: number;
+  method?: string;
+  params?: Record<string, unknown>;
   result?: Record<string, unknown>;
   error?: { code: number; message: string };
 }
@@ -18,9 +20,12 @@ export interface WorkerSupervisorOptions {
   command: string;
   args: string[];
   cwd: string;
+  env?: NodeJS.ProcessEnv;
   maxRestarts?: number;
   restartDelayMs?: number;
+  healthcheckTimeoutMs?: number;
   onLog?: (entry: Record<string, unknown>) => void;
+  onNotification?: (notification: { method: string; params: Record<string, unknown> }) => void;
 }
 
 export interface WorkerRequestOptions {
@@ -33,9 +38,11 @@ export class WorkerSupervisor {
   private nextId = 1;
   private restartCount = 0;
   private stopping = false;
+  private ready = false;
   private readonly pending = new Map<
     number,
     {
+      method: string;
       resolve: (value: Record<string, unknown>) => void;
       reject: (reason: Error) => void;
       timer: NodeJS.Timeout;
@@ -56,9 +63,11 @@ export class WorkerSupervisor {
       return;
     }
 
+    this.failAllPending(new Error("WORKER_STOPPED"));
     this.child.kill("SIGTERM");
     this.child.removeAllListeners();
     this.child = undefined;
+    this.ready = false;
   }
 
   async request(
@@ -68,6 +77,9 @@ export class WorkerSupervisor {
   ): Promise<Record<string, unknown>> {
     if (this.child === undefined || this.child.killed) {
       throw new Error("WORKER_NOT_RUNNING");
+    }
+    if (!this.ready && method !== "initialize") {
+      throw new Error(`WORKER_NOT_READY: ${method}`);
     }
 
     const id = this.nextId++;
@@ -86,8 +98,19 @@ export class WorkerSupervisor {
         reject(new Error(`WORKER_TIMEOUT: ${method}`));
       }, timeoutMs);
 
-      this.pending.set(id, { resolve, reject, timer });
-      this.child?.stdin.write(`${JSON.stringify(envelope)}\n`);
+      this.pending.set(id, { method, resolve, reject, timer });
+      this.child?.stdin.write(`${JSON.stringify(envelope)}\n`, (error) => {
+        if (error == null) {
+          return;
+        }
+        const pending = this.pending.get(id);
+        if (pending === undefined) {
+          return;
+        }
+        clearTimeout(pending.timer);
+        this.pending.delete(id);
+        pending.reject(new Error(`WORKER_IO_ERROR: ${method}: ${error.message}`));
+      });
     });
   }
 
@@ -102,8 +125,10 @@ export class WorkerSupervisor {
   private spawnChild(): void {
     const child = spawn(this.options.command, this.options.args, {
       cwd: this.options.cwd,
+      env: this.options.env ?? process.env,
       stdio: ["pipe", "pipe", "pipe"],
     });
+    this.ready = false;
 
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => {
@@ -118,9 +143,41 @@ export class WorkerSupervisor {
         newlineIndex = this.buffer.indexOf("\n");
       }
     });
+    child.stdin.on("error", (error) => {
+      if (this.stopping) {
+        return;
+      }
+      this.options.onLog?.({
+        level: "error",
+        code: "WORKER_STDIN_ERROR",
+        message: "worker stdin error",
+        reason: error.message,
+      });
+      this.failAllPending(new Error(`WORKER_IO_ERROR: ${error.message}`));
+    });
+    child.on("error", (error) => {
+      if (this.stopping) {
+        return;
+      }
+      this.options.onLog?.({
+        level: "error",
+        code: "WORKER_PROCESS_ERROR",
+        message: "worker process error",
+        reason: error.message,
+      });
+      this.failAllPending(new Error(`WORKER_CRASHED: ${error.message}`));
+    });
 
     child.on("exit", (code, signal) => {
       const crashed = !this.stopping && (code !== 0 || signal !== null);
+      this.failAllPending(
+        new Error(`WORKER_CRASHED: exit=${String(code)} signal=${String(signal)}`)
+      );
+      this.buffer = "";
+      if (this.child === child) {
+        this.child = undefined;
+      }
+      this.ready = false;
       if (crashed) {
         this.options.onLog?.({
           level: "error",
@@ -139,6 +196,7 @@ export class WorkerSupervisor {
     });
 
     this.child = child;
+    void this.runHealthcheck(child);
   }
 
   private waitForSpawnReady(): Promise<void> {
@@ -152,6 +210,16 @@ export class WorkerSupervisor {
     try {
       parsed = JSON.parse(line) as JsonRpcResponse;
     } catch {
+      return;
+    }
+
+    if (parsed.id === undefined) {
+      if (typeof parsed.method === "string") {
+        this.options.onNotification?.({
+          method: parsed.method,
+          params: parsed.params ?? {},
+        });
+      }
       return;
     }
 
@@ -172,6 +240,40 @@ export class WorkerSupervisor {
       return;
     }
 
+    if (pending.method === "initialize") {
+      this.ready = true;
+    }
     pending.resolve(parsed.result ?? {});
+  }
+
+  private failAllPending(error: Error): void {
+    for (const [id, pending] of this.pending) {
+      clearTimeout(pending.timer);
+      this.pending.delete(id);
+      pending.reject(error);
+    }
+  }
+
+  private async runHealthcheck(child: ChildProcessWithoutNullStreams): Promise<void> {
+    try {
+      await this.request(
+        "initialize",
+        { protocolVersion: 1 },
+        { timeoutMs: this.options.healthcheckTimeoutMs ?? 2000 }
+      );
+      if (this.child === child) {
+        this.ready = true;
+      }
+    } catch (error) {
+      if (this.stopping || this.child !== child) {
+        return;
+      }
+      this.options.onLog?.({
+        level: "warn",
+        code: "WORKER_HEALTHCHECK_FAILED",
+        message: "worker healthcheck failed",
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 }
