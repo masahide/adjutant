@@ -42,9 +42,9 @@
     ```tsx
     const runtime = useRemoteThreadListRuntime({
       runtimeHook: () => useExternalStoreRuntime({ messages, isRunning, onNew, onCancel }),
-      adapter: threadApiClient,  // RemoteThreadListAdapter 実装
+      adapter: threadApiClient, // RemoteThreadListAdapter 実装
     });
-    <AssistantRuntimeProvider runtime={runtime}>...</AssistantRuntimeProvider>
+    <AssistantRuntimeProvider runtime={runtime}>...</AssistantRuntimeProvider>;
     ```
   - バックエンドは legacy パターンの `/api/chat/messages` + `/api/chat/runs/{runId}/stream` を実装し、既存 ACP 実行系に委譲する。
   - `@assistant-ui/react` latest のみ導入し、`react-ai-sdk` と `ai` は不要。
@@ -159,32 +159,32 @@
 
 #### Chat API（新規 — legacy SSE パターン）
 
-| Method | Path | 成功 | エラー | 説明 |
-|--------|------|------|--------|------|
-| `POST` | `/api/chat/messages` | `202 Accepted` | `400` validation / `409` idempotency conflict / `404` unknown sessionKey | メッセージ送信 → `{ runId, status }` |
-| `GET` | `/api/chat/runs/:runId/stream` | `200 OK` (SSE) | `404` unknown runId | SSE ストリーム（`event: chat`） |
-| `GET` | `/api/chat/history` | `200 OK` | `400` missing sessionKey | 履歴取得（`?sessionKey={key}`） |
-| `POST` | `/api/chat/abort` | `200 OK` | `400` validation / `404` no active run | 実行中止（`{ sessionKey, runId? }`） |
-| `GET` | `/api/chat/runs/:runId/audit` | `200 OK` | `404` unknown runId | ツール監査情報（既存 `src/index.ts:598` から移植） |
+| Method | Path                           | 成功           | エラー                                                                   | 説明                                               |
+| ------ | ------------------------------ | -------------- | ------------------------------------------------------------------------ | -------------------------------------------------- |
+| `POST` | `/api/chat/messages`           | `202 Accepted` | `400` validation / `409` idempotency conflict / `404` unknown sessionKey | メッセージ送信 → `{ runId, status }`               |
+| `GET`  | `/api/chat/runs/:runId/stream` | `200 OK` (SSE) | `404` unknown runId                                                      | SSE ストリーム（`event: chat`）                    |
+| `GET`  | `/api/chat/history`            | `200 OK`       | `400` missing sessionKey                                                 | 履歴取得（`?sessionKey={key}`）                    |
+| `POST` | `/api/chat/abort`              | `200 OK`       | `400` validation / `404` no active run                                   | 実行中止（`{ sessionKey, runId? }`）               |
+| `GET`  | `/api/chat/runs/:runId/audit`  | `200 OK`       | `404` unknown runId                                                      | ツール監査情報（既存 `src/index.ts:598` から移植） |
 
 #### Thread API（新規）
 
-| Method | Path | 成功 | エラー | 説明 |
-|--------|------|------|--------|------|
-| `GET` | `/api/threads` | `200 OK` | — | スレッド一覧（`"main"` 仮想エントリ含む） |
-| `POST` | `/api/threads` | `201 Created` | `400` validation | スレッド作成 |
-| `GET` | `/api/threads/:threadId` | `200 OK` | `404` unknown threadId | スレッド metadata 取得（単体） |
-| `PATCH` | `/api/threads/:threadId` | `200 OK` | `400` 禁止フィールド / `404` unknown | スレッド更新（`title`, `archived`） |
-| `DELETE` | `/api/threads/:threadId` | `204 No Content` | `403` main 保護 / `404` unknown | スレッド削除（`"main"` は `403` 拒否） |
-| `GET` | `/api/threads/:threadId/snapshot` | `200 OK` | `404` unknown threadId | スレッド単位の run/tool/permission 復元 |
+| Method   | Path                              | 成功             | エラー                               | 説明                                      |
+| -------- | --------------------------------- | ---------------- | ------------------------------------ | ----------------------------------------- |
+| `GET`    | `/api/threads`                    | `200 OK`         | —                                    | スレッド一覧（`"main"` 仮想エントリ含む） |
+| `POST`   | `/api/threads`                    | `201 Created`    | `400` validation                     | スレッド作成                              |
+| `GET`    | `/api/threads/:threadId`          | `200 OK`         | `404` unknown threadId               | スレッド metadata 取得（単体）            |
+| `PATCH`  | `/api/threads/:threadId`          | `200 OK`         | `400` 禁止フィールド / `404` unknown | スレッド更新（`title`, `archived`）       |
+| `DELETE` | `/api/threads/:threadId`          | `204 No Content` | `403` main 保護 / `404` unknown      | スレッド削除（`"main"` は `403` 拒否）    |
+| `GET`    | `/api/threads/:threadId/snapshot` | `200 OK`         | `404` unknown threadId               | スレッド単位の run/tool/permission 復元   |
 
 #### 既存 API（互換維持）
 
-| Method | Path | 説明 |
-|--------|------|------|
-| `POST` | `/api/commands` | コマンド送信 |
-| `GET` | `/api/snapshot` | 状態スナップショット |
-| `GET` | `/api/events/stream` | SSE イベントストリーム |
+| Method | Path                 | 説明                   |
+| ------ | -------------------- | ---------------------- |
+| `POST` | `/api/commands`      | コマンド送信           |
+| `GET`  | `/api/snapshot`      | 状態スナップショット   |
+| `GET`  | `/api/events/stream` | SSE イベントストリーム |
 
 ### 4.2 データモデルとスキーマ
 
@@ -192,9 +192,9 @@
 
 ```typescript
 {
-  message: string;          // ユーザーメッセージテキスト
-  sessionKey: string;       // = threadId
-  idempotencyKey: string;   // 冪等性キー
+  message: string; // ユーザーメッセージテキスト
+  sessionKey: string; // = threadId
+  idempotencyKey: string; // 冪等性キー
 }
 ```
 
@@ -202,7 +202,7 @@
 
 ```typescript
 {
-  runId: string;            // "session:<sessionId>:run:<n>"
+  runId: string; // "session:<sessionId>:run:<n>"
   status: "accepted";
 }
 ```
@@ -235,17 +235,19 @@ interface ChatStreamEvent {
   state: "delta" | "final" | "aborted" | "error";
   runId: string;
   sessionKey: string;
-  message?: string;         // delta/final 時のテキスト
-  errorMessage?: string;    // error 時のエラー詳細
-  toolCallId?: string;      // tool 関連 delta 時
-  toolName?: string;        // tool 関連 delta 時
+  message?: string; // delta/final 時のテキスト
+  errorMessage?: string; // error 時のエラー詳細
+  toolCallId?: string; // tool 関連 delta 時
+  toolName?: string; // tool 関連 delta 時
   toolStatus?: "started" | "completed" | "failed"; // tool 関連 delta 時
-  permissionRequest?: {    // permission/requested 時
+  permissionRequest?: {
+    // permission/requested 時
     requestId: string;
     title: string;
     toolCallId?: string;
   };
-  permissionResolved?: {   // permission/resolved 時
+  permissionResolved?: {
+    // permission/resolved 時
     requestId: string;
     outcome: "allow" | "deny" | "cancelled";
   };
@@ -258,35 +260,35 @@ interface ChatStreamEvent {
 
 **Source 1: ACP `session/update` ストリーム** — `WorkerSupervisor` 経由（ストリーミング中に逐次配信）
 
-| ACP イベント | ChatStreamEvent |
-|---|---|
-| `agent_message_chunk` | `state: "delta"`, `message: chunk.text` |
-| `tool_call` | `state: "delta"`, `toolCallId`, `toolName`, `toolStatus: "started"` |
-| `tool_call_update` | `state: "delta"`, `toolCallId`, `toolName`, `toolStatus: "completed"\|"failed"` |
+| ACP イベント          | ChatStreamEvent                                                                 |
+| --------------------- | ------------------------------------------------------------------------------- |
+| `agent_message_chunk` | `state: "delta"`, `message: chunk.text`                                         |
+| `tool_call`           | `state: "delta"`, `toolCallId`, `toolName`, `toolStatus: "started"`             |
+| `tool_call_update`    | `state: "delta"`, `toolCallId`, `toolName`, `toolStatus: "completed"\|"failed"` |
 
 **Source 2: ACP `session/prompt` レスポンス** — `WorkerSupervisor.request()` の戻り値（request/response 方式）
 
-| ACP イベント | ChatStreamEvent |
-|---|---|
+| ACP イベント              | ChatStreamEvent                       |
+| ------------------------- | ------------------------------------- |
 | `session/prompt` 正常結果 | `state: "final"`, `message: fullText` |
 
 **Source 3: `RunLifecycle`** — run 状態遷移
 
-| RunLifecycle イベント | ChatStreamEvent |
-|---|---|
-| `failRun()` | `state: "error"`, `errorMessage` |
+| RunLifecycle イベント | ChatStreamEvent                  |
+| --------------------- | -------------------------------- |
+| `failRun()`           | `state: "error"`, `errorMessage` |
 
 **Source 4: `PermissionGateway`** — permission 要求/解決
 
-| PermissionGateway イベント | ChatStreamEvent |
-|---|---|
-| `permission/requested` | `state: "delta"`, `permissionRequest: { requestId, title, toolCallId }` |
-| `permission/resolved` | `state: "delta"`, `permissionResolved: { requestId, outcome }` |
+| PermissionGateway イベント | ChatStreamEvent                                                         |
+| -------------------------- | ----------------------------------------------------------------------- |
+| `permission/requested`     | `state: "delta"`, `permissionRequest: { requestId, title, toolCallId }` |
+| `permission/resolved`      | `state: "delta"`, `permissionResolved: { requestId, outcome }`          |
 
 **Source 5: ユーザー操作** — abort
 
-| ユーザー操作 | ChatStreamEvent |
-|---|---|
+| ユーザー操作           | ChatStreamEvent    |
+| ---------------------- | ------------------ |
 | `POST /api/chat/abort` | `state: "aborted"` |
 
 #### `POST /api/chat/abort` Request
@@ -316,12 +318,12 @@ interface ChatStreamEvent {
 
 ```typescript
 {
-  threadId: string;         // 不変（v1 は threadId=sessionKey 固定）
+  threadId: string; // 不変（v1 は threadId=sessionKey 固定）
   title: string;
   archived: boolean;
-  isDefault: boolean;       // true = "main" スレッド（削除不可）
-  createdAt: string;        // ISO 8601
-  updatedAt: string;        // ISO 8601
+  isDefault: boolean; // true = "main" スレッド（削除不可）
+  createdAt: string; // ISO 8601
+  updatedAt: string; // ISO 8601
 }
 ```
 
@@ -628,21 +630,21 @@ sequenceDiagram
 
 #### 生成ファイル一覧と流用判定
 
-| ファイル | 流用 | 備考 |
-|---|---|---|
-| `components/assistant-ui/thread.tsx` | **Copy & Adapt** | Thread/Composer/Message レイアウト。Primitive のみ使用（AI SDK 依存なし）。`ToolsBadge` + Pending Permission 表示をカスタム追加 |
-| `components/assistant-ui/markdown-text.tsx` | **Copy** | `@assistant-ui/react-markdown` ベース。そのまま |
-| `components/assistant-ui/tool-fallback.tsx` | **Copy** | ツール表示のフォールバック。そのまま |
-| `components/assistant-ui/tooltip-icon-button.tsx` | **Copy** | ボタン共通コンポーネント。そのまま |
-| `components/assistant-ui/attachment.tsx` | **Skip** | 添付ファイルは非スコープ（§2.2） |
-| `components/ui/button.tsx` | **Copy** | shadcn/ui。そのまま |
-| `components/ui/tooltip.tsx` | **Copy** | shadcn/ui。そのまま |
-| `components/ui/dialog.tsx` | **Copy** | shadcn/ui。Permission UI ダイアログに利用可能 |
-| `components/ui/avatar.tsx` | **Copy** | shadcn/ui。そのまま |
-| `components/ui/collapsible.tsx` | **Copy** | shadcn/ui。Audit パネルに利用可能 |
-| `lib/utils.ts` | **Copy** | `cn()` ヘルパー。そのまま |
-| `index.css` | **Copy & Adapt** | shadcn CSS 変数 + Tailwind v4。既存 `src/ui/styles.css` と統合 |
-| `components.json` | **Copy** | shadcn CLI 設定。将来の `shadcn add` に必要 |
+| ファイル                                          | 流用             | 備考                                                                                                                            |
+| ------------------------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `components/assistant-ui/thread.tsx`              | **Copy & Adapt** | Thread/Composer/Message レイアウト。Primitive のみ使用（AI SDK 依存なし）。`ToolsBadge` + Pending Permission 表示をカスタム追加 |
+| `components/assistant-ui/markdown-text.tsx`       | **Copy**         | `@assistant-ui/react-markdown` ベース。そのまま                                                                                 |
+| `components/assistant-ui/tool-fallback.tsx`       | **Copy**         | ツール表示のフォールバック。そのまま                                                                                            |
+| `components/assistant-ui/tooltip-icon-button.tsx` | **Copy**         | ボタン共通コンポーネント。そのまま                                                                                              |
+| `components/assistant-ui/attachment.tsx`          | **Skip**         | 添付ファイルは非スコープ（§2.2）                                                                                                |
+| `components/ui/button.tsx`                        | **Copy**         | shadcn/ui。そのまま                                                                                                             |
+| `components/ui/tooltip.tsx`                       | **Copy**         | shadcn/ui。そのまま                                                                                                             |
+| `components/ui/dialog.tsx`                        | **Copy**         | shadcn/ui。Permission UI ダイアログに利用可能                                                                                   |
+| `components/ui/avatar.tsx`                        | **Copy**         | shadcn/ui。そのまま                                                                                                             |
+| `components/ui/collapsible.tsx`                   | **Copy**         | shadcn/ui。Audit パネルに利用可能                                                                                               |
+| `lib/utils.ts`                                    | **Copy**         | `cn()` ヘルパー。そのまま                                                                                                       |
+| `index.css`                                       | **Copy & Adapt** | shadcn CSS 変数 + Tailwind v4。既存 `src/ui/styles.css` と統合                                                                  |
+| `components.json`                                 | **Copy**         | shadcn CLI 設定。将来の `shadcn add` に必要                                                                                     |
 
 #### 不要な依存（init が追加するが除外するもの）**[ProtoFirst]**
 
@@ -660,12 +662,12 @@ sequenceDiagram
 
 ### 5.6 既存 `src/ui` 存廃方針 **[DRY]** — 再利用可能な資産は維持
 
-| ファイル | 判定 | 備考 |
-|---|---|---|
-| `src/ui/runtime.ts` | **Keep** | `UiRuntime` の集約パターン（`ToolEventBridge`（本体は `src/control-plane/acp/tool-event-bridge.ts`）+ pending permission の UI 投影ロジック）を再利用 |
-| `src/ui/minimal-page.ts` | **暫定維持** | Stage 4 で削除可否を再判定 |
-| `src/ui/components/control-plane-console.tsx` | **Replace** | 機能は assistant-ui の Thread/Composer + 補助パネルへ移植 |
-| `src/ui/components/AuditDetailTab.tsx` | **Keep** | assistant-ui 画面のサイドパネルへ統合 |
+| ファイル                                      | 判定         | 備考                                                                                                                                                  |
+| --------------------------------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/ui/runtime.ts`                           | **Keep**     | `UiRuntime` の集約パターン（`ToolEventBridge`（本体は `src/control-plane/acp/tool-event-bridge.ts`）+ pending permission の UI 投影ロジック）を再利用 |
+| `src/ui/minimal-page.ts`                      | **暫定維持** | Stage 4 で削除可否を再判定                                                                                                                            |
+| `src/ui/components/control-plane-console.tsx` | **Replace**  | 機能は assistant-ui の Thread/Composer + 補助パネルへ移植                                                                                             |
+| `src/ui/components/AuditDetailTab.tsx`        | **Keep**     | assistant-ui 画面のサイドパネルへ統合                                                                                                                 |
 
 ## 6. テスト戦略 Test Strategy
 
@@ -720,18 +722,18 @@ sequenceDiagram
 
 ### Stage 1: 設計と準備（10 タスク）
 
-- [x] `Task-AUI-001` ~~`@assistant-ui/react-ai-sdk` と `ai` パッケージを削除~~ → 完了済み（コミット b45279d）。残作業: `@assistant-ui/react` を `^0.12.10` から latest に更新し、breaking change を確認する
-- [ ] `Task-AUI-002` `useExternalStoreRuntime` + `useRemoteThreadListRuntime` の API を調査し、接続パターンを確定
-- [ ] `Task-AUI-003` `/api/chat/*` 契約定義を `src/control-plane/contracts/http-api.ts` に追加（`ChatStreamEvent`, request/response 型）
-- [ ] `Task-AUI-004` `/api/threads*` 契約定義を `src/control-plane/contracts/http-api.ts` に追加（`ThreadRecord`, snapshot response 型）
-- [ ] `Task-AUI-005` `src/index.ts` 直書き API ルートを `src/control-plane/http/*` へ抽出する設計を確定
-- [ ] `Task-AUI-006` 既存 `src/ui` ファイルの存廃判定を実施（§5.6 表に基づく）
-- [ ] `Task-AUI-007` SSE `ChatStreamEvent` 型とテスト雛形を追加
-- [ ] `Task-AUI-008` 全 5 ソース（§4.2 Source 1〜5: session/update, session/prompt, RunLifecycle, PermissionGateway, abort）→ `ChatStreamEvent` 変換ロジックのテスト雛形を追加
-- [ ] `Task-AUI-009` `vendor/assistant-ui-init-ref/` の生成物を確認し、流用ファイル一覧を確定（§5.5 表に基づく）。不要パッケージ（`react-ai-sdk`, `ai`, `@ai-sdk/openai`）が本体 `package.json` に混入しないことを確認
-- [ ] `Task-AUI-010` `assistant-stream` パッケージを `devDependencies` に追加しバージョンを固定する（`generateTitle` v1 の `AssistantStream` ラッパーに必要）。`@assistant-ui/react` の peer dependency バージョンとの整合を確認
+- [x] `Task-AUI-001` ~~`@assistant-ui/react-ai-sdk` と `ai` パッケージを削除~~ → 完了済み（コミット b45279d）。`@assistant-ui/react` は `0.12.14`（latest）へ更新済み
+- [x] `Task-AUI-002` `useExternalStoreRuntime` + `useRemoteThreadListRuntime` の API を調査し、接続パターンを確定
+- [x] `Task-AUI-003` `/api/chat/*` 契約定義を `src/control-plane/contracts/http-api.ts` に追加（`ChatStreamEvent`, request/response 型）
+- [x] `Task-AUI-004` `/api/threads*` 契約定義を `src/control-plane/contracts/http-api.ts` に追加（`ThreadRecord`, snapshot response 型）
+- [x] `Task-AUI-005` `src/index.ts` 直書き API ルートを `src/control-plane/http/*` へ抽出する設計を確定
+- [x] `Task-AUI-006` 既存 `src/ui` ファイルの存廃判定を実施（§5.6 表に基づく）
+- [x] `Task-AUI-007` SSE `ChatStreamEvent` 型とテスト雛形を追加
+- [x] `Task-AUI-008` 全 5 ソース（§4.2 Source 1〜5: session/update, session/prompt, RunLifecycle, PermissionGateway, abort）→ `ChatStreamEvent` 変換ロジックのテスト雛形を追加
+- [x] `Task-AUI-009` `vendor/assistant-ui-init-ref/` の生成物を確認し、流用ファイル一覧を確定（§5.5 表に基づく）。不要パッケージ（`react-ai-sdk`, `ai`, `@ai-sdk/openai`）が本体 `package.json` に混入しないことを確認
+- [x] `Task-AUI-010` `assistant-stream` パッケージを `devDependencies` に追加しバージョンを固定する（`generateTitle` v1 の `AssistantStream` ラッパーに必要）。`@assistant-ui/react` の peer dependency バージョンとの整合を確認
 
-### Stage 2: useExternalStoreRuntime 基盤 + /api/chat/* 実装（14 タスク）
+### Stage 2: useExternalStoreRuntime 基盤 + /api/chat/\* 実装（14 タスク）
 
 - [ ] `Task-AUI-S2-RED-001` Test: `POST /api/chat/messages` の request/response 契約失敗テスト
 - [ ] `Task-AUI-S2-RED-002` Test: `GET /api/chat/runs/{runId}/stream` SSE 契約失敗テスト（seq backfill / 再接続 replay を含む）
