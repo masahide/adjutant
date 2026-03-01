@@ -48,6 +48,7 @@ export interface TerminalRecordEvent {
 
 export interface AgentRunCallbacks {
   onTextDelta?: (delta: string) => void;
+  onThinkingDelta?: (delta: string) => void;
   onToolCall?: (event: LegacyToolCallEvent | string, params?: unknown) => void;
   onTerminalRecord?: (record: TerminalRecordEvent) => void;
 }
@@ -477,6 +478,16 @@ export async function runAgent(options: AgentRunOptions): Promise<AgentRunResult
         if (typeof delta === "string" && delta.length > 0) {
           textBuffer += delta;
           options.callbacks?.onTextDelta?.(delta);
+        }
+      }
+      if (
+        typeof messageEvent === "object" &&
+        messageEvent !== null &&
+        (messageEvent as Record<string, unknown>).type === "thinking_delta"
+      ) {
+        const delta = (messageEvent as Record<string, unknown>).delta;
+        if (typeof delta === "string" && delta.length > 0) {
+          options.callbacks?.onThinkingDelta?.(delta);
         }
       }
       return;

@@ -8,6 +8,7 @@ import type { SessionPromptParams, SessionPromptResult } from "../../contracts/a
 import { normalizeStopReason } from "../stop-reason.js";
 import {
   projectAgentMessageChunk,
+  projectAgentThinkingChunk,
   projectTerminalRecord,
   toSessionUpdateNotification,
   type ProjectedSessionUpdate,
@@ -75,6 +76,9 @@ export class AgentRunnerAdapter {
         callbacks: {
           onTextDelta: (delta) => {
             void this.emitUpdate(params.sessionId, projectAgentMessageChunk(delta));
+          },
+          onThinkingDelta: (delta) => {
+            void this.emitUpdate(params.sessionId, projectAgentThinkingChunk(delta));
           },
           onToolCall: (event, rawParams) => {
             void this.emitToolUpdate(params.sessionId, event, rawParams, run.runId);

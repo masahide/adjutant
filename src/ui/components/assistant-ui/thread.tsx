@@ -20,6 +20,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import { MarkdownText } from "@/components/assistant-ui/markdown-text";
+import { Reasoning, ReasoningGroup } from "@/components/assistant-ui/reasoning";
 import { ToolFallback } from "@/components/assistant-ui/tool-fallback";
 
 import { useThreadPendingPermissions } from "../../runtime-hooks.js";
@@ -253,6 +254,8 @@ function AssistantMessage() {
         <MessagePrimitive.Parts
           components={{
             Text: MarkdownText,
+            Reasoning,
+            ReasoningGroup,
             tools: { Fallback: ToolFallback },
           }}
         />

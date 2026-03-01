@@ -90,6 +90,7 @@ export type ChatStreamEvent = {
   runId: string;
   sessionKey: string;
   message?: string;
+  thinking?: string;
   errorMessage?: string;
   toolCallId?: string;
   toolName?: string;

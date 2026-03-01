@@ -63,8 +63,14 @@ export interface StopReasonUpdate {
   stopReason: AcpStopReason;
 }
 
+export interface AgentThinkingChunkUpdate {
+  sessionUpdate: "agent_thinking_chunk";
+  content: ContentText;
+}
+
 export type ProjectedSessionUpdate =
   | AgentMessageChunkUpdate
+  | AgentThinkingChunkUpdate
   | ToolCallStartUpdate
   | ToolCallProgressUpdate
   | PlanUpdate
@@ -88,6 +94,16 @@ export function toSessionUpdateNotification(
 export function projectAgentMessageChunk(delta: string): AgentMessageChunkUpdate {
   return {
     sessionUpdate: "agent_message_chunk",
+    content: {
+      type: "text",
+      text: delta,
+    },
+  };
+}
+
+export function projectAgentThinkingChunk(delta: string): AgentThinkingChunkUpdate {
+  return {
+    sessionUpdate: "agent_thinking_chunk",
     content: {
       type: "text",
       text: delta,

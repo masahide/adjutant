@@ -160,22 +160,31 @@ async function resolveThreadSessionKeyForSend(aui: ReturnType<typeof useAui>): P
 
 function upsertAssistantMessage(
   messages: readonly ThreadMessageLike[],
-  input: { runId: string; text: string }
+  input: { runId: string; text: string; thinking?: string }
 ): ThreadMessageLike[] {
   const messageId = `assistant:${input.runId}`;
+  const content: Array<{ type: "text"; text: string } | { type: "reasoning"; text: string }> = [];
+  if (input.thinking) {
+    content.push({ type: "reasoning", text: input.thinking });
+  }
+  if (input.text) {
+    content.push({ type: "text", text: input.text });
+  }
+  const messageContent = content.length > 0 ? content : "";
+
   const next = [...messages];
   const index = next.findIndex((message) => message.id === messageId);
   if (index >= 0) {
     next[index] = {
       ...next[index],
-      content: input.text,
+      content: messageContent,
     };
     return next;
   }
   next.push({
     id: messageId,
     role: "assistant",
-    content: input.text,
+    content: messageContent,
   });
   return next;
 }
@@ -421,6 +430,7 @@ function useAdjutantExternalStoreRuntime(baseUrl = "") {
   const lastSeqByRunIdRef = useRef(new Map<string, number>());
   const terminalRunRef = useRef<string | undefined>(undefined);
   const assistantTextByRunId = useRef(new Map<string, string>());
+  const assistantThinkingByRunId = useRef(new Map<string, string>());
   latestSessionKeyRef.current = sessionKey;
 
   const stopActiveStream = useCallback((options?: { clearRunId?: boolean }) => {
@@ -462,12 +472,32 @@ function useAdjutantExternalStoreRuntime(baseUrl = "") {
         lastSeqByRunIdRef.current.set(runId, event.seq);
         reconnectAttemptsRef.current = 0;
 
+        if (event.state === "delta" && typeof event.thinking === "string") {
+          const current = assistantThinkingByRunId.current.get(event.runId) ?? "";
+          const nextThinking = `${current}${event.thinking}`;
+          assistantThinkingByRunId.current.set(event.runId, nextThinking);
+          const currentText = assistantTextByRunId.current.get(event.runId) ?? "";
+          setMessages((previous) =>
+            upsertAssistantMessage(previous, {
+              runId: event.runId,
+              text: currentText,
+              thinking: nextThinking,
+            })
+          );
+          return;
+        }
+
         if (event.state === "delta" && typeof event.message === "string") {
           const current = assistantTextByRunId.current.get(event.runId) ?? "";
           const nextText = `${current}${event.message}`;
           assistantTextByRunId.current.set(event.runId, nextText);
+          const currentThinking = assistantThinkingByRunId.current.get(event.runId) ?? "";
           setMessages((previous) =>
-            upsertAssistantMessage(previous, { runId: event.runId, text: nextText })
+            upsertAssistantMessage(previous, {
+              runId: event.runId,
+              text: nextText,
+              thinking: currentThinking || undefined,
+            })
           );
           return;
         }
@@ -477,10 +507,16 @@ function useAdjutantExternalStoreRuntime(baseUrl = "") {
             typeof event.message === "string"
               ? event.message
               : (assistantTextByRunId.current.get(event.runId) ?? "");
+          const finalThinking = assistantThinkingByRunId.current.get(event.runId) || undefined;
           setMessages((previous) =>
-            upsertAssistantMessage(previous, { runId: event.runId, text: nextText })
+            upsertAssistantMessage(previous, {
+              runId: event.runId,
+              text: nextText,
+              thinking: finalThinking,
+            })
           );
           assistantTextByRunId.current.delete(event.runId);
+          assistantThinkingByRunId.current.delete(event.runId);
           lastSeqByRunIdRef.current.delete(event.runId);
           terminalRunRef.current = runId;
           activeRunSessionKeyRef.current = undefined;
@@ -491,6 +527,7 @@ function useAdjutantExternalStoreRuntime(baseUrl = "") {
 
         if (event.state === "aborted") {
           assistantTextByRunId.current.delete(event.runId);
+          assistantThinkingByRunId.current.delete(event.runId);
           lastSeqByRunIdRef.current.delete(event.runId);
           terminalRunRef.current = runId;
           activeRunSessionKeyRef.current = undefined;
@@ -508,6 +545,7 @@ function useAdjutantExternalStoreRuntime(baseUrl = "") {
             })
           );
           assistantTextByRunId.current.delete(event.runId);
+          assistantThinkingByRunId.current.delete(event.runId);
           lastSeqByRunIdRef.current.delete(event.runId);
           terminalRunRef.current = runId;
           activeRunSessionKeyRef.current = undefined;
@@ -576,6 +614,7 @@ function useAdjutantExternalStoreRuntime(baseUrl = "") {
           activeRunSessionKeyRef.current = undefined;
           lastSeqByRunIdRef.current.clear();
           assistantTextByRunId.current.clear();
+          assistantThinkingByRunId.current.clear();
           return;
         }
         const hasThread = await fetchThreadRecord(baseUrl, sessionKey);
@@ -589,6 +628,7 @@ function useAdjutantExternalStoreRuntime(baseUrl = "") {
           activeRunSessionKeyRef.current = undefined;
           lastSeqByRunIdRef.current.clear();
           assistantTextByRunId.current.clear();
+          assistantThinkingByRunId.current.clear();
           return;
         }
         const history = await fetchJson<{ messages: ChatHistoryMessage[] }>(
@@ -603,6 +643,7 @@ function useAdjutantExternalStoreRuntime(baseUrl = "") {
         activeRunSessionKeyRef.current = undefined;
         lastSeqByRunIdRef.current.clear();
         assistantTextByRunId.current.clear();
+        assistantThinkingByRunId.current.clear();
       } catch {
         if (disposed) {
           return;
@@ -612,6 +653,7 @@ function useAdjutantExternalStoreRuntime(baseUrl = "") {
         activeRunSessionKeyRef.current = undefined;
         lastSeqByRunIdRef.current.clear();
         assistantTextByRunId.current.clear();
+        assistantThinkingByRunId.current.clear();
         setIsRunning(false);
       }
     })();
@@ -633,6 +675,7 @@ function useAdjutantExternalStoreRuntime(baseUrl = "") {
       activeRunSessionKeyRef.current = undefined;
       lastSeqByRunIdRef.current.clear();
       assistantTextByRunId.current.clear();
+      assistantThinkingByRunId.current.clear();
     };
   }, [baseUrl, sessionKey, stopActiveStream]);
 
@@ -642,6 +685,7 @@ function useAdjutantExternalStoreRuntime(baseUrl = "") {
     if (currentRunId !== undefined) {
       lastSeqByRunIdRef.current.delete(currentRunId);
       assistantTextByRunId.current.delete(currentRunId);
+      assistantThinkingByRunId.current.delete(currentRunId);
     }
     stopActiveStream({ clearRunId: true });
     try {
@@ -703,6 +747,7 @@ function useAdjutantExternalStoreRuntime(baseUrl = "") {
         reconnectAttemptsRef.current = 0;
         lastSeqByRunIdRef.current.set(accepted.runId, -1);
         assistantTextByRunId.current.set(accepted.runId, "");
+        assistantThinkingByRunId.current.set(accepted.runId, "");
         stopActiveStream({ clearRunId: false });
         connectRunStream(accepted.runId, 0);
       } catch {

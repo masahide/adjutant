@@ -47,6 +47,17 @@ export function mapSessionUpdateToChatStreamEvent(input: {
     };
   }
 
+  if (type === "agent_thinking_chunk") {
+    const content = asRecord(input.update.content);
+    const thinking = asString(content?.text) ?? "";
+    return {
+      state: "delta",
+      runId: input.runId,
+      sessionKey: input.sessionKey,
+      thinking,
+    };
+  }
+
   if (type === "tool_call") {
     const toolName = asString(input.update.title) ?? asString(input.update.kind) ?? "tool";
     return {
