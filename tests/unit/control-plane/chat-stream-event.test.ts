@@ -33,12 +33,3 @@ test("ChatStreamEvent の最小 delta イベントを表現できる", () => {
   };
   assert.equal(event.state, "delta");
 });
-
-test.todo("Source 1(session/update): agent_message_chunk -> state=delta に変換する");
-test.todo("Source 1(session/update): tool_call -> toolStatus=started に変換する");
-test.todo("Source 1(session/update): tool_call_update -> completed/failed に変換する");
-test.todo("Source 2(session/prompt): 正常結果 -> state=final に変換する");
-test.todo("Source 3(RunLifecycle): failRun -> state=error に変換する");
-test.todo("Source 4(PermissionGateway): requested -> permissionRequest に変換する");
-test.todo("Source 4(PermissionGateway): resolved -> permissionResolved に変換する");
-test.todo("Source 5(user abort): POST /api/chat/abort -> state=aborted に変換する");

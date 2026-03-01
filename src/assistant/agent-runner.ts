@@ -287,6 +287,45 @@ function isContextOverflowError(error: unknown): boolean {
   );
 }
 
+function resolveMockDelayMs(value: string | undefined): number {
+  if (typeof value !== "string") {
+    return 0;
+  }
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return 0;
+  }
+  return Math.min(parsed, 30_000);
+}
+
+async function waitForAbortableDelay(
+  delayMs: number,
+  signal: AbortSignal | undefined
+): Promise<void> {
+  if (delayMs <= 0) {
+    return;
+  }
+  if (signal?.aborted === true) {
+    throw new Error("aborted");
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, delayMs);
+    const onAbort = () => {
+      cleanup();
+      reject(new Error("aborted"));
+    };
+    const cleanup = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 export async function runAgent(options: AgentRunOptions): Promise<AgentRunResult> {
   if (options.signal?.aborted === true) {
     throw new Error("aborted");
@@ -296,9 +335,11 @@ export async function runAgent(options: AgentRunOptions): Promise<AgentRunResult
     const delta = process.env.ADJUTANT_TEST_MOCK_DELTA ?? "mock-delta";
     const text = process.env.ADJUTANT_TEST_MOCK_TEXT ?? "mock-final";
     const stopReason = process.env.ADJUTANT_TEST_MOCK_STOP_REASON ?? "end_turn";
+    const delayMs = resolveMockDelayMs(process.env.ADJUTANT_TEST_MOCK_DELAY_MS);
     if (delta.length > 0) {
       options.callbacks?.onTextDelta?.(delta);
     }
+    await waitForAbortableDelay(delayMs, options.signal);
     return {
       runId: options.runId,
       text,

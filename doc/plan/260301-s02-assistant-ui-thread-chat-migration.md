@@ -735,20 +735,20 @@ sequenceDiagram
 
 ### Stage 2: useExternalStoreRuntime 基盤 + /api/chat/\* 実装（14 タスク）
 
-- [ ] `Task-AUI-S2-RED-001` Test: `POST /api/chat/messages` の request/response 契約失敗テスト
-- [ ] `Task-AUI-S2-RED-002` Test: `GET /api/chat/runs/{runId}/stream` SSE 契約失敗テスト（seq backfill / 再接続 replay を含む）
-- [ ] `Task-AUI-S2-RED-003` Test: 全 5 ソース → `ChatStreamEvent` 変換の失敗テスト（session/update delta, session/prompt final, RunLifecycle error, PermissionGateway request/resolved, abort）
-- [ ] `Task-AUI-S2-RED-004` Test: idempotency 重複吸収の失敗テスト
-- [ ] `Task-AUI-S2-GREEN-000` Impl: `src/index.ts` 既存ルートを `src/control-plane/http/*` へ抽出 **（他の GREEN タスクの前提。GREEN-001〜007 はこのタスク完了後に着手）**
-- [ ] `Task-AUI-S2-GREEN-001` Impl: `POST /api/chat/messages` を既存 run orchestrator へ接続
-- [ ] `Task-AUI-S2-GREEN-002` Impl: `GET /api/chat/runs/{runId}/stream` SSE エンドポイント + `RunEventBuffer`（per-run バッファ、seq backfill、TTL 破棄）実装
-- [ ] `Task-AUI-S2-GREEN-003` Impl: 全 5 ソース → `ChatStreamEvent` 変換ロジック実装（§4.2 Source 1〜5 のコールバックを `RunEventBuffer.append()` に統合）
-- [ ] `Task-AUI-S2-GREEN-004` Impl: `GET /api/chat/history` 実装
-- [ ] `Task-AUI-S2-GREEN-005` Impl: `POST /api/chat/abort` 実装
-- [ ] `Task-AUI-S2-GREEN-006` Impl: `useExternalStoreRuntime` ベースの UI ランタイム（legacy `runtime.ts` パターン移植）
-- [ ] `Task-AUI-S2-GREEN-007` Impl: `vendor/assistant-ui-init-ref/` から UI コンポーネントをコピー・適応（§5.5 手順）し、`useRemoteThreadListRuntime({ runtimeHook, adapter })` で統合 runtime を構築し `AssistantRuntimeProvider` でラップした `App.tsx` を作成。Thread + Composer 画面を表示
-- [ ] `Task-AUI-S2-REFACTOR-001` Refactor: `src/ui` 存廃方針に従って既存 UI 資産を整理
-- [ ] `Task-AUI-S2-INTEG-001` Integration: 送信 → SSE ストリーミング → 完了まで統合テスト
+- [x] `Task-AUI-S2-RED-001` Test: `POST /api/chat/messages` の request/response 契約失敗テスト
+- [x] `Task-AUI-S2-RED-002` Test: `GET /api/chat/runs/{runId}/stream` SSE 契約失敗テスト（seq backfill / 再接続 replay を含む）
+- [x] `Task-AUI-S2-RED-003` Test: 全 5 ソース → `ChatStreamEvent` 変換の失敗テスト（session/update delta, session/prompt final, RunLifecycle error, PermissionGateway request/resolved, abort）
+- [x] `Task-AUI-S2-RED-004` Test: idempotency 重複吸収の失敗テスト
+- [x] `Task-AUI-S2-GREEN-000` Impl: `src/index.ts` 既存ルートを `src/control-plane/http/*` へ抽出 **（他の GREEN タスクの前提。GREEN-001〜007 はこのタスク完了後に着手）**
+- [x] `Task-AUI-S2-GREEN-001` Impl: `POST /api/chat/messages` を既存 run orchestrator へ接続
+- [x] `Task-AUI-S2-GREEN-002` Impl: `GET /api/chat/runs/{runId}/stream` SSE エンドポイント + `RunEventBuffer`（per-run バッファ、seq backfill、TTL 破棄）実装
+- [x] `Task-AUI-S2-GREEN-003` Impl: 全 5 ソース → `ChatStreamEvent` 変換ロジック実装（§4.2 Source 1〜5 のコールバックを `RunEventBuffer.append()` に統合）
+- [x] `Task-AUI-S2-GREEN-004` Impl: `GET /api/chat/history` 実装
+- [x] `Task-AUI-S2-GREEN-005` Impl: `POST /api/chat/abort` 実装
+- [x] `Task-AUI-S2-GREEN-006` Impl: `useExternalStoreRuntime` ベースの UI ランタイム（legacy `runtime.ts` パターン移植）
+- [x] `Task-AUI-S2-GREEN-007` Impl: `vendor/assistant-ui-init-ref/` から UI コンポーネントをコピー・適応（§5.5 手順）し、`useRemoteThreadListRuntime({ runtimeHook, adapter })` で統合 runtime を構築し `AssistantRuntimeProvider` でラップした `App.tsx` を作成。Thread + Composer 画面を表示
+- [x] `Task-AUI-S2-REFACTOR-001` Refactor: `src/ui` 存廃方針に従って既存 UI 資産を整理
+- [x] `Task-AUI-S2-INTEG-001` Integration: 送信 → SSE ストリーミング → 完了まで統合テスト
 
 ### Stage 3: Thread 管理 + Pending Permission UI（16 タスク）
 
@@ -771,7 +771,7 @@ sequenceDiagram
 
 ### Stage 4: 統合と検証（7 タスク）
 
-- [ ] `Task-AUI-VERIFY-001` `pnpm check` を通す
+- [x] `Task-AUI-VERIFY-001` `pnpm check` を通す
 - [ ] `Task-AUI-VERIFY-002` `pnpm start` → ブラウザで `/` を開き、Thread + Composer 画面が表示されることを手動確認
 - [ ] `Task-AUI-VERIFY-003` worker crash/timeout 時の表示とログを確認
 - [ ] `Task-AUI-VERIFY-004` 既存 API クライアント互換性を確認

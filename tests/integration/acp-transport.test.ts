@@ -119,3 +119,69 @@ test("ACP stdio transport integrates initialize/session-new/session-prompt", asy
   assert.equal(promptResult.result?.stopReason, "end_turn");
   assert.equal(promptResult.result?.text, "hello");
 });
+
+test("ACP stdio transport responds to session/cancel requests", async (t) => {
+  const child = spawn(
+    process.execPath,
+    ["--import", "tsx", "src/agent-worker-acp/stdio-server.ts"],
+    {
+      cwd: process.cwd(),
+      stdio: ["pipe", "pipe", "pipe"],
+    }
+  );
+
+  t.after(() => {
+    if (!child.killed) {
+      child.kill("SIGTERM");
+    }
+  });
+
+  const envelopes: JsonRpcEnvelope[] = [];
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk: string) => {
+    chunk
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+      .forEach((line) => {
+        envelopes.push(JSON.parse(line) as JsonRpcEnvelope);
+      });
+  });
+
+  const send = (envelope: JsonRpcEnvelope): void => {
+    child.stdin.write(`${JSON.stringify(envelope)}\n`);
+  };
+
+  send({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "initialize",
+    params: { protocolVersion: 1 },
+  });
+  await waitForCondition((entry) => entry.id === 1 && entry.result !== undefined, envelopes);
+
+  send({
+    jsonrpc: "2.0",
+    id: 2,
+    method: "session/new",
+    params: {},
+  });
+  const created = await waitForCondition(
+    (entry) => entry.id === 2 && entry.result !== undefined,
+    envelopes
+  );
+  const sessionId = created.result?.sessionId;
+  assert.equal(typeof sessionId, "string");
+
+  send({
+    jsonrpc: "2.0",
+    id: 3,
+    method: "session/cancel",
+    params: { sessionId },
+  });
+  const cancelResult = await waitForCondition(
+    (entry) => entry.id === 3 && entry.result !== undefined,
+    envelopes
+  );
+  assert.equal(typeof cancelResult.result?.cancelled, "boolean");
+});

@@ -154,6 +154,9 @@ export class RunLifecycle {
     if (current === undefined) {
       return undefined;
     }
+    if (!this.isActiveStatus(current.status)) {
+      return undefined;
+    }
     current.status = "completed";
     current.finishedAt = this.now();
     current.stopReason = stopReason;
@@ -165,10 +168,27 @@ export class RunLifecycle {
     if (current === undefined) {
       return undefined;
     }
+    if (!this.isActiveStatus(current.status)) {
+      return undefined;
+    }
     current.status = "failed";
     current.finishedAt = this.now();
     current.errorCode = summary.errorCode;
     current.errorMessage = summary.errorMessage;
+    return current;
+  }
+
+  cancelRun(runId: string, stopReason = "cancelled"): RunSummary | undefined {
+    const current = this.runById.get(runId);
+    if (current === undefined) {
+      return undefined;
+    }
+    if (!this.isActiveStatus(current.status)) {
+      return undefined;
+    }
+    current.status = "cancelled";
+    current.finishedAt = this.now();
+    current.stopReason = stopReason;
     return current;
   }
 
@@ -182,5 +202,9 @@ export class RunLifecycle {
 
   private toIdempotencyStoreKey(sessionKey: string, idempotencyKey: string): string {
     return `${sessionKey}:${idempotencyKey}`;
+  }
+
+  private isActiveStatus(status: RunSummary["status"]): boolean {
+    return status === "accepted" || status === "running";
   }
 }

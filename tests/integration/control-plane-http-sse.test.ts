@@ -16,6 +16,28 @@ type CommandAccepted = {
   sessionRecoveryReason?: string;
 };
 
+type ChatAccepted = {
+  runId: string;
+  status: "accepted";
+};
+
+type ChatStreamEvent = {
+  seq: number;
+  state: "delta" | "final" | "aborted" | "error";
+  runId: string;
+  sessionKey: string;
+  message?: string;
+  errorMessage?: string;
+};
+
+type ChatHistoryResponse = {
+  messages: Array<{
+    role: "user" | "assistant";
+    content: string;
+    runId?: string;
+  }>;
+};
+
 type SnapshotResponse = {
   runs: Array<{
     runId: string;
@@ -199,8 +221,8 @@ async function stopControlPlane(child: ChildProcessWithoutNullStreams): Promise<
   });
 }
 
-async function openSse(baseUrl: string): Promise<SseConnection> {
-  const response = await fetch(`${baseUrl}/api/events/stream`);
+async function openSsePath(baseUrl: string, path: string): Promise<SseConnection> {
+  const response = await fetch(`${baseUrl}${path}`);
   assert.equal(response.status, 200);
   assert.ok(response.body);
 
@@ -261,6 +283,10 @@ async function openSse(baseUrl: string): Promise<SseConnection> {
   };
 }
 
+async function openSse(baseUrl: string): Promise<SseConnection> {
+  return await openSsePath(baseUrl, "/api/events/stream");
+}
+
 test("control-plane startup launches HTTP listen and worker path", async (t) => {
   const runtime = await startControlPlane();
   t.after(async () => {
@@ -270,8 +296,8 @@ test("control-plane startup launches HTTP listen and worker path", async (t) => 
   const rootRes = await fetch(`${runtime.baseUrl}/`);
   assert.equal(rootRes.status, 200);
   const html = await rootRes.text();
-  assert.equal(html.includes("Adjutant Web UI (co-located)"), true);
-  assert.equal(html.includes('id="command-form"'), true);
+  assert.equal(html.includes("Adjutant Assistant UI"), true);
+  assert.equal(html.includes('id="root"'), true);
 
   const snapshotRes = await fetch(`${runtime.baseUrl}/api/snapshot`);
   assert.equal(snapshotRes.status, 200);
@@ -396,6 +422,297 @@ test("POST /api/commands dedupes same idempotencyKey and rejects conflicting pay
   assert.equal(conflictRes.status, 409);
   const conflict = (await conflictRes.json()) as { code?: string; message?: string };
   assert.equal(conflict.code, "INVALID_REQUEST");
+});
+
+test("POST /api/chat/messages validates request and returns accepted subset", async (t) => {
+  const runtime = await startControlPlane();
+  t.after(async () => {
+    await stopControlPlane(runtime.child);
+  });
+
+  const invalidRes = await fetch(`${runtime.baseUrl}/api/chat/messages`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ sessionKey: "main", message: "hello" }),
+  });
+  assert.equal(invalidRes.status, 400);
+
+  const commandRes = await fetch(`${runtime.baseUrl}/api/chat/messages`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      sessionKey: "main",
+      message: "hello-chat",
+      idempotencyKey: "chat_accepted_1",
+    }),
+  });
+  assert.equal(commandRes.status, 202);
+  const accepted = (await commandRes.json()) as ChatAccepted & Record<string, unknown>;
+  assert.equal(accepted.status, "accepted");
+  assert.equal(typeof accepted.runId, "string");
+  assert.equal("messageId" in accepted, false);
+});
+
+test("POST /api/chat/messages supports idempotency dedupe and conflict", async (t) => {
+  const runtime = await startControlPlane();
+  t.after(async () => {
+    await stopControlPlane(runtime.child);
+  });
+
+  const firstRes = await fetch(`${runtime.baseUrl}/api/chat/messages`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      sessionKey: "main",
+      message: "idempotent-chat",
+      idempotencyKey: "chat_dup_1",
+    }),
+  });
+  assert.equal(firstRes.status, 202);
+  const first = (await firstRes.json()) as ChatAccepted;
+
+  const secondRes = await fetch(`${runtime.baseUrl}/api/chat/messages`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      sessionKey: "main",
+      message: "idempotent-chat",
+      idempotencyKey: "chat_dup_1",
+    }),
+  });
+  assert.equal(secondRes.status, 202);
+  const second = (await secondRes.json()) as ChatAccepted;
+  assert.equal(second.runId, first.runId);
+
+  const conflictRes = await fetch(`${runtime.baseUrl}/api/chat/messages`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      sessionKey: "main",
+      message: "different-chat",
+      idempotencyKey: "chat_dup_1",
+    }),
+  });
+  assert.equal(conflictRes.status, 409);
+  const conflict = (await conflictRes.json()) as { code?: string };
+  assert.equal(conflict.code, "INVALID_REQUEST");
+});
+
+test("GET /api/chat/runs/{runId}/stream provides chat SSE and seq replay", async (t) => {
+  const runtime = await startControlPlane({
+    env: {
+      ADJUTANT_TEST_MOCK_RUNNER: "1",
+      ADJUTANT_TEST_MOCK_DELTA: "stream-delta",
+      ADJUTANT_TEST_MOCK_TEXT: "stream-final",
+      ADJUTANT_TEST_MOCK_STOP_REASON: "end_turn",
+    },
+  });
+  t.after(async () => {
+    await stopControlPlane(runtime.child);
+  });
+
+  const commandRes = await fetch(`${runtime.baseUrl}/api/chat/messages`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      sessionKey: "main",
+      message: "hello-stream",
+      idempotencyKey: "chat_stream_1",
+    }),
+  });
+  assert.equal(commandRes.status, 202);
+  const accepted = (await commandRes.json()) as ChatAccepted;
+
+  const stream = await openSsePath(
+    runtime.baseUrl,
+    `/api/chat/runs/${encodeURIComponent(accepted.runId)}/stream?seq=0`
+  );
+  t.after(() => {
+    stream.close();
+  });
+
+  await stream.waitFor(
+    (event) =>
+      event.event === "chat" &&
+      (event.data as Record<string, unknown>).runId === accepted.runId &&
+      (event.data as Record<string, unknown>).state === "final"
+  );
+
+  const chatEvents = stream.events
+    .filter((event) => event.event === "chat")
+    .map((event) => event.data as unknown as ChatStreamEvent)
+    .filter((event) => event.runId === accepted.runId);
+  assert.equal(
+    chatEvents.some((event) => event.state === "delta"),
+    true
+  );
+  assert.equal(
+    chatEvents.some((event) => event.state === "final"),
+    true
+  );
+
+  const maxSeq = Math.max(...chatEvents.map((event) => event.seq));
+  const replay = await openSsePath(
+    runtime.baseUrl,
+    `/api/chat/runs/${encodeURIComponent(accepted.runId)}/stream?seq=${maxSeq}`
+  );
+  t.after(() => {
+    replay.close();
+  });
+  await replay.waitFor(
+    (event) =>
+      event.event === "chat" &&
+      (event.data as Record<string, unknown>).runId === accepted.runId &&
+      typeof (event.data as Record<string, unknown>).seq === "number"
+  );
+  const replayEvent = replay.events.find((event) => event.event === "chat");
+  assert.equal(typeof replayEvent?.data.seq, "number");
+  assert.equal((replayEvent?.data.seq as number) >= maxSeq, true);
+
+  const missingRes = await fetch(
+    `${runtime.baseUrl}/api/chat/runs/${encodeURIComponent("session:missing:run:1")}/stream`
+  );
+  assert.equal(missingRes.status, 404);
+});
+
+test("GET /api/chat/history validates sessionKey and returns messages", async (t) => {
+  const runtime = await startControlPlane({
+    env: {
+      ADJUTANT_TEST_MOCK_RUNNER: "1",
+      ADJUTANT_TEST_MOCK_DELTA: "h-delta",
+      ADJUTANT_TEST_MOCK_TEXT: "h-final",
+    },
+  });
+  t.after(async () => {
+    await stopControlPlane(runtime.child);
+  });
+
+  const commandRes = await fetch(`${runtime.baseUrl}/api/chat/messages`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      sessionKey: "main",
+      message: "history-message",
+      idempotencyKey: "chat_history_1",
+    }),
+  });
+  assert.equal(commandRes.status, 202);
+  const accepted = (await commandRes.json()) as ChatAccepted;
+
+  const stream = await openSsePath(
+    runtime.baseUrl,
+    `/api/chat/runs/${encodeURIComponent(accepted.runId)}/stream`
+  );
+  t.after(() => {
+    stream.close();
+  });
+  await stream.waitFor(
+    (event) =>
+      event.event === "chat" &&
+      (event.data as Record<string, unknown>).runId === accepted.runId &&
+      (event.data as Record<string, unknown>).state === "final"
+  );
+
+  const missingRes = await fetch(`${runtime.baseUrl}/api/chat/history`);
+  assert.equal(missingRes.status, 400);
+
+  const historyRes = await fetch(`${runtime.baseUrl}/api/chat/history?sessionKey=main`);
+  assert.equal(historyRes.status, 200);
+  const history = (await historyRes.json()) as ChatHistoryResponse;
+  assert.equal(history.messages.length >= 2, true);
+  assert.equal(history.messages[0]?.role, "user");
+  assert.equal(history.messages[1]?.role, "assistant");
+});
+
+test("POST /api/chat/abort returns 404 for unknown active run", async (t) => {
+  const runtime = await startControlPlane();
+  t.after(async () => {
+    await stopControlPlane(runtime.child);
+  });
+
+  const res = await fetch(`${runtime.baseUrl}/api/chat/abort`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ sessionKey: "main" }),
+  });
+  assert.equal(res.status, 404);
+});
+
+test("POST /api/chat/abort cancels active run and returns aborted stream event", async (t) => {
+  const runtime = await startControlPlane({
+    env: {
+      ADJUTANT_TEST_MOCK_RUNNER: "1",
+      ADJUTANT_TEST_MOCK_DELTA: "abort-delta",
+      ADJUTANT_TEST_MOCK_TEXT: "abort-final",
+      ADJUTANT_TEST_MOCK_DELAY_MS: "4000",
+    },
+  });
+  t.after(async () => {
+    await stopControlPlane(runtime.child);
+  });
+
+  const commandRes = await fetch(`${runtime.baseUrl}/api/chat/messages`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      sessionKey: "main",
+      message: "abort-message",
+      idempotencyKey: "chat_abort_1",
+    }),
+  });
+  assert.equal(commandRes.status, 202);
+  const accepted = (await commandRes.json()) as ChatAccepted;
+
+  const wrongSessionAbortRes = await fetch(`${runtime.baseUrl}/api/chat/abort`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      sessionKey: "secondary",
+      runId: accepted.runId,
+    }),
+  });
+  assert.equal(wrongSessionAbortRes.status, 404);
+
+  const abortRes = await fetch(`${runtime.baseUrl}/api/chat/abort`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      sessionKey: "main",
+      runId: accepted.runId,
+    }),
+  });
+  assert.equal(abortRes.status, 200);
+
+  const stream = await openSsePath(
+    runtime.baseUrl,
+    `/api/chat/runs/${encodeURIComponent(accepted.runId)}/stream?seq=0`
+  );
+  t.after(() => {
+    stream.close();
+  });
+  const aborted = await stream.waitFor(
+    (event) =>
+      event.event === "chat" &&
+      event.data.runId === accepted.runId &&
+      event.data.state === "aborted"
+  );
+  assert.equal(aborted.data.sessionKey, "main");
+
+  const snapshotRes = await fetch(`${runtime.baseUrl}/api/snapshot`);
+  assert.equal(snapshotRes.status, 200);
+  const snapshot = (await snapshotRes.json()) as SnapshotResponse;
+  const run = snapshot.runs.find((entry) => entry.runId === accepted.runId);
+  assert.equal(run?.status, "cancelled");
+
+  const abortAgainRes = await fetch(`${runtime.baseUrl}/api/chat/abort`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      sessionKey: "main",
+      runId: accepted.runId,
+    }),
+  });
+  assert.equal(abortAgainRes.status, 404);
 });
 
 test("tool_call updates are reflected in SSE and snapshot history", async (t) => {

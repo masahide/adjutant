@@ -1,6 +1,7 @@
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createServer } from "node:http";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createServer as createViteServer, type ViteDevServer } from "vite";
 
 import { createMarkdownSummaryBatchService } from "./assistant/markdown-summary-batch.js";
 import type { ClientNotification } from "./contracts/acp/rpc-types.js";
@@ -10,13 +11,18 @@ import { SessionRecoveryStore } from "./control-plane/acp/session-recovery-store
 import { WorkerSupervisor } from "./control-plane/acp/worker-supervisor.js";
 import { AgentAuditLog } from "./control-plane/audit/agent-audit-log.js";
 import { readRunAudit } from "./control-plane/audit/audit-reader.js";
+import { type AcceptedResponse, type StreamEventType } from "./control-plane/contracts/http-api.js";
+import { toErrorSummary } from "./control-plane/http/error-summary.js";
 import {
-  type AcceptedResponse,
-  type CommandRequest,
-  type StreamEventType,
-} from "./control-plane/contracts/http-api.js";
-import { toErrorSummary, toHttpStatusCode } from "./control-plane/http/error-summary.js";
+  mapPermissionEventToChatStreamEvent,
+  mapPromptResultToChatStreamEvent,
+  mapRunFailureToChatStreamEvent,
+  mapSessionUpdateToChatStreamEvent,
+} from "./control-plane/http/chat-stream-event-mapper.js";
+import { ChatHistoryStore } from "./control-plane/http/chat-history-store.js";
+import { createControlPlaneRequestHandler } from "./control-plane/http/control-plane-router.js";
 import { RunLifecycle } from "./control-plane/http/run-lifecycle.js";
+import { RunEventBuffer } from "./control-plane/http/run-event-buffer.js";
 import { SseHub } from "./control-plane/http/sse-hub.js";
 import { writeStructuredLog } from "./control-plane/logging/structured-log.js";
 import { initializeSandboxRuntime } from "./sandbox/runtime.js";
@@ -78,45 +84,6 @@ function isPhaseBEnabledForSession(scope: PhaseBRolloutScope, sessionKey: string
     return true;
   }
   return sessionKey === "main";
-}
-
-function writeJson(res: ServerResponse, statusCode: number, payload: unknown): void {
-  res.statusCode = statusCode;
-  res.setHeader("content-type", "application/json; charset=utf-8");
-  res.end(JSON.stringify(payload));
-}
-
-async function readJsonBody<T>(req: IncomingMessage): Promise<T> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  }
-
-  const body = Buffer.concat(chunks).toString("utf8").trim();
-  if (body.length === 0) {
-    throw new Error("INVALID_REQUEST: empty body");
-  }
-  try {
-    return JSON.parse(body) as T;
-  } catch {
-    throw new Error("INVALID_REQUEST: malformed json body");
-  }
-}
-
-function isCommandRequest(value: unknown): value is CommandRequest {
-  if (typeof value !== "object" || value === null) {
-    return false;
-  }
-  const record = value as Record<string, unknown>;
-  return typeof record.sessionKey === "string" && typeof record.message === "string";
-}
-
-function normalizeIdempotencyKey(value: unknown): string | undefined {
-  if (typeof value !== "string") {
-    return undefined;
-  }
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 function toCommandRequestHash(message: string): string {
@@ -201,8 +168,43 @@ export async function main(): Promise<void> {
       })
     : undefined;
 
+  let viteDevServer: ViteDevServer | undefined;
+  const uiMiddlewareEnabled = parseBoolean(process.env.ADJUTANT_UI_VITE_MIDDLEWARE, true);
+  if (uiMiddlewareEnabled) {
+    try {
+      viteDevServer = await createViteServer({
+        configFile: resolve(cwd, "vite.config.ts"),
+        server: {
+          middlewareMode: true,
+          hmr: false,
+        },
+      });
+    } catch (error) {
+      const summary = toErrorSummary(error);
+      logControlPlane({
+        level: "warn",
+        event: "ui.vite_middleware.disabled",
+        message: summary.errorMessage,
+        runId: null,
+        sessionKey: null,
+        toolCallId: null,
+      });
+      viteDevServer = undefined;
+    }
+  }
+
   const runLifecycle = new RunLifecycle();
   const sseHub = new SseHub();
+  const runEventBuffer = new RunEventBuffer({ retentionMs: 60_000 });
+  const chatHistoryStore = new ChatHistoryStore();
+  const permissionRequestRunById = new Map<string, { runId: string; sessionKey: string }>();
+  const clearPermissionRequestRun = (runId: string) => {
+    for (const [requestId, tracked] of permissionRequestRunById) {
+      if (tracked.runId === runId) {
+        permissionRequestRunById.delete(requestId);
+      }
+    }
+  };
 
   const emitSse = (event: StreamEventType, data: Record<string, unknown>) => {
     sseHub.broadcast(event, data);
@@ -214,6 +216,46 @@ export async function main(): Promise<void> {
     emitUiEvent: (event) => {
       uiRuntime.onPermissionEvent(event);
       emitSse(event.type, event.payload);
+
+      const requestId =
+        typeof event.payload.requestId === "string" ? event.payload.requestId : undefined;
+      if (requestId === undefined) {
+        return;
+      }
+      if (event.type === "permission/requested") {
+        const runId = typeof event.payload.runId === "string" ? event.payload.runId : undefined;
+        if (runId === undefined) {
+          return;
+        }
+        const run = runLifecycle.runs().get(runId);
+        if (run === undefined) {
+          return;
+        }
+        permissionRequestRunById.set(requestId, { runId, sessionKey: run.sessionKey });
+        const mapped = mapPermissionEventToChatStreamEvent({
+          runId,
+          sessionKey: run.sessionKey,
+          event,
+        });
+        if (mapped !== undefined) {
+          runEventBuffer.append(runId, mapped);
+        }
+        return;
+      }
+
+      const tracked = permissionRequestRunById.get(requestId);
+      if (tracked === undefined) {
+        return;
+      }
+      permissionRequestRunById.delete(requestId);
+      const mapped = mapPermissionEventToChatStreamEvent({
+        runId: tracked.runId,
+        sessionKey: tracked.sessionKey,
+        event,
+      });
+      if (mapped !== undefined) {
+        runEventBuffer.append(tracked.runId, mapped);
+      }
     },
   });
 
@@ -257,62 +299,77 @@ export async function main(): Promise<void> {
       }
 
       const run = runLifecycle.runs().get(runId);
-      if (run !== undefined && typeof run.sessionKey === "string") {
-        const sessionUpdate = (update as Record<string, unknown>).sessionUpdate;
-        if (sessionUpdate === "tool_call") {
-          const title = (update as Record<string, unknown>).title;
-          const kind = (update as Record<string, unknown>).kind;
-          const toolCallId = (update as Record<string, unknown>).toolCallId;
-          const toolName =
-            typeof title === "string" && title.trim().length > 0
-              ? title.trim()
-              : typeof kind === "string" && kind.trim().length > 0
-                ? kind.trim()
-                : "tool";
-          agentAuditLog.appendToolStart({
+      if (
+        run === undefined ||
+        typeof run.sessionKey !== "string" ||
+        (run.status !== "accepted" && run.status !== "running")
+      ) {
+        return;
+      }
+
+      const sessionUpdate = (update as Record<string, unknown>).sessionUpdate;
+      if (sessionUpdate === "tool_call") {
+        const title = (update as Record<string, unknown>).title;
+        const kind = (update as Record<string, unknown>).kind;
+        const toolCallId = (update as Record<string, unknown>).toolCallId;
+        const toolName =
+          typeof title === "string" && title.trim().length > 0
+            ? title.trim()
+            : typeof kind === "string" && kind.trim().length > 0
+              ? kind.trim()
+              : "tool";
+        agentAuditLog.appendToolStart({
+          runId,
+          sessionKey: run.sessionKey,
+          toolName,
+          toolCallId: typeof toolCallId === "string" ? toolCallId : undefined,
+          args: (update as Record<string, unknown>).rawInput,
+        });
+        logControlPlane({
+          event: "tool_call.started",
+          runId,
+          sessionKey: run.sessionKey,
+          toolCallId: typeof toolCallId === "string" ? toolCallId : null,
+          toolName,
+        });
+      } else if (sessionUpdate === "tool_call_update") {
+        const toolCallId = (update as Record<string, unknown>).toolCallId;
+        const status = (update as Record<string, unknown>).status;
+        if (status === "completed" || status === "failed") {
+          const toolName = "tool";
+          agentAuditLog.appendToolEnd({
             runId,
             sessionKey: run.sessionKey,
             toolName,
             toolCallId: typeof toolCallId === "string" ? toolCallId : undefined,
-            args: (update as Record<string, unknown>).rawInput,
+            status: status === "completed" ? "ok" : "error",
+            resultSummary: (update as Record<string, unknown>).rawOutput,
+            error:
+              status === "failed" && typeof (update as Record<string, unknown>).error === "string"
+                ? ((update as Record<string, unknown>).error as string)
+                : undefined,
           });
           logControlPlane({
-            event: "tool_call.started",
+            event: "tool_call.completed",
+            level: status === "failed" ? "warn" : "info",
             runId,
             sessionKey: run.sessionKey,
             toolCallId: typeof toolCallId === "string" ? toolCallId : null,
-            toolName,
+            status,
           });
-        } else if (sessionUpdate === "tool_call_update") {
-          const toolCallId = (update as Record<string, unknown>).toolCallId;
-          const status = (update as Record<string, unknown>).status;
-          if (status === "completed" || status === "failed") {
-            const toolName = "tool";
-            agentAuditLog.appendToolEnd({
-              runId,
-              sessionKey: run.sessionKey,
-              toolName,
-              toolCallId: typeof toolCallId === "string" ? toolCallId : undefined,
-              status: status === "completed" ? "ok" : "error",
-              resultSummary: (update as Record<string, unknown>).rawOutput,
-              error:
-                status === "failed" && typeof (update as Record<string, unknown>).error === "string"
-                  ? ((update as Record<string, unknown>).error as string)
-                  : undefined,
-            });
-            logControlPlane({
-              event: "tool_call.completed",
-              level: status === "failed" ? "warn" : "info",
-              runId,
-              sessionKey: run.sessionKey,
-              toolCallId: typeof toolCallId === "string" ? toolCallId : null,
-              status,
-            });
-          }
         }
       }
 
       emitSse("run/update", { runId, sessionId, update: update as Record<string, unknown> });
+
+      const mapped = mapSessionUpdateToChatStreamEvent({
+        runId,
+        sessionKey: run.sessionKey,
+        update: update as Record<string, unknown>,
+      });
+      if (mapped !== undefined) {
+        runEventBuffer.append(runId, mapped);
+      }
     }
   );
 
@@ -377,233 +434,260 @@ export async function main(): Promise<void> {
     }
   };
 
-  const server = createServer(async (req, res) => {
-    const method = req.method ?? "GET";
-    const url = req.url ?? "/";
-
-    if (method === "GET" && url === "/api/events/stream") {
-      sseHub.addClient(req, res);
-      return;
+  const submitPrompt = async (input: {
+    sessionKey: string;
+    message: string;
+    idempotencyKey?: string;
+  }) => {
+    const requestHash = toCommandRequestHash(input.message);
+    const idempotency = runLifecycle.resolveIdempotency(
+      input.sessionKey,
+      input.idempotencyKey,
+      requestHash
+    );
+    if (idempotency.kind === "duplicate") {
+      const sessionId = runLifecycle.runs().get(idempotency.accepted.runId)?.sessionId;
+      return {
+        accepted: idempotency.accepted,
+        sessionId: sessionId ?? "",
+        idempotency: "duplicate" as const,
+      };
+    }
+    if (idempotency.kind === "conflict") {
+      throw new Error(`IDEMPOTENCY_CONFLICT: ${idempotency.message}`);
     }
 
-    if (method === "GET" && url === "/api/snapshot") {
-      const snapshot = buildSnapshotResponse({
-        runById: runLifecycle.runs(),
-        listToolEvents: (runId) => uiRuntime.listToolEvents(runId),
-        listPendingPermissions: () => permissionGateway.listPending(),
+    const session = await resolveOrCreateSession(input.sessionKey, {
+      sessionsByKey: runLifecycle.sessions(),
+      recoveryStore,
+      isLoadSessionEnabled: loadSessionCapability,
+      requestWorker: async (method, params) => {
+        return await supervisor.request(method, params, { timeoutMs: 5000 });
+      },
+    });
+
+    const accepted: AcceptedResponse = runLifecycle.beginRun(input.sessionKey, session, {
+      sessionRecovered: session.sessionRecovered,
+      sessionRecoveryMode: session.recoveryMode,
+      sessionRecoveryReason: session.fallbackReason,
+    });
+    runLifecycle.bindIdempotency(input.sessionKey, input.idempotencyKey, requestHash, accepted);
+    // Ensure per-run buffer exists before worker notifications arrive (POST->SSE race).
+    runEventBuffer.ensureRun(accepted.runId, input.sessionKey);
+    chatHistoryStore.appendUserMessage({
+      sessionKey: input.sessionKey,
+      runId: accepted.runId,
+      message: input.message,
+      timestamp: accepted.acceptedAt,
+    });
+    agentAuditLog.appendRunStart({
+      runId: accepted.runId,
+      sessionKey: input.sessionKey,
+      sessionId: session.sessionId,
+    });
+    if (session.recoveryMode === "fallback_new_session") {
+      logControlPlane({
+        level: "warn",
+        event: "session.new_fallback",
+        runId: accepted.runId,
+        sessionKey: input.sessionKey,
+        toolCallId: null,
+        message: session.fallbackReason ?? "session/load fallback to session/new",
+        sessionId: session.sessionId,
       });
-      writeJson(res, 200, snapshot);
-      return;
     }
+    logControlPlane({
+      event: "run.accepted",
+      runId: accepted.runId,
+      sessionKey: input.sessionKey,
+      toolCallId: null,
+      sessionId: session.sessionId,
+      sessionRecoveryMode: accepted.sessionRecoveryMode ?? null,
+      sessionRecovered: accepted.sessionRecovered ?? null,
+    });
+    emitSse("run/accepted", { ...accepted, sessionId: session.sessionId });
 
-    if (method === "POST" && url === "/api/commands") {
+    void (async () => {
+      runLifecycle.markRunning(accepted.runId);
+
       try {
-        const payload = await readJsonBody<unknown>(req);
-        if (!isCommandRequest(payload)) {
-          writeJson(res, 400, {
-            code: "INVALID_REQUEST",
-            message: "sessionKey/message are required",
-          });
-          return;
-        }
-        const idempotencyKey = normalizeIdempotencyKey(payload.idempotencyKey);
-        const requestHash = toCommandRequestHash(payload.message);
-        const idempotency = runLifecycle.resolveIdempotency(
-          payload.sessionKey,
-          idempotencyKey,
-          requestHash
-        );
-        if (idempotency.kind === "duplicate") {
-          writeJson(res, 202, idempotency.accepted);
-          return;
-        }
-        if (idempotency.kind === "conflict") {
-          writeJson(res, 409, {
-            code: "INVALID_REQUEST",
-            message: idempotency.message,
-          });
-          return;
-        }
-
-        const session = await resolveOrCreateSession(payload.sessionKey, {
-          sessionsByKey: runLifecycle.sessions(),
-          recoveryStore,
-          isLoadSessionEnabled: loadSessionCapability,
-          requestWorker: async (method, params) => {
-            return await supervisor.request(method, params, { timeoutMs: 5000 });
-          },
-        });
-
-        const accepted: AcceptedResponse = runLifecycle.beginRun(payload.sessionKey, session, {
-          sessionRecovered: session.sessionRecovered,
-          sessionRecoveryMode: session.recoveryMode,
-          sessionRecoveryReason: session.fallbackReason,
-        });
-        runLifecycle.bindIdempotency(payload.sessionKey, idempotencyKey, requestHash, accepted);
-        agentAuditLog.appendRunStart({
-          runId: accepted.runId,
-          sessionKey: payload.sessionKey,
-          sessionId: session.sessionId,
-        });
-        if (session.recoveryMode === "fallback_new_session") {
-          logControlPlane({
-            level: "warn",
-            event: "session.new_fallback",
-            runId: accepted.runId,
-            sessionKey: payload.sessionKey,
-            toolCallId: null,
-            message: session.fallbackReason ?? "session/load fallback to session/new",
+        const result = await supervisor.request(
+          "session/prompt",
+          {
             sessionId: session.sessionId,
-          });
+            prompt: input.message,
+            meta: {
+              sessionKey: input.sessionKey,
+              memoryScope: input.sessionKey === "main" ? "main" : "spoke",
+              memoryWriteEnabled: false,
+              origin: "user",
+              isHeartbeat: false,
+            },
+          },
+          { timeoutMs: 5 * 60 * 1000 }
+        );
+
+        const runBeforeCompletion = runLifecycle.runs().get(accepted.runId);
+        if (runBeforeCompletion?.status === "cancelled") {
+          return;
         }
-        logControlPlane({
-          event: "run.accepted",
+        const stopReason = typeof result.stopReason === "string" ? result.stopReason : "end_turn";
+        const done = runLifecycle.completeRun(accepted.runId, stopReason);
+        if (done === undefined) {
+          return;
+        }
+        const text = typeof result.text === "string" ? result.text : "";
+        runEventBuffer.append(
+          accepted.runId,
+          mapPromptResultToChatStreamEvent({
+            runId: accepted.runId,
+            sessionKey: input.sessionKey,
+            text,
+          })
+        );
+        chatHistoryStore.appendAssistantMessage({
+          sessionKey: input.sessionKey,
           runId: accepted.runId,
-          sessionKey: payload.sessionKey,
-          toolCallId: null,
-          sessionId: session.sessionId,
-          sessionRecoveryMode: accepted.sessionRecoveryMode ?? null,
-          sessionRecovered: accepted.sessionRecovered ?? null,
+          message: text,
+          timestamp: done.finishedAt ?? new Date().toISOString(),
         });
-        writeJson(res, 202, accepted);
-        emitSse("run/accepted", { ...accepted, sessionId: session.sessionId });
-
-        void (async () => {
-          runLifecycle.markRunning(accepted.runId);
-
-          try {
-            const result = await supervisor.request(
-              "session/prompt",
-              {
-                sessionId: session.sessionId,
-                prompt: payload.message,
-                meta: {
-                  sessionKey: payload.sessionKey,
-                  memoryScope: payload.sessionKey === "main" ? "main" : "spoke",
-                  memoryWriteEnabled: false,
-                  origin: "user",
-                  isHeartbeat: false,
-                },
-              },
-              { timeoutMs: 5 * 60 * 1000 }
-            );
-
-            const done = runLifecycle.completeRun(
-              accepted.runId,
-              typeof result.stopReason === "string" ? result.stopReason : "end_turn"
-            );
-            if (done === undefined) {
-              return;
-            }
-
-            emitSse("run/completed", {
-              runId: accepted.runId,
-              sessionId: session.sessionId,
-              stopReason: done.stopReason,
-              text: typeof result.text === "string" ? result.text : "",
-            });
-            agentAuditLog.appendRunEnd({
-              runId: accepted.runId,
-              sessionKey: payload.sessionKey,
-              status: "ok",
-              stopReason: done.stopReason,
-            });
-            logControlPlane({
-              event: "run.completed",
-              runId: accepted.runId,
-              sessionKey: payload.sessionKey,
-              toolCallId: null,
-              stopReason: done.stopReason,
-            });
-            await maybeRunSummaryBatch({
-              runId: accepted.runId,
-              sessionKey: payload.sessionKey,
-            });
-          } catch (error) {
-            const summary = toErrorSummary(error);
-            const failed = runLifecycle.failRun(accepted.runId, summary);
-            if (failed === undefined) {
-              return;
-            }
-
-            emitSse("run/failed", {
-              runId: accepted.runId,
-              sessionId: session.sessionId,
-              errorCode: summary.errorCode,
-              errorMessage: summary.errorMessage,
-            });
-            agentAuditLog.appendRunEnd({
-              runId: accepted.runId,
-              sessionKey: payload.sessionKey,
-              status: "error",
-              error: summary.errorMessage,
-            });
-            logControlPlane({
-              level: "warn",
-              event: "run.failed",
-              runId: accepted.runId,
-              sessionKey: payload.sessionKey,
-              toolCallId: null,
-              errorCode: summary.errorCode,
-              message: summary.errorMessage,
-            });
-          } finally {
-            runLifecycle.clearActiveSessionRun(session.sessionId);
-            try {
-              await recoveryStore.upsert({
-                sessionKey: payload.sessionKey,
-                sessionId: session.sessionId,
-                lastRunId: accepted.runId,
-              });
-            } catch (error) {
-              const summary = toErrorSummary(error);
-              logControlPlane({
-                level: "warn",
-                event: "session_recovery.persist_failed",
-                runId: accepted.runId,
-                sessionKey: payload.sessionKey,
-                toolCallId: null,
-                errorCode: summary.errorCode,
-                message: summary.errorMessage,
-              });
-            }
-          }
-        })();
+        emitSse("run/completed", {
+          runId: accepted.runId,
+          sessionId: session.sessionId,
+          stopReason: done.stopReason,
+          text,
+        });
+        agentAuditLog.appendRunEnd({
+          runId: accepted.runId,
+          sessionKey: input.sessionKey,
+          status: "ok",
+          stopReason: done.stopReason,
+        });
+        logControlPlane({
+          event: "run.completed",
+          runId: accepted.runId,
+          sessionKey: input.sessionKey,
+          toolCallId: null,
+          stopReason: done.stopReason,
+        });
+        await maybeRunSummaryBatch({
+          runId: accepted.runId,
+          sessionKey: input.sessionKey,
+        });
       } catch (error) {
+        const runBeforeFailure = runLifecycle.runs().get(accepted.runId);
+        if (runBeforeFailure?.status === "cancelled") {
+          return;
+        }
+
         const summary = toErrorSummary(error);
+        const failed = runLifecycle.failRun(accepted.runId, summary);
+        if (failed === undefined) {
+          return;
+        }
+        runEventBuffer.append(
+          accepted.runId,
+          mapRunFailureToChatStreamEvent({
+            runId: accepted.runId,
+            sessionKey: input.sessionKey,
+            summary,
+          })
+        );
+        emitSse("run/failed", {
+          runId: accepted.runId,
+          sessionId: session.sessionId,
+          errorCode: summary.errorCode,
+          errorMessage: summary.errorMessage,
+        });
+        agentAuditLog.appendRunEnd({
+          runId: accepted.runId,
+          sessionKey: input.sessionKey,
+          status: "error",
+          error: summary.errorMessage,
+        });
         logControlPlane({
           level: "warn",
-          event: "run.rejected",
-          runId: null,
-          sessionKey: null,
+          event: "run.failed",
+          runId: accepted.runId,
+          sessionKey: input.sessionKey,
           toolCallId: null,
           errorCode: summary.errorCode,
           message: summary.errorMessage,
         });
-        writeJson(res, toHttpStatusCode(summary), {
-          code: summary.errorCode,
-          message: summary.errorMessage,
-        });
+      } finally {
+        clearPermissionRequestRun(accepted.runId);
+        runLifecycle.clearActiveSessionRun(session.sessionId);
+        try {
+          await recoveryStore.upsert({
+            sessionKey: input.sessionKey,
+            sessionId: session.sessionId,
+            lastRunId: accepted.runId,
+          });
+        } catch (error) {
+          const summary = toErrorSummary(error);
+          logControlPlane({
+            level: "warn",
+            event: "session_recovery.persist_failed",
+            runId: accepted.runId,
+            sessionKey: input.sessionKey,
+            toolCallId: null,
+            errorCode: summary.errorCode,
+            message: summary.errorMessage,
+          });
+        }
       }
+    })();
+
+    return {
+      accepted,
+      sessionId: session.sessionId,
+      idempotency: "miss" as const,
+    };
+  };
+
+  const controlPlaneHandler = createControlPlaneRequestHandler({
+    sseHub,
+    renderRootPage: () => renderMinimalUiPage(),
+    buildSnapshot: () =>
+      buildSnapshotResponse({
+        runById: runLifecycle.runs(),
+        listToolEvents: (runId) => uiRuntime.listToolEvents(runId),
+        listPendingPermissions: () => permissionGateway.listPending(),
+      }),
+    submitPrompt,
+    readRunAudit: async (runId) => await readRunAudit(runId, agentAuditLog),
+    runLifecycle,
+    runEventBuffer,
+    chatHistoryStore,
+    supervisor,
+    permissionGateway,
+  });
+
+  const server = createServer((req, res) => {
+    const method = req.method ?? "GET";
+    const url = new URL(req.url ?? "/", "http://127.0.0.1");
+    const isApiRequest = url.pathname.startsWith("/api/");
+
+    if (!isApiRequest && method === "GET" && viteDevServer !== undefined) {
+      viteDevServer.middlewares(req, res, (error: unknown) => {
+        if (error != null) {
+          const summary = toErrorSummary(error);
+          res.statusCode = 500;
+          res.setHeader("content-type", "application/json; charset=utf-8");
+          res.end(
+            JSON.stringify({
+              code: summary.errorCode,
+              message: summary.errorMessage,
+            })
+          );
+          return;
+        }
+        void controlPlaneHandler(req, res);
+      });
       return;
     }
 
-    if (method === "GET" && (url === "/" || url === "/index.html")) {
-      res.statusCode = 200;
-      res.setHeader("content-type", "text/html; charset=utf-8");
-      res.end(renderMinimalUiPage());
-      return;
-    }
-
-    const runAuditMatch = url.match(/^\/api\/chat\/runs\/([^/]+)\/audit$/);
-    if (method === "GET" && runAuditMatch && runAuditMatch[1]) {
-      const runId = decodeURIComponent(runAuditMatch[1]);
-      const audit = await readRunAudit(runId, agentAuditLog);
-      writeJson(res, 200, audit);
-      return;
-    }
-
-    writeJson(res, 404, { code: "NOT_FOUND", message: `${method} ${url}` });
+    void controlPlaneHandler(req, res);
   });
 
   const host = process.env.ADJUTANT_CONTROL_PLANE_HOST ?? "127.0.0.1";
@@ -645,6 +729,9 @@ export async function main(): Promise<void> {
       server.close(() => resolveClose());
     });
     await supervisor.stop();
+    if (viteDevServer !== undefined) {
+      await viteDevServer.close();
+    }
     await agentAuditLog.flush();
     await sandboxRuntime.dispose();
     logControlPlane({

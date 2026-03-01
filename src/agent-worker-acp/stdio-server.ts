@@ -180,11 +180,16 @@ async function main(): Promise<void> {
       }
 
       if (request.method === "session/cancel") {
+        if (id === undefined) {
+          writeError(null, -32600, "session/cancel requires id");
+          return;
+        }
         if (typeof params.sessionId !== "string") {
+          writeError(id, -32602, "sessionId is required");
           return;
         }
 
-        handleSessionCancel({ sessionId: params.sessionId }, { adapter });
+        writeSuccess(id, handleSessionCancel({ sessionId: params.sessionId }, { adapter }));
         return;
       }
 

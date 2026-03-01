@@ -78,6 +78,31 @@ test("RunLifecycle failRun stores normalized downstream error", () => {
   assert.equal(failed.errorMessage, "boom");
 });
 
+test("RunLifecycle cancelRun only updates active run", () => {
+  const runLifecycle = new RunLifecycle({
+    now: () => "2026-02-28T00:00:00.000Z",
+    newMessageId: () => "msg_test",
+  });
+  const sessions = runLifecycle.sessions();
+  sessions.set("main", {
+    sessionId: "sess_cancel",
+    runSequence: 0,
+  });
+  const session = sessions.get("main");
+  assert.ok(session);
+
+  const accepted = runLifecycle.beginRun("main", session);
+  const cancelled = runLifecycle.cancelRun(accepted.runId, "cancelled");
+  assert.ok(cancelled);
+  assert.equal(cancelled.status, "cancelled");
+
+  const cancelledAgain = runLifecycle.cancelRun(accepted.runId, "cancelled");
+  assert.equal(cancelledAgain, undefined);
+
+  const completedAfterCancel = runLifecycle.completeRun(accepted.runId, "end_turn");
+  assert.equal(completedAfterCancel, undefined);
+});
+
 test("RunLifecycle resolves idempotency duplicate and conflict", () => {
   const runLifecycle = new RunLifecycle({
     now: () => "2026-02-28T00:00:00.000Z",
