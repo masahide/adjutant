@@ -197,6 +197,13 @@ export type ThreadSnapshotResponse = SnapshotResponse & {
   thread: ThreadRecord;
 };
 
+export type PostPermissionResolveRequest = {
+  requestId: string;
+  outcome: "allow" | "deny";
+};
+
+export type PostPermissionResolveResponse = Record<string, never>;
+
 export function toPermissionSummary(input: PendingPermission): PermissionSummary {
   return {
     requestId: input.requestId,

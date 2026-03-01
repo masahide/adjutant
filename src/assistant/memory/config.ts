@@ -1,3 +1,4 @@
+import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
 import type { MemorySearchRuntimeConfig } from "./types.js";
@@ -37,7 +38,7 @@ export function resolveMemorySearchRuntimeConfig(params?: {
     params?.stateDir ??
     (typeof env.ADJUTANT_STATE_DIR === "string" && env.ADJUTANT_STATE_DIR.trim().length > 0
       ? resolve(env.ADJUTANT_STATE_DIR.trim())
-      : resolve(process.cwd(), ".adjutant", "state"));
+      : resolve(homedir(), ".adjutant"));
   const agentId = params?.agentId ?? "main";
   const dbPath =
     typeof env.ADJUTANT_MEMORY_SEARCH_DB_PATH === "string" &&

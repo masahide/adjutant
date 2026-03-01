@@ -5,11 +5,20 @@ import type { WorkerSupervisor } from "../acp/worker-supervisor.js";
 import type {
   AcceptedResponse,
   CommandRequest,
+  CreateThreadRequest,
+  CreateThreadResponse,
   GetChatHistoryResponse,
+  GetThreadResponse,
+  ListThreadsResponse,
+  PostPermissionResolveRequest,
+  PostPermissionResolveResponse,
   PostChatAbortRequest,
   PostChatMessageRequest,
   PostChatMessageResponse,
   SnapshotResponse,
+  ThreadSnapshotResponse,
+  UpdateThreadRequest,
+  UpdateThreadResponse,
 } from "../contracts/http-api.js";
 import { toErrorSummary, toHttpStatusCode } from "./error-summary.js";
 import type { RunLifecycle } from "./run-lifecycle.js";
@@ -17,6 +26,7 @@ import type { SseHub } from "./sse-hub.js";
 import type { RunEventBuffer } from "./run-event-buffer.js";
 import { mapAbortToChatStreamEvent } from "./chat-stream-event-mapper.js";
 import type { ChatHistoryStore } from "./chat-history-store.js";
+import type { ThreadRepository } from "./thread-repository.js";
 
 export interface SubmitPromptResult {
   accepted: AcceptedResponse;
@@ -39,6 +49,8 @@ interface ControlPlaneRouterDeps {
   runLifecycle: RunLifecycle;
   runEventBuffer: RunEventBuffer;
   chatHistoryStore: ChatHistoryStore;
+  threadRepository: ThreadRepository;
+  buildThreadSnapshot: (threadId: string) => ThreadSnapshotResponse | undefined;
   supervisor: WorkerSupervisor;
   permissionGateway: PermissionGateway;
 }
@@ -66,12 +78,33 @@ async function readJsonBody<T>(req: IncomingMessage): Promise<T> {
   }
 }
 
+async function readJsonBodyOptional<T>(req: IncomingMessage): Promise<T | undefined> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+
+  const body = Buffer.concat(chunks).toString("utf8").trim();
+  if (body.length === 0) {
+    return undefined;
+  }
+  try {
+    return JSON.parse(body) as T;
+  } catch {
+    throw new Error("INVALID_REQUEST: malformed json body");
+  }
+}
+
 function isCommandRequest(value: unknown): value is CommandRequest {
   if (typeof value !== "object" || value === null) {
     return false;
   }
   const record = value as Record<string, unknown>;
-  return typeof record.sessionKey === "string" && typeof record.message === "string";
+  return (
+    typeof record.sessionKey === "string" &&
+    record.sessionKey.trim().length > 0 &&
+    typeof record.message === "string"
+  );
 }
 
 function isPostChatMessageRequest(value: unknown): value is PostChatMessageRequest {
@@ -98,6 +131,51 @@ function isPostChatAbortRequest(value: unknown): value is PostChatAbortRequest {
     typeof record.sessionKey === "string" &&
     record.sessionKey.trim().length > 0 &&
     (record.runId === undefined || typeof record.runId === "string")
+  );
+}
+
+function isCreateThreadRequest(value: unknown): value is CreateThreadRequest {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record);
+  if (keys.some((key) => key !== "title")) {
+    return false;
+  }
+  return record.title === undefined || typeof record.title === "string";
+}
+
+function isUpdateThreadRequest(value: unknown): value is UpdateThreadRequest {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record);
+  if (keys.length === 0) {
+    return false;
+  }
+  if (keys.some((key) => key !== "title" && key !== "archived")) {
+    return false;
+  }
+  if (record.title !== undefined && typeof record.title !== "string") {
+    return false;
+  }
+  if (record.archived !== undefined && typeof record.archived !== "boolean") {
+    return false;
+  }
+  return true;
+}
+
+function isPostPermissionResolveRequest(value: unknown): value is PostPermissionResolveRequest {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.requestId === "string" &&
+    record.requestId.trim().length > 0 &&
+    (record.outcome === "allow" || record.outcome === "deny")
   );
 }
 
@@ -169,6 +247,153 @@ export function createControlPlaneRequestHandler(deps: ControlPlaneRouterDeps) {
       return;
     }
 
+    if (method === "POST" && url.pathname === "/api/permissions/resolve") {
+      try {
+        const payload = await readJsonBody<unknown>(req);
+        if (!isPostPermissionResolveRequest(payload)) {
+          writeJson(res, 400, {
+            code: "INVALID_REQUEST",
+            message: "requestId/outcome(allow|deny) are required",
+          });
+          return;
+        }
+        const resolved = deps.permissionGateway.resolvePermission(
+          payload.requestId.trim(),
+          payload.outcome
+        );
+        if (!resolved) {
+          writeJson(res, 404, {
+            code: "NOT_FOUND",
+            message: `unknown permission requestId: ${payload.requestId}`,
+          });
+          return;
+        }
+        const response: PostPermissionResolveResponse = {};
+        writeJson(res, 200, response);
+      } catch (error) {
+        const summary = toErrorSummary(error);
+        writeJson(res, toHttpStatusCode(summary), {
+          code: summary.errorCode,
+          message: summary.errorMessage,
+        });
+      }
+      return;
+    }
+
+    if (method === "GET" && url.pathname === "/api/threads") {
+      const response: ListThreadsResponse = deps.threadRepository.list();
+      writeJson(res, 200, response);
+      return;
+    }
+
+    if (method === "POST" && url.pathname === "/api/threads") {
+      try {
+        const payload = await readJsonBodyOptional<unknown>(req);
+        if (payload !== undefined && !isCreateThreadRequest(payload)) {
+          writeJson(res, 400, {
+            code: "INVALID_REQUEST",
+            message: "title is optional and must be string",
+          });
+          return;
+        }
+        const request = payload as CreateThreadRequest | undefined;
+        const title = request?.title;
+        const created = await deps.threadRepository.create({ title });
+        const response: CreateThreadResponse = created;
+        writeJson(res, 201, response);
+      } catch (error) {
+        const summary = toErrorSummary(error);
+        writeJson(res, toHttpStatusCode(summary), {
+          code: summary.errorCode,
+          message: summary.errorMessage,
+        });
+      }
+      return;
+    }
+
+    const threadSnapshotMatch = /^\/api\/threads\/([^/]+)\/snapshot$/.exec(url.pathname);
+    if (method === "GET" && threadSnapshotMatch?.[1]) {
+      const threadId = decodeURIComponent(threadSnapshotMatch[1]);
+      const snapshot = deps.buildThreadSnapshot(threadId);
+      if (snapshot === undefined) {
+        writeJson(res, 404, { code: "NOT_FOUND", message: `unknown threadId: ${threadId}` });
+        return;
+      }
+      writeJson(res, 200, snapshot);
+      return;
+    }
+
+    const threadMatch = /^\/api\/threads\/([^/]+)$/.exec(url.pathname);
+    if (threadMatch?.[1]) {
+      const threadId = decodeURIComponent(threadMatch[1]);
+      if (method === "GET") {
+        const thread = deps.threadRepository.getOrVirtual(threadId);
+        if (thread === undefined) {
+          writeJson(res, 404, { code: "NOT_FOUND", message: `unknown threadId: ${threadId}` });
+          return;
+        }
+        const response: GetThreadResponse = thread;
+        writeJson(res, 200, response);
+        return;
+      }
+
+      if (method === "PATCH") {
+        try {
+          const payload = await readJsonBody<unknown>(req);
+          if (!isUpdateThreadRequest(payload)) {
+            writeJson(res, 400, {
+              code: "INVALID_REQUEST",
+              message: "only title/archived fields are allowed",
+            });
+            return;
+          }
+          const updated = await deps.threadRepository.update(threadId, {
+            title: payload.title,
+            archived: payload.archived,
+          });
+          if (updated === undefined) {
+            writeJson(res, 404, { code: "NOT_FOUND", message: `unknown threadId: ${threadId}` });
+            return;
+          }
+          const response: UpdateThreadResponse = updated;
+          writeJson(res, 200, response);
+        } catch (error) {
+          const summary = toErrorSummary(error);
+          writeJson(res, toHttpStatusCode(summary), {
+            code: summary.errorCode,
+            message: summary.errorMessage,
+          });
+        }
+        return;
+      }
+
+      if (method === "DELETE") {
+        try {
+          if (threadId === "main") {
+            writeJson(res, 403, {
+              code: "FORBIDDEN",
+              message: "main thread cannot be deleted",
+            });
+            return;
+          }
+          const deleted = await deps.threadRepository.delete(threadId);
+          if (!deleted) {
+            writeJson(res, 404, { code: "NOT_FOUND", message: `unknown threadId: ${threadId}` });
+            return;
+          }
+          res.statusCode = 204;
+          res.end();
+        } catch (error) {
+          const summary = toErrorSummary(error);
+          writeJson(res, toHttpStatusCode(summary), {
+            code: summary.errorCode,
+            message: summary.errorMessage,
+          });
+        }
+        return;
+      }
+    }
+
     if (method === "POST" && url.pathname === "/api/commands") {
       try {
         const payload = await readJsonBody<unknown>(req);
@@ -181,7 +406,7 @@ export function createControlPlaneRequestHandler(deps: ControlPlaneRouterDeps) {
         }
 
         const result = await deps.submitPrompt({
-          sessionKey: payload.sessionKey,
+          sessionKey: payload.sessionKey.trim(),
           message: payload.message,
           idempotencyKey: normalizeIdempotencyKey(payload.idempotencyKey),
         });
@@ -213,8 +438,17 @@ export function createControlPlaneRequestHandler(deps: ControlPlaneRouterDeps) {
           });
           return;
         }
+        const sessionKey = payload.sessionKey.trim();
+        const thread = deps.threadRepository.getOrVirtual(sessionKey);
+        if (thread === undefined) {
+          writeJson(res, 404, {
+            code: "NOT_FOUND",
+            message: `unknown sessionKey: ${sessionKey}`,
+          });
+          return;
+        }
         const result = await deps.submitPrompt({
-          sessionKey: payload.sessionKey.trim(),
+          sessionKey,
           message: payload.message,
           idempotencyKey: payload.idempotencyKey.trim(),
         });

@@ -7,6 +7,7 @@ import { handleSessionCancel } from "./handlers/session-cancel.js";
 import { handleSessionLoad } from "./handlers/session-load.js";
 import { handleSessionNew } from "./handlers/session-new.js";
 import { handleSessionPrompt } from "./handlers/session-prompt.js";
+import { configureWorkerSandboxFromEnv } from "./sandbox-bootstrap.js";
 import { WorkerSessionStore } from "./session-store.js";
 import { WorkerRuntimeError } from "./errors.js";
 
@@ -41,6 +42,8 @@ function isObject(value: unknown): value is Record<string, unknown> {
 }
 
 async function main(): Promise<void> {
+  await configureWorkerSandboxFromEnv(process.env, process.cwd());
+
   const sessionStore = new WorkerSessionStore({
     filePath:
       typeof process.env.ACP_WORKER_SESSION_STORE_PATH === "string" &&

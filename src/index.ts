@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer as createViteServer, type ViteDevServer } from "vite";
@@ -11,7 +12,12 @@ import { SessionRecoveryStore } from "./control-plane/acp/session-recovery-store
 import { WorkerSupervisor } from "./control-plane/acp/worker-supervisor.js";
 import { AgentAuditLog } from "./control-plane/audit/agent-audit-log.js";
 import { readRunAudit } from "./control-plane/audit/audit-reader.js";
-import { type AcceptedResponse, type StreamEventType } from "./control-plane/contracts/http-api.js";
+import {
+  toPermissionSummary,
+  type AcceptedResponse,
+  type StreamEventType,
+  type ThreadSnapshotResponse,
+} from "./control-plane/contracts/http-api.js";
 import { toErrorSummary } from "./control-plane/http/error-summary.js";
 import {
   mapPermissionEventToChatStreamEvent,
@@ -23,7 +29,9 @@ import { ChatHistoryStore } from "./control-plane/http/chat-history-store.js";
 import { createControlPlaneRequestHandler } from "./control-plane/http/control-plane-router.js";
 import { RunLifecycle } from "./control-plane/http/run-lifecycle.js";
 import { RunEventBuffer } from "./control-plane/http/run-event-buffer.js";
+import { SessionThreadCoordinator } from "./control-plane/http/session-thread-coordinator.js";
 import { SseHub } from "./control-plane/http/sse-hub.js";
+import { ThreadRepository } from "./control-plane/http/thread-repository.js";
 import { writeStructuredLog } from "./control-plane/logging/structured-log.js";
 import { initializeSandboxRuntime } from "./sandbox/runtime.js";
 import { buildSnapshotResponse } from "./control-plane/http/snapshot-builder.js";
@@ -37,17 +45,35 @@ function resolveProjectRoot(): string {
 function createWorkerSupervisor(
   cwd: string,
   stateDir: string,
+  sandbox: { mode: "off" | "non-main" | "all"; enabled: boolean; containerName?: string },
   onLog: (entry: Record<string, unknown>) => void,
   onNotification: (notification: { method: string; params: Record<string, unknown> }) => void
 ): WorkerSupervisor {
+  const workerEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    ACP_WORKER_SESSION_STORE_PATH: join(stateDir, "worker", "session-store.json"),
+  };
+
+  if (sandbox.enabled && typeof sandbox.containerName === "string") {
+    workerEnv.ACP_WORKER_SANDBOX_MODE = sandbox.mode;
+    workerEnv.ACP_WORKER_SANDBOX_CONTAINER_NAME = sandbox.containerName;
+    workerEnv.ACP_WORKER_SANDBOX_HOST_WORKSPACE_DIR = cwd;
+    workerEnv.ACP_WORKER_SANDBOX_WORKDIR =
+      process.env.ADJUTANT_SANDBOX_WORKDIR?.trim() || "/workspace";
+    workerEnv.ACP_WORKER_SANDBOX_ENV_ALLOWLIST = process.env.ADJUTANT_SANDBOX_ENV_ALLOWLIST ?? "";
+  } else {
+    workerEnv.ACP_WORKER_SANDBOX_MODE = "off";
+    delete workerEnv.ACP_WORKER_SANDBOX_CONTAINER_NAME;
+    delete workerEnv.ACP_WORKER_SANDBOX_HOST_WORKSPACE_DIR;
+    delete workerEnv.ACP_WORKER_SANDBOX_WORKDIR;
+    delete workerEnv.ACP_WORKER_SANDBOX_ENV_ALLOWLIST;
+  }
+
   return new WorkerSupervisor({
     command: process.execPath,
     args: ["--import", "tsx", "src/agent-worker-acp/stdio-server.ts"],
     cwd,
-    env: {
-      ...process.env,
-      ACP_WORKER_SESSION_STORE_PATH: join(stateDir, "worker", "session-store.json"),
-    },
+    env: workerEnv,
     maxRestarts: 3,
     restartDelayMs: 100,
     onLog,
@@ -116,7 +142,7 @@ export async function main(): Promise<void> {
   const stateDir =
     stateDirEnv !== undefined && stateDirEnv.length > 0
       ? resolve(stateDirEnv)
-      : resolve(cwd, ".adjutant", "state");
+      : resolve(homedir(), ".adjutant");
   const recoveryStore = SessionRecoveryStore.fromStateDir(stateDir, {
     onWarn: (message, meta) => {
       logControlPlane({
@@ -131,6 +157,20 @@ export async function main(): Promise<void> {
     },
   });
   await recoveryStore.initialize();
+  const threadRepository = ThreadRepository.fromStateDir(stateDir, {
+    onWarn: (message, meta) => {
+      logControlPlane({
+        level: "warn",
+        event: "thread_repository.warn",
+        message,
+        runId: null,
+        sessionKey: typeof meta?.threadId === "string" ? meta.threadId : null,
+        toolCallId: null,
+        details: meta,
+      });
+    },
+  });
+  await threadRepository.initialize();
   const agentAuditLog = AgentAuditLog.fromStateDir(stateDir, process.env, {
     onWarn: (message, meta) => {
       logControlPlane({
@@ -197,6 +237,22 @@ export async function main(): Promise<void> {
   const sseHub = new SseHub();
   const runEventBuffer = new RunEventBuffer({ retentionMs: 60_000 });
   const chatHistoryStore = new ChatHistoryStore();
+  const sessionThreadCoordinator = new SessionThreadCoordinator({
+    threadRepository,
+    recoveryStore,
+    toErrorSummary,
+    onRecoveryPersistFailed: (input) => {
+      logControlPlane({
+        level: "warn",
+        event: "session_recovery.persist_failed",
+        runId: input.runId,
+        sessionKey: input.sessionKey,
+        toolCallId: null,
+        errorCode: input.errorCode,
+        message: input.message,
+      });
+    },
+  });
   const permissionRequestRunById = new Map<string, { runId: string; sessionKey: string }>();
   const clearPermissionRequestRun = (runId: string) => {
     for (const [requestId, tracked] of permissionRequestRunById) {
@@ -262,6 +318,7 @@ export async function main(): Promise<void> {
   const supervisor = createWorkerSupervisor(
     cwd,
     stateDir,
+    sandboxRuntime,
     (entry) => {
       logControlPlane({
         level: entry.level === "error" ? "error" : entry.level === "warn" ? "warn" : "info",
@@ -439,6 +496,8 @@ export async function main(): Promise<void> {
     message: string;
     idempotencyKey?: string;
   }) => {
+    await sessionThreadCoordinator.ensureThreadForSession(input.sessionKey);
+
     const requestHash = toCommandRequestHash(input.message);
     const idempotency = runLifecycle.resolveIdempotency(
       input.sessionKey,
@@ -518,7 +577,7 @@ export async function main(): Promise<void> {
             prompt: input.message,
             meta: {
               sessionKey: input.sessionKey,
-              memoryScope: input.sessionKey === "main" ? "main" : "spoke",
+              memoryScope: threadRepository.resolveMemoryScope(input.sessionKey),
               memoryWriteEnabled: false,
               origin: "user",
               isHeartbeat: false,
@@ -617,24 +676,12 @@ export async function main(): Promise<void> {
       } finally {
         clearPermissionRequestRun(accepted.runId);
         runLifecycle.clearActiveSessionRun(session.sessionId);
-        try {
-          await recoveryStore.upsert({
-            sessionKey: input.sessionKey,
-            sessionId: session.sessionId,
-            lastRunId: accepted.runId,
-          });
-        } catch (error) {
-          const summary = toErrorSummary(error);
-          logControlPlane({
-            level: "warn",
-            event: "session_recovery.persist_failed",
-            runId: accepted.runId,
-            sessionKey: input.sessionKey,
-            toolCallId: null,
-            errorCode: summary.errorCode,
-            message: summary.errorMessage,
-          });
-        }
+        await sessionThreadCoordinator.persistSessionRecovery({
+          runId: accepted.runId,
+          sessionKey: input.sessionKey,
+          sessionId: session.sessionId,
+          lastRunId: accepted.runId,
+        });
       }
     })();
 
@@ -642,6 +689,62 @@ export async function main(): Promise<void> {
       accepted,
       sessionId: session.sessionId,
       idempotency: "miss" as const,
+    };
+  };
+
+  const buildThreadSnapshot = (threadId: string): ThreadSnapshotResponse | undefined => {
+    const thread = threadRepository.getOrVirtual(threadId);
+    if (thread === undefined) {
+      return undefined;
+    }
+
+    const runs = [...runLifecycle.runs().values()]
+      .filter((run) => run.sessionKey === threadId)
+      .sort((a, b) => a.acceptedAt.localeCompare(b.acceptedAt));
+    const sessionIds = new Set(
+      runs
+        .map((run) => run.sessionId)
+        .filter((sessionId): sessionId is string => {
+          return typeof sessionId === "string";
+        })
+    );
+
+    const toolEventsByRun: ThreadSnapshotResponse["toolEventsByRun"] = {};
+    for (const run of runs) {
+      const records = uiRuntime
+        .listToolEvents(run.runId)
+        .map((record) => {
+          if (record.status === undefined) {
+            return null;
+          }
+          return {
+            runId: record.runId,
+            sessionId: record.sessionId,
+            toolCallId: record.toolCallId,
+            status: record.status,
+            title: record.title,
+            kind: record.kind,
+            updatedAt: record.updatedAt,
+          };
+        })
+        .filter((record): record is NonNullable<typeof record> => record !== null);
+      if (records.length > 0) {
+        toolEventsByRun[run.runId] = records;
+      }
+    }
+
+    const pendingPermissions = permissionGateway
+      .listPending()
+      // pending permission は process 内メモリ状態のみを正本としており、
+      // thread -> runs -> sessionId の現行 in-memory 関係でスコープを絞る。
+      .filter((permission) => sessionIds.has(permission.sessionId))
+      .map(toPermissionSummary);
+
+    return {
+      thread,
+      runs,
+      toolEventsByRun,
+      pendingPermissions,
     };
   };
 
@@ -659,6 +762,8 @@ export async function main(): Promise<void> {
     runLifecycle,
     runEventBuffer,
     chatHistoryStore,
+    threadRepository,
+    buildThreadSnapshot,
     supervisor,
     permissionGateway,
   });
@@ -704,6 +809,8 @@ export async function main(): Promise<void> {
         host,
         port,
         phaseBRolloutScope,
+        sandboxMode: sandboxRuntime.mode,
+        sandboxEnabled: sandboxRuntime.enabled,
         summaryBatchEnabled,
       });
       resolveListen();
@@ -742,12 +849,12 @@ export async function main(): Promise<void> {
     });
   };
 
-  process.once("SIGINT", () => {
-    void shutdown();
-  });
-  process.once("SIGTERM", () => {
-    void shutdown();
-  });
+  const shutdownSignals: NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP"];
+  for (const signal of shutdownSignals) {
+    process.on(signal, () => {
+      void shutdown();
+    });
+  }
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

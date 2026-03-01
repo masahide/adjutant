@@ -129,6 +129,25 @@ test("RunLifecycle resolves idempotency duplicate and conflict", () => {
   assert.equal(conflict.kind, "conflict");
 });
 
+test("RunLifecycle beginRun keeps runSequence monotonic for detached session objects", () => {
+  const runLifecycle = new RunLifecycle({
+    now: () => "2026-02-28T00:00:00.000Z",
+    newMessageId: () => "msg_test",
+  });
+  runLifecycle.sessions().set("main", {
+    sessionId: "sess_detached",
+    runSequence: 1,
+  });
+
+  const detached1 = { ...runLifecycle.sessions().get("main")! };
+  const accepted2 = runLifecycle.beginRun("main", detached1);
+  assert.equal(accepted2.runId, "session:sess_detached:run:2");
+
+  const detached2 = { ...runLifecycle.sessions().get("main")! };
+  const accepted3 = runLifecycle.beginRun("main", detached2);
+  assert.equal(accepted3.runId, "session:sess_detached:run:3");
+});
+
 test("toErrorSummary maps non-Error values to string", () => {
   const summary = toErrorSummary({ code: 42 });
   assert.equal(summary.errorCode, "DOWNSTREAM_ERROR");

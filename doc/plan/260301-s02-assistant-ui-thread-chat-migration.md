@@ -178,6 +178,12 @@
 | `DELETE` | `/api/threads/:threadId`          | `204 No Content` | `403` main 保護 / `404` unknown      | スレッド削除（`"main"` は `403` 拒否）    |
 | `GET`    | `/api/threads/:threadId/snapshot` | `200 OK`         | `404` unknown threadId               | スレッド単位の run/tool/permission 復元   |
 
+#### Permission API（新規）
+
+| Method | Path                       | 成功     | エラー                           | 説明                                      |
+| ------ | -------------------------- | -------- | -------------------------------- | ----------------------------------------- |
+| `POST` | `/api/permissions/resolve` | `200 OK` | `400` validation / `404` unknown | Pending Permission を approve/deny で解決 |
+
 #### 既存 API（互換維持）
 
 | Method | Path                 | 説明                   |
@@ -752,31 +758,31 @@ sequenceDiagram
 
 ### Stage 3: Thread 管理 + Pending Permission UI（16 タスク）
 
-- [ ] `Task-AUI-S3-RED-000` Test: `"main"` 仮想エントリ・遅延実体化・削除拒否・先頭ソート・memoryScope マッピングの失敗テスト
-- [ ] `Task-AUI-S3-RED-001` Test: thread 作成/選択/削除の失敗テスト
-- [ ] `Task-AUI-S3-RED-002` Test: thread 切替で履歴分離される失敗テスト
-- [ ] `Task-AUI-S3-RED-003` Test: `PATCH /api/threads/:threadId` が `title`/`archived` 以外を拒否する失敗テスト
-- [ ] `Task-AUI-S3-RED-004` Test: `GET /api/threads/:threadId/snapshot` で run/tool history が thread 単位復元される失敗テスト
-- [ ] `Task-AUI-S3-GREEN-000` Impl: `ThreadRepository` に `"main"` 仮想エントリ（`getOrVirtual()`）、遅延実体化、削除保護、先頭ソート、`resolveMemoryScope()` を実装
-- [ ] `Task-AUI-S3-GREEN-001` Impl: `ThreadRepository` + `/api/threads*` API 実装
-- [ ] `Task-AUI-S3-GREEN-002` Impl: `useRemoteThreadListRuntime` + `RemoteThreadListAdapter`（list/initialize/rename/archive/unarchive/delete/generateTitle）で Thread 一覧 UI 実装。`generateTitle` は v1 ではユーザーメッセージ truncate フェイク
-- [ ] `Task-AUI-S3-GREEN-003` Impl: `GET /api/threads/:threadId/snapshot` 実装と UI hydrate 接続
-- [ ] `Task-AUI-S3-GREEN-004` Impl: `PATCH /api/threads/:threadId` を `title`/`archived` 更新で実装（archive/unarchive adapter 対応）
-- [ ] `Task-AUI-S3-GREEN-005` Impl: Pending Permission UI コンポーネント（permission/requested → approve/deny ボタン → permission/resolved）
-- [ ] `Task-AUI-S3-GREEN-006` Impl: Permission UI と `PermissionGateway` / `PermissionRegistry` の接続
-- [ ] `Task-AUI-S3-REFACTOR-001` Refactor: session recovery / thread metadata 更新責務を分離
-- [ ] `Task-AUI-S3-INTEG-001` Integration: マルチスレッド E2E（A/B 分離、再読込復元）
-- [ ] `Task-AUI-S3-CONTRACT-001` Contract: `/api/commands` 非回帰 + ACP 契約非回帰を確認
-- [ ] `Task-AUI-S3-CONTRACT-002` Contract: `PATCH /api/threads/:threadId` の禁止フィールドが `400 INVALID_REQUEST` になることを確認（`title`/`archived` 以外拒否）
+- [x] `Task-AUI-S3-RED-000` Test: `"main"` 仮想エントリ・遅延実体化・削除拒否・先頭ソート・memoryScope マッピングの失敗テスト
+- [x] `Task-AUI-S3-RED-001` Test: thread 作成/選択/削除の失敗テスト
+- [x] `Task-AUI-S3-RED-002` Test: thread 切替で履歴分離される失敗テスト
+- [x] `Task-AUI-S3-RED-003` Test: `PATCH /api/threads/:threadId` が `title`/`archived` 以外を拒否する失敗テスト
+- [x] `Task-AUI-S3-RED-004` Test: `GET /api/threads/:threadId/snapshot` で run/tool history が thread 単位復元される失敗テスト
+- [x] `Task-AUI-S3-GREEN-000` Impl: `ThreadRepository` に `"main"` 仮想エントリ（`getOrVirtual()`）、遅延実体化、削除保護、先頭ソート、`resolveMemoryScope()` を実装
+- [x] `Task-AUI-S3-GREEN-001` Impl: `ThreadRepository` + `/api/threads*` API 実装
+- [x] `Task-AUI-S3-GREEN-002` Impl: `useRemoteThreadListRuntime` + `RemoteThreadListAdapter`（list/initialize/rename/archive/unarchive/delete/generateTitle）で Thread 一覧 UI 実装。`generateTitle` は v1 ではユーザーメッセージ truncate フェイク
+- [x] `Task-AUI-S3-GREEN-003` Impl: `GET /api/threads/:threadId/snapshot` 実装と UI hydrate 接続
+- [x] `Task-AUI-S3-GREEN-004` Impl: `PATCH /api/threads/:threadId` を `title`/`archived` 更新で実装（archive/unarchive adapter 対応）
+- [x] `Task-AUI-S3-GREEN-005` Impl: Pending Permission UI コンポーネント（permission/requested → approve/deny ボタン → permission/resolved）
+- [x] `Task-AUI-S3-GREEN-006` Impl: Permission UI と `PermissionGateway` / `PermissionRegistry` の接続
+- [x] `Task-AUI-S3-REFACTOR-001` Refactor: session recovery / thread metadata 更新責務を分離
+- [x] `Task-AUI-S3-INTEG-001` Integration: マルチスレッド E2E（A/B 分離、再読込復元）
+- [x] `Task-AUI-S3-CONTRACT-001` Contract: `/api/commands` 非回帰 + ACP 契約非回帰を確認
+- [x] `Task-AUI-S3-CONTRACT-002` Contract: `PATCH /api/threads/:threadId` の禁止フィールドが `400 INVALID_REQUEST` になることを確認（`title`/`archived` 以外拒否）
 
 ### Stage 4: 統合と検証（7 タスク）
 
 - [x] `Task-AUI-VERIFY-001` `pnpm check` を通す
-- [ ] `Task-AUI-VERIFY-002` `pnpm start` → ブラウザで `/` を開き、Thread + Composer 画面が表示されることを手動確認
-- [ ] `Task-AUI-VERIFY-003` worker crash/timeout 時の表示とログを確認
-- [ ] `Task-AUI-VERIFY-004` 既存 API クライアント互換性を確認
-- [ ] `Task-AUI-VERIFY-005` `src/ui/minimal-page.ts` の削除可否を最終判定
-- [ ] `Task-AUI-VERIFY-006` `$playwright-cli` スキルによる UI ウォークスルー確認（`pnpm check` 外で実施）。以下の確認項目を一通り実行する:
+- [x] `Task-AUI-VERIFY-002` `pnpm start` → ブラウザで `/` を開き、Thread + Composer 画面が表示されることを手動確認
+- [x] `Task-AUI-VERIFY-003` worker crash/timeout 時の表示とログを確認
+- [x] `Task-AUI-VERIFY-004` 既存 API クライアント互換性を確認
+- [x] `Task-AUI-VERIFY-005` `src/ui/minimal-page.ts` の削除可否を最終判定（削除せず保持。`ADJUTANT_UI_VITE_MIDDLEWARE=false` のフォールバック画面として利用）
+- [x] `Task-AUI-VERIFY-006` `$playwright-cli` スキルによる UI ウォークスルー確認（`pnpm check` 外で実施）。以下の確認項目を一通り実行する:
   1. `/` を開き Thread + Composer 画面が描画される
   2. Composer にメッセージを入力し送信 → SSE ストリーミングでアシスタント応答が表示される
   3. 応答完了後、メッセージ履歴に user + assistant が表示される
@@ -787,21 +793,21 @@ sequenceDiagram
   8. 実行中に Cancel ボタンを押す → run が中止される
   9. ページリロード後にスレッド一覧と履歴が復元される
   10. レスポンシブ: ビューポート幅 375px / 1280px で Composer とメッセージがはみ出さない
-- [ ] `Task-AUI-VERIFY-007` VERIFY-006 で発見した不具合を修正し、再確認する
+- [x] `Task-AUI-VERIFY-007` VERIFY-006 で発見した不具合を修正し、再確認する
 
 ## 8. 完了の定義 Definition of Done
 
 ### 8.1 機能 DoD
 
-- [ ] 受け入れ条件（§2.4）がすべて満たされていること
-- [ ] 既知の制約が明文化され、想定通りであること
-- [ ] 契約の例（§4.4）に対して期待通りの結果が得られること
+- [x] 受け入れ条件（§2.4）がすべて満たされていること
+- [x] 既知の制約が明文化され、想定通りであること
+- [x] 契約の例（§4.4）に対して期待通りの結果が得られること
 
 ### 8.2 品質 DoD
 
-- [ ] 全てのテストがパスしていること
-- [ ] Linter / Formatter のエラーがないこと
-- [ ] 不要なデバッグコードが削除されていること
+- [x] 全てのテストがパスしていること
+- [x] Linter / Formatter のエラーがないこと
+- [x] 不要なデバッグコードが削除されていること
 
 ## 9. 懸念事項と未確定事項 Concerns and Questions
 

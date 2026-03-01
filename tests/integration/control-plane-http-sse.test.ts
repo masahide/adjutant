@@ -56,6 +56,19 @@ type SnapshotResponse = {
   pendingPermissions: unknown[];
 };
 
+type ThreadRecord = {
+  threadId: string;
+  title: string;
+  archived: boolean;
+  isDefault: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type ThreadSnapshotResponse = SnapshotResponse & {
+  thread: ThreadRecord;
+};
+
 type RunAuditResponse = {
   runId: string;
   runEnded: boolean;
@@ -622,6 +635,470 @@ test("GET /api/chat/history validates sessionKey and returns messages", async (t
   assert.equal(history.messages.length >= 2, true);
   assert.equal(history.messages[0]?.role, "user");
   assert.equal(history.messages[1]?.role, "assistant");
+});
+
+test("GET /api/threads returns main virtual entry first and main is materialized on first message", async (t) => {
+  const stateDir = await mkdtemp(join(tmpdir(), "adjutant-thread-main-"));
+  const runtime = await startControlPlane({
+    env: {
+      ADJUTANT_STATE_DIR: stateDir,
+      ADJUTANT_TEST_MOCK_RUNNER: "1",
+      ADJUTANT_TEST_MOCK_DELTA: "thread-delta",
+      ADJUTANT_TEST_MOCK_TEXT: "thread-final",
+    },
+  });
+  t.after(async () => {
+    await stopControlPlane(runtime.child);
+  });
+  t.after(async () => {
+    await rm(stateDir, { recursive: true, force: true });
+  });
+
+  const beforeListRes = await fetch(`${runtime.baseUrl}/api/threads`);
+  assert.equal(beforeListRes.status, 200);
+  const beforeList = (await beforeListRes.json()) as ThreadRecord[];
+  assert.equal(beforeList[0]?.threadId, "main");
+  assert.equal(beforeList[0]?.createdAt, "1970-01-01T00:00:00.000Z");
+
+  const commandRes = await fetch(`${runtime.baseUrl}/api/chat/messages`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      sessionKey: "main",
+      message: "materialize-main-thread",
+      idempotencyKey: "thread_materialize_main_1",
+    }),
+  });
+  assert.equal(commandRes.status, 202);
+  const accepted = (await commandRes.json()) as ChatAccepted;
+
+  const stream = await openSsePath(
+    runtime.baseUrl,
+    `/api/chat/runs/${encodeURIComponent(accepted.runId)}/stream?seq=0`
+  );
+  t.after(() => {
+    stream.close();
+  });
+  await stream.waitFor(
+    (event) =>
+      event.event === "chat" && event.data.runId === accepted.runId && event.data.state === "final"
+  );
+
+  const afterListRes = await fetch(`${runtime.baseUrl}/api/threads`);
+  assert.equal(afterListRes.status, 200);
+  const afterList = (await afterListRes.json()) as ThreadRecord[];
+  assert.equal(afterList[0]?.threadId, "main");
+  assert.notEqual(afterList[0]?.createdAt, "1970-01-01T00:00:00.000Z");
+});
+
+test("POST/GET/PATCH/DELETE /api/threads works and PATCH rejects forbidden fields", async (t) => {
+  const runtime = await startControlPlane();
+  t.after(async () => {
+    await stopControlPlane(runtime.child);
+  });
+
+  const createRes = await fetch(`${runtime.baseUrl}/api/threads`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ title: "Thread One" }),
+  });
+  assert.equal(createRes.status, 201);
+  const created = (await createRes.json()) as ThreadRecord;
+  assert.equal(created.threadId.startsWith("thr_"), true);
+  assert.equal(created.title, "Thread One");
+
+  const getRes = await fetch(
+    `${runtime.baseUrl}/api/threads/${encodeURIComponent(created.threadId)}`
+  );
+  assert.equal(getRes.status, 200);
+  const fetched = (await getRes.json()) as ThreadRecord;
+  assert.equal(fetched.threadId, created.threadId);
+
+  const invalidPatchRes = await fetch(
+    `${runtime.baseUrl}/api/threads/${encodeURIComponent(created.threadId)}`,
+    {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ threadId: "tamper" }),
+    }
+  );
+  assert.equal(invalidPatchRes.status, 400);
+
+  const emptyPatchRes = await fetch(
+    `${runtime.baseUrl}/api/threads/${encodeURIComponent(created.threadId)}`,
+    {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    }
+  );
+  assert.equal(emptyPatchRes.status, 400);
+
+  const patchRes = await fetch(
+    `${runtime.baseUrl}/api/threads/${encodeURIComponent(created.threadId)}`,
+    {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "Renamed", archived: true }),
+    }
+  );
+  assert.equal(patchRes.status, 200);
+  const patched = (await patchRes.json()) as ThreadRecord;
+  assert.equal(patched.title, "Renamed");
+  assert.equal(patched.archived, true);
+
+  const deleteMainRes = await fetch(`${runtime.baseUrl}/api/threads/main`, {
+    method: "DELETE",
+  });
+  assert.equal(deleteMainRes.status, 403);
+
+  const deleteRes = await fetch(
+    `${runtime.baseUrl}/api/threads/${encodeURIComponent(created.threadId)}`,
+    {
+      method: "DELETE",
+    }
+  );
+  assert.equal(deleteRes.status, 204);
+
+  const getAfterDeleteRes = await fetch(
+    `${runtime.baseUrl}/api/threads/${encodeURIComponent(created.threadId)}`
+  );
+  assert.equal(getAfterDeleteRes.status, 404);
+});
+
+test("thread 切替時に chat history が thread 単位で分離される", async (t) => {
+  const runtime = await startControlPlane({
+    env: {
+      ADJUTANT_TEST_MOCK_RUNNER: "1",
+      ADJUTANT_TEST_MOCK_DELTA: "switch-delta",
+      ADJUTANT_TEST_MOCK_TEXT: "switch-final",
+    },
+  });
+  t.after(async () => {
+    await stopControlPlane(runtime.child);
+  });
+
+  const createRes = await fetch(`${runtime.baseUrl}/api/threads`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ title: "Thread-B" }),
+  });
+  assert.equal(createRes.status, 201);
+  const threadB = (await createRes.json()) as ThreadRecord;
+
+  const mainRunRes = await fetch(`${runtime.baseUrl}/api/chat/messages`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      sessionKey: "main",
+      message: "message-in-main",
+      idempotencyKey: "thread_switch_main_1",
+    }),
+  });
+  assert.equal(mainRunRes.status, 202);
+  const mainAccepted = (await mainRunRes.json()) as ChatAccepted;
+
+  const mainStream = await openSsePath(
+    runtime.baseUrl,
+    `/api/chat/runs/${encodeURIComponent(mainAccepted.runId)}/stream?seq=0`
+  );
+  t.after(() => {
+    mainStream.close();
+  });
+  await mainStream.waitFor(
+    (event) =>
+      event.event === "chat" &&
+      event.data.runId === mainAccepted.runId &&
+      event.data.state === "final"
+  );
+
+  const threadBRunRes = await fetch(`${runtime.baseUrl}/api/chat/messages`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      sessionKey: threadB.threadId,
+      message: "message-in-thread-b",
+      idempotencyKey: "thread_switch_b_1",
+    }),
+  });
+  assert.equal(threadBRunRes.status, 202);
+  const threadBAccepted = (await threadBRunRes.json()) as ChatAccepted;
+
+  const threadBStream = await openSsePath(
+    runtime.baseUrl,
+    `/api/chat/runs/${encodeURIComponent(threadBAccepted.runId)}/stream?seq=0`
+  );
+  t.after(() => {
+    threadBStream.close();
+  });
+  await threadBStream.waitFor(
+    (event) =>
+      event.event === "chat" &&
+      event.data.runId === threadBAccepted.runId &&
+      event.data.state === "final"
+  );
+
+  const mainHistoryRes = await fetch(`${runtime.baseUrl}/api/chat/history?sessionKey=main`);
+  assert.equal(mainHistoryRes.status, 200);
+  const mainHistory = (await mainHistoryRes.json()) as ChatHistoryResponse;
+  const mainContents = mainHistory.messages.map((message) => message.content);
+  assert.equal(mainContents.includes("message-in-main"), true);
+  assert.equal(mainContents.includes("message-in-thread-b"), false);
+
+  const threadBHistoryRes = await fetch(
+    `${runtime.baseUrl}/api/chat/history?sessionKey=${encodeURIComponent(threadB.threadId)}`
+  );
+  assert.equal(threadBHistoryRes.status, 200);
+  const threadBHistory = (await threadBHistoryRes.json()) as ChatHistoryResponse;
+  const threadBContents = threadBHistory.messages.map((message) => message.content);
+  assert.equal(threadBContents.includes("message-in-thread-b"), true);
+  assert.equal(threadBContents.includes("message-in-main"), false);
+});
+
+test("マルチスレッド E2E: A/B 分離と再読込後の復元", async (t) => {
+  const runtime = await startControlPlane({
+    env: {
+      ADJUTANT_TEST_MOCK_RUNNER: "1",
+      ADJUTANT_TEST_MOCK_DELTA: "multi-delta",
+      ADJUTANT_TEST_MOCK_TEXT: "multi-final",
+    },
+  });
+  t.after(async () => {
+    await stopControlPlane(runtime.child);
+  });
+
+  const createARes = await fetch(`${runtime.baseUrl}/api/threads`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ title: "Thread-A" }),
+  });
+  assert.equal(createARes.status, 201);
+  const threadA = (await createARes.json()) as ThreadRecord;
+
+  const createBRes = await fetch(`${runtime.baseUrl}/api/threads`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ title: "Thread-B" }),
+  });
+  assert.equal(createBRes.status, 201);
+  const threadB = (await createBRes.json()) as ThreadRecord;
+
+  const runARes = await fetch(`${runtime.baseUrl}/api/chat/messages`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      sessionKey: threadA.threadId,
+      message: "A-hello",
+      idempotencyKey: "multi_a_1",
+    }),
+  });
+  assert.equal(runARes.status, 202);
+  const acceptedA = (await runARes.json()) as ChatAccepted;
+
+  const streamA = await openSsePath(
+    runtime.baseUrl,
+    `/api/chat/runs/${encodeURIComponent(acceptedA.runId)}/stream?seq=0`
+  );
+  t.after(() => {
+    streamA.close();
+  });
+  await streamA.waitFor(
+    (event) =>
+      event.event === "chat" && event.data.runId === acceptedA.runId && event.data.state === "final"
+  );
+
+  const runBRes = await fetch(`${runtime.baseUrl}/api/chat/messages`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      sessionKey: threadB.threadId,
+      message: "B-hello",
+      idempotencyKey: "multi_b_1",
+    }),
+  });
+  assert.equal(runBRes.status, 202);
+  const acceptedB = (await runBRes.json()) as ChatAccepted;
+
+  const streamB = await openSsePath(
+    runtime.baseUrl,
+    `/api/chat/runs/${encodeURIComponent(acceptedB.runId)}/stream?seq=0`
+  );
+  t.after(() => {
+    streamB.close();
+  });
+  await streamB.waitFor(
+    (event) =>
+      event.event === "chat" && event.data.runId === acceptedB.runId && event.data.state === "final"
+  );
+
+  const listRes = await fetch(`${runtime.baseUrl}/api/threads`);
+  assert.equal(listRes.status, 200);
+  const threads = (await listRes.json()) as ThreadRecord[];
+  assert.equal(
+    threads.some((thread) => thread.threadId === threadA.threadId),
+    true
+  );
+  assert.equal(
+    threads.some((thread) => thread.threadId === threadB.threadId),
+    true
+  );
+  assert.equal(threads[0]?.threadId, "main");
+
+  const firstHistoryARes = await fetch(
+    `${runtime.baseUrl}/api/chat/history?sessionKey=${encodeURIComponent(threadA.threadId)}`
+  );
+  assert.equal(firstHistoryARes.status, 200);
+  const firstHistoryA = (await firstHistoryARes.json()) as ChatHistoryResponse;
+
+  const firstHistoryBRes = await fetch(
+    `${runtime.baseUrl}/api/chat/history?sessionKey=${encodeURIComponent(threadB.threadId)}`
+  );
+  assert.equal(firstHistoryBRes.status, 200);
+  const firstHistoryB = (await firstHistoryBRes.json()) as ChatHistoryResponse;
+
+  assert.equal(
+    firstHistoryA.messages.some((message) => message.content === "A-hello"),
+    true
+  );
+  assert.equal(
+    firstHistoryA.messages.some((message) => message.content === "B-hello"),
+    false
+  );
+  assert.equal(
+    firstHistoryB.messages.some((message) => message.content === "B-hello"),
+    true
+  );
+  assert.equal(
+    firstHistoryB.messages.some((message) => message.content === "A-hello"),
+    false
+  );
+
+  // 再読込相当: 一覧と履歴を再取得して内容が維持されることを確認する。
+  const reloadListRes = await fetch(`${runtime.baseUrl}/api/threads`);
+  assert.equal(reloadListRes.status, 200);
+  const reloadThreads = (await reloadListRes.json()) as ThreadRecord[];
+  assert.equal(
+    reloadThreads.some((thread) => thread.threadId === threadA.threadId),
+    true
+  );
+  assert.equal(
+    reloadThreads.some((thread) => thread.threadId === threadB.threadId),
+    true
+  );
+
+  const reloadHistoryARes = await fetch(
+    `${runtime.baseUrl}/api/chat/history?sessionKey=${encodeURIComponent(threadA.threadId)}`
+  );
+  assert.equal(reloadHistoryARes.status, 200);
+  const reloadHistoryA = (await reloadHistoryARes.json()) as ChatHistoryResponse;
+  assert.equal(reloadHistoryA.messages.length, firstHistoryA.messages.length);
+
+  const reloadHistoryBRes = await fetch(
+    `${runtime.baseUrl}/api/chat/history?sessionKey=${encodeURIComponent(threadB.threadId)}`
+  );
+  assert.equal(reloadHistoryBRes.status, 200);
+  const reloadHistoryB = (await reloadHistoryBRes.json()) as ChatHistoryResponse;
+  assert.equal(reloadHistoryB.messages.length, firstHistoryB.messages.length);
+});
+
+test("GET /api/threads/:threadId/snapshot returns run/tool history scoped by thread", async (t) => {
+  const runtime = await startControlPlane({
+    env: {
+      ADJUTANT_TEST_FAKE_TOOL_CALLS: "1",
+    },
+  });
+  t.after(async () => {
+    await stopControlPlane(runtime.child);
+  });
+
+  const createRes = await fetch(`${runtime.baseUrl}/api/threads`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ title: "Thread Scoped" }),
+  });
+  assert.equal(createRes.status, 201);
+  const createdThread = (await createRes.json()) as ThreadRecord;
+
+  const mainRunRes = await fetch(`${runtime.baseUrl}/api/chat/messages`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      sessionKey: "main",
+      message: "main-message",
+      idempotencyKey: "thread_snapshot_main_1",
+    }),
+  });
+  assert.equal(mainRunRes.status, 202);
+  const mainAccepted = (await mainRunRes.json()) as ChatAccepted;
+
+  const scopedRunRes = await fetch(`${runtime.baseUrl}/api/chat/messages`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      sessionKey: createdThread.threadId,
+      message: "thread-message",
+      idempotencyKey: "thread_snapshot_scoped_1",
+    }),
+  });
+  assert.equal(scopedRunRes.status, 202);
+  const scopedAccepted = (await scopedRunRes.json()) as ChatAccepted;
+
+  const mainStream = await openSsePath(
+    runtime.baseUrl,
+    `/api/chat/runs/${encodeURIComponent(mainAccepted.runId)}/stream?seq=0`
+  );
+  t.after(() => {
+    mainStream.close();
+  });
+  await mainStream.waitFor(
+    (event) =>
+      event.event === "chat" &&
+      event.data.runId === mainAccepted.runId &&
+      event.data.state === "final"
+  );
+
+  const scopedStream = await openSsePath(
+    runtime.baseUrl,
+    `/api/chat/runs/${encodeURIComponent(scopedAccepted.runId)}/stream?seq=0`
+  );
+  t.after(() => {
+    scopedStream.close();
+  });
+  await scopedStream.waitFor(
+    (event) =>
+      event.event === "chat" &&
+      event.data.runId === scopedAccepted.runId &&
+      event.data.state === "final"
+  );
+
+  const scopedSnapshotRes = await fetch(
+    `${runtime.baseUrl}/api/threads/${encodeURIComponent(createdThread.threadId)}/snapshot`
+  );
+  assert.equal(scopedSnapshotRes.status, 200);
+  const scopedSnapshot = (await scopedSnapshotRes.json()) as ThreadSnapshotResponse;
+  assert.equal(scopedSnapshot.thread.threadId, createdThread.threadId);
+  assert.equal(
+    scopedSnapshot.runs.some((run) => run.runId === scopedAccepted.runId),
+    true
+  );
+  assert.equal(
+    scopedSnapshot.runs.some((run) => run.runId === mainAccepted.runId),
+    false
+  );
+  assert.equal((scopedSnapshot.toolEventsByRun[scopedAccepted.runId] ?? []).length >= 1, true);
+
+  const mainSnapshotRes = await fetch(`${runtime.baseUrl}/api/threads/main/snapshot`);
+  assert.equal(mainSnapshotRes.status, 200);
+  const mainSnapshot = (await mainSnapshotRes.json()) as ThreadSnapshotResponse;
+  assert.equal(mainSnapshot.thread.threadId, "main");
+  assert.equal(
+    mainSnapshot.runs.some((run) => run.runId === mainAccepted.runId),
+    true
+  );
+  assert.equal(
+    mainSnapshot.runs.some((run) => run.runId === scopedAccepted.runId),
+    false
+  );
 });
 
 test("POST /api/chat/abort returns 404 for unknown active run", async (t) => {

@@ -10,7 +10,12 @@ import {
 } from "@assistant-ui/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { ChatStreamEvent, ChatHistoryMessage } from "../control-plane/contracts/http-api.js";
+import type {
+  ChatHistoryMessage,
+  ChatStreamEvent,
+  PermissionSummary,
+  ThreadSnapshotResponse,
+} from "../control-plane/contracts/http-api.js";
 
 type ThreadMetadata = {
   status: "regular" | "archived";
@@ -23,6 +28,15 @@ type ChatAcceptedResponse = {
   runId: string;
   status: "accepted";
 };
+
+// assistant-ui v0.12.x では initialize() 完了前のローカル thread に "__LOCALID_" プレフィックスが付く。
+// また initialize の fallback 実装で "thr_local_" プレフィックスを使う。
+// どちらも backend 側 threadId ではないため、この状態では履歴/permission fetch と送信をスキップ/再初期化する。
+function isPendingLocalThreadId(threadId: string): boolean {
+  return (
+    threadId.startsWith("__LOCALID_") || threadId.startsWith("thr_local_") || threadId.includes("/")
+  );
+}
 
 type ThreadRecordResponse = {
   threadId: string;
@@ -37,6 +51,10 @@ const SSE_RECONNECT = {
   jitter: 0.25,
   maxAttempts: 12,
 } as const;
+
+// v1 は permission-request/resolved の UI 反映を polling で実装。
+// v2 では ChatStreamEvent(permissionRequest/permissionResolved) 直接購読への移行を想定。
+const PENDING_PERMISSION_POLL_INTERVAL_MS = 2_000;
 
 function computeBackoffDelay(attempt: number): number {
   const growth = SSE_RECONNECT.initial * SSE_RECONNECT.factor ** Math.max(0, attempt - 1);
@@ -65,8 +83,13 @@ function extractThreadMessageText(message: ThreadMessage): string {
 }
 
 function toThreadMessageLike(message: ChatHistoryMessage, index: number): ThreadMessageLike {
+  const normalizedRunId = typeof message.runId === "string" ? message.runId.trim() : "";
+  const stableId =
+    normalizedRunId.length > 0
+      ? `${message.role}:${normalizedRunId}`
+      : `${message.role}:${message.timestamp}:${index}`;
   return {
-    id: message.runId ? `${message.role}:${message.runId}:${index}` : `${message.role}:${index}`,
+    id: stableId,
     role: message.role,
     content: message.content,
     createdAt: new Date(message.timestamp),
@@ -98,10 +121,41 @@ function parseAppendMessageText(content: unknown): string {
 function resolveThreadSessionKey(aui: ReturnType<typeof useAui>): string {
   try {
     const state = aui.threadListItem().getState();
-    return state.remoteId ?? state.id ?? "main";
+    const remoteId = typeof state.remoteId === "string" ? state.remoteId.trim() : "";
+    if (remoteId.length > 0) {
+      return remoteId;
+    }
+    const localId = typeof state.id === "string" ? state.id.trim() : "";
+    if (localId.length === 0) {
+      return "main";
+    }
+    return localId;
   } catch {
     return "main";
   }
+}
+
+async function resolveThreadSessionKeyForSend(aui: ReturnType<typeof useAui>): Promise<string> {
+  const current = resolveThreadSessionKey(aui);
+  if (!isPendingLocalThreadId(current)) {
+    return current;
+  }
+
+  try {
+    const initialized = await aui.threadListItem().initialize();
+    const remoteId = typeof initialized.remoteId === "string" ? initialized.remoteId.trim() : "";
+    if (remoteId.length > 0 && !isPendingLocalThreadId(remoteId)) {
+      return remoteId;
+    }
+  } catch {
+    // initialize failure is handled by retrying current selected thread state below.
+  }
+
+  const refreshed = resolveThreadSessionKey(aui);
+  if (!isPendingLocalThreadId(refreshed)) {
+    return refreshed;
+  }
+  throw new Error(`thread is not initialized: ${refreshed}`);
 }
 
 function upsertAssistantMessage(
@@ -137,6 +191,33 @@ async function fetchJson<T>(input: RequestInfo | URL, init?: RequestInit): Promi
     throw new Error(`${response.status}: ${body}`);
   }
   return (await response.json()) as T;
+}
+
+async function fetchThreadRecord(baseUrl: string, threadId: string): Promise<boolean> {
+  const response = await fetch(`${baseUrl}/api/threads/${encodeURIComponent(threadId)}`);
+  if (response.status === 404) {
+    return false;
+  }
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`${response.status}: ${body}`);
+  }
+  await response.text();
+  return true;
+}
+
+type PendingPermissionItem = {
+  requestId: string;
+  title: string;
+  toolCallId?: string;
+};
+
+function mapPendingPermissions(summary: PermissionSummary[]): PendingPermissionItem[] {
+  return summary.map((permission) => ({
+    requestId: permission.requestId,
+    title: permission.title,
+    toolCallId: permission.toolCallId,
+  }));
 }
 
 function createFallbackMainThread(): ThreadMetadata {
@@ -270,10 +351,28 @@ function createThreadListAdapter(baseUrl: string): unstable_RemoteThreadListAdap
         // Stage 2 fallback: Thread API may not exist yet.
       }
     },
-    async generateTitle(_remoteId: string, unstableMessages: readonly ThreadMessage[]) {
+    async generateTitle(remoteId: string, unstableMessages: readonly ThreadMessage[]) {
       const firstUser = unstableMessages.find((message) => message.role === "user");
       const source = firstUser ? extractThreadMessageText(firstUser) : "";
       const title = source.slice(0, 40).trim();
+      if (title.length > 0) {
+        fallbackThreads.set(remoteId, {
+          ...(fallbackThreads.get(remoteId) ?? { status: "regular", remoteId }),
+          title,
+        });
+        try {
+          await fetchJson<ThreadRecordResponse>(
+            `${baseUrl}/api/threads/${encodeURIComponent(remoteId)}`,
+            {
+              method: "PATCH",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ title }),
+            }
+          );
+        } catch {
+          // Stage 3 fallback: patch failure should not block local title rendering.
+        }
+      }
       return createAssistantStream((controller) => {
         if (title.length > 0) {
           controller.appendText(title);
@@ -313,12 +412,16 @@ function useAdjutantExternalStoreRuntime(baseUrl = "") {
   const [messages, setMessages] = useState<ThreadMessageLike[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const runIdRef = useRef<string | undefined>(undefined);
+  const activeRunSessionKeyRef = useRef<string | undefined>(undefined);
+  const latestSessionKeyRef = useRef(sessionKey);
+  const sendLockRef = useRef(false);
   const eventSourceRef = useRef<EventSource | undefined>(undefined);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const reconnectAttemptsRef = useRef(0);
   const lastSeqByRunIdRef = useRef(new Map<string, number>());
   const terminalRunRef = useRef<string | undefined>(undefined);
   const assistantTextByRunId = useRef(new Map<string, string>());
+  latestSessionKeyRef.current = sessionKey;
 
   const stopActiveStream = useCallback((options?: { clearRunId?: boolean }) => {
     if (reconnectTimerRef.current !== undefined) {
@@ -380,6 +483,7 @@ function useAdjutantExternalStoreRuntime(baseUrl = "") {
           assistantTextByRunId.current.delete(event.runId);
           lastSeqByRunIdRef.current.delete(event.runId);
           terminalRunRef.current = runId;
+          activeRunSessionKeyRef.current = undefined;
           setIsRunning(false);
           stopActiveStream();
           return;
@@ -389,6 +493,7 @@ function useAdjutantExternalStoreRuntime(baseUrl = "") {
           assistantTextByRunId.current.delete(event.runId);
           lastSeqByRunIdRef.current.delete(event.runId);
           terminalRunRef.current = runId;
+          activeRunSessionKeyRef.current = undefined;
           setIsRunning(false);
           stopActiveStream();
           return;
@@ -405,6 +510,7 @@ function useAdjutantExternalStoreRuntime(baseUrl = "") {
           assistantTextByRunId.current.delete(event.runId);
           lastSeqByRunIdRef.current.delete(event.runId);
           terminalRunRef.current = runId;
+          activeRunSessionKeyRef.current = undefined;
           setIsRunning(false);
           stopActiveStream();
         }
@@ -426,6 +532,7 @@ function useAdjutantExternalStoreRuntime(baseUrl = "") {
         const nextAttempt = reconnectAttemptsRef.current + 1;
         reconnectAttemptsRef.current = nextAttempt;
         if (nextAttempt > SSE_RECONNECT.maxAttempts) {
+          activeRunSessionKeyRef.current = undefined;
           setIsRunning(false);
           stopActiveStream();
           return;
@@ -449,9 +556,41 @@ function useAdjutantExternalStoreRuntime(baseUrl = "") {
   );
 
   useEffect(() => {
+    if (!isRunning) {
+      sendLockRef.current = false;
+    }
+  }, [isRunning]);
+
+  useEffect(() => {
     let disposed = false;
+    const effectSessionKey = sessionKey;
     void (async () => {
       try {
+        if (runIdRef.current !== undefined && activeRunSessionKeyRef.current === sessionKey) {
+          return;
+        }
+        if (isPendingLocalThreadId(sessionKey)) {
+          setMessages([]);
+          setIsRunning(false);
+          runIdRef.current = undefined;
+          activeRunSessionKeyRef.current = undefined;
+          lastSeqByRunIdRef.current.clear();
+          assistantTextByRunId.current.clear();
+          return;
+        }
+        const hasThread = await fetchThreadRecord(baseUrl, sessionKey);
+        if (disposed) {
+          return;
+        }
+        if (!hasThread) {
+          setMessages([]);
+          setIsRunning(false);
+          runIdRef.current = undefined;
+          activeRunSessionKeyRef.current = undefined;
+          lastSeqByRunIdRef.current.clear();
+          assistantTextByRunId.current.clear();
+          return;
+        }
         const history = await fetchJson<{ messages: ChatHistoryMessage[] }>(
           `${baseUrl}/api/chat/history?sessionKey=${encodeURIComponent(sessionKey)}`
         );
@@ -461,6 +600,7 @@ function useAdjutantExternalStoreRuntime(baseUrl = "") {
         setMessages(mergeHistoryMessages(history.messages));
         setIsRunning(false);
         runIdRef.current = undefined;
+        activeRunSessionKeyRef.current = undefined;
         lastSeqByRunIdRef.current.clear();
         assistantTextByRunId.current.clear();
       } catch {
@@ -469,6 +609,7 @@ function useAdjutantExternalStoreRuntime(baseUrl = "") {
         }
         setMessages([]);
         runIdRef.current = undefined;
+        activeRunSessionKeyRef.current = undefined;
         lastSeqByRunIdRef.current.clear();
         assistantTextByRunId.current.clear();
         setIsRunning(false);
@@ -476,8 +617,20 @@ function useAdjutantExternalStoreRuntime(baseUrl = "") {
     })();
     return () => {
       disposed = true;
+
+      const switchedFromPendingLocalToRemote =
+        isPendingLocalThreadId(effectSessionKey) &&
+        !isPendingLocalThreadId(latestSessionKeyRef.current) &&
+        effectSessionKey !== latestSessionKeyRef.current &&
+        runIdRef.current !== undefined &&
+        activeRunSessionKeyRef.current === latestSessionKeyRef.current;
+      if (switchedFromPendingLocalToRemote) {
+        return;
+      }
+
       stopActiveStream({ clearRunId: true });
       terminalRunRef.current = undefined;
+      activeRunSessionKeyRef.current = undefined;
       lastSeqByRunIdRef.current.clear();
       assistantTextByRunId.current.clear();
     };
@@ -501,6 +654,7 @@ function useAdjutantExternalStoreRuntime(baseUrl = "") {
         }),
       });
     } finally {
+      activeRunSessionKeyRef.current = undefined;
       setIsRunning(false);
     }
   }, [baseUrl, sessionKey, stopActiveStream]);
@@ -511,27 +665,40 @@ function useAdjutantExternalStoreRuntime(baseUrl = "") {
       if (text.length === 0) {
         return;
       }
+      if (sendLockRef.current) {
+        return;
+      }
+      sendLockRef.current = true;
 
-      const userMessage: ThreadMessageLike = {
-        id: `user:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
-        role: "user",
-        content: text,
-      };
-      setMessages((previous) => [...previous, userMessage]);
-      setIsRunning(true);
+      let resolvedSessionKey: string;
+      try {
+        resolvedSessionKey = await resolveThreadSessionKeyForSend(aui);
+      } catch {
+        sendLockRef.current = false;
+        return;
+      }
 
       try {
         const accepted = await fetchJson<ChatAcceptedResponse>(`${baseUrl}/api/chat/messages`, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
-            sessionKey,
+            sessionKey: resolvedSessionKey,
             message: text,
             idempotencyKey: `ui_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
           }),
         });
 
+        const userMessage: ThreadMessageLike = {
+          id: `user:${accepted.runId}`,
+          role: "user",
+          content: text,
+        };
+        setMessages((previous) => [...previous, userMessage]);
+        setIsRunning(true);
+
         runIdRef.current = accepted.runId;
+        activeRunSessionKeyRef.current = resolvedSessionKey;
         terminalRunRef.current = undefined;
         reconnectAttemptsRef.current = 0;
         lastSeqByRunIdRef.current.set(accepted.runId, -1);
@@ -539,10 +706,12 @@ function useAdjutantExternalStoreRuntime(baseUrl = "") {
         stopActiveStream({ clearRunId: false });
         connectRunStream(accepted.runId, 0);
       } catch {
+        activeRunSessionKeyRef.current = undefined;
+        sendLockRef.current = false;
         setIsRunning(false);
       }
     },
-    [baseUrl, connectRunStream, sessionKey, stopActiveStream]
+    [aui, baseUrl, connectRunStream, stopActiveStream]
   );
 
   return useExternalStoreRuntime({
@@ -560,6 +729,81 @@ export function useAdjutantAssistantRuntime(baseUrl = "") {
     runtimeHook: () => useAdjutantExternalStoreRuntime(baseUrl),
     adapter,
   });
+}
+
+export function useThreadPendingPermissions(baseUrl = ""): {
+  pendingPermissions: PendingPermissionItem[];
+  resolvingRequestId?: string;
+  resolvePermission: (requestId: string, outcome: "allow" | "deny") => Promise<void>;
+} {
+  const aui = useAui();
+  const sessionKey = resolveThreadSessionKey(aui);
+  const [pendingPermissions, setPendingPermissions] = useState<PendingPermissionItem[]>([]);
+  const [resolvingRequestId, setResolvingRequestId] = useState<string | undefined>(undefined);
+
+  const load = useCallback(async () => {
+    if (isPendingLocalThreadId(sessionKey)) {
+      setPendingPermissions([]);
+      return;
+    }
+    const response = await fetch(
+      `${baseUrl}/api/threads/${encodeURIComponent(sessionKey)}/snapshot`
+    );
+    if (response.status === 404) {
+      setPendingPermissions([]);
+      return;
+    }
+    if (!response.ok) {
+      return;
+    }
+    const snapshot = (await response.json()) as ThreadSnapshotResponse;
+    setPendingPermissions(mapPendingPermissions(snapshot.pendingPermissions));
+  }, [baseUrl, sessionKey]);
+
+  useEffect(() => {
+    let disposed = false;
+    void (async () => {
+      await load().catch(() => {});
+    })();
+    const timer = setInterval(() => {
+      if (disposed) {
+        return;
+      }
+      void load().catch(() => {});
+    }, PENDING_PERMISSION_POLL_INTERVAL_MS);
+    return () => {
+      disposed = true;
+      clearInterval(timer);
+    };
+  }, [load]);
+
+  const resolvePermission = useCallback(
+    async (requestId: string, outcome: "allow" | "deny") => {
+      setResolvingRequestId(requestId);
+      try {
+        const response = await fetch(`${baseUrl}/api/permissions/resolve`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ requestId, outcome }),
+        });
+        if (!response.ok) {
+          throw new Error(`failed to resolve permission: ${response.status}`);
+        }
+        setPendingPermissions((previous) =>
+          previous.filter((permission) => permission.requestId !== requestId)
+        );
+      } finally {
+        setResolvingRequestId(undefined);
+      }
+    },
+    [baseUrl]
+  );
+
+  return {
+    pendingPermissions,
+    resolvingRequestId,
+    resolvePermission,
+  };
 }
 
 export { AssistantRuntimeProvider };

@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
 import { createServer } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import { PermissionGateway } from "../../../../src/control-plane/acp/permission-gateway.js";
@@ -9,6 +12,7 @@ import { RunEventBuffer } from "../../../../src/control-plane/http/run-event-buf
 import { SseHub } from "../../../../src/control-plane/http/sse-hub.js";
 import { ChatHistoryStore } from "../../../../src/control-plane/http/chat-history-store.js";
 import { createControlPlaneRequestHandler } from "../../../../src/control-plane/http/control-plane-router.js";
+import { ThreadRepository } from "../../../../src/control-plane/http/thread-repository.js";
 
 async function allocatePort(): Promise<number> {
   return await new Promise((resolve, reject) => {
@@ -45,6 +49,12 @@ test("POST /api/chat/abort keeps best-effort cancellation even when worker cance
 
   const runEventBuffer = new RunEventBuffer({ retentionMs: 60_000 });
   runEventBuffer.ensureRun(accepted.runId, "main");
+  const stateDir = await mkdtemp(join(tmpdir(), "adjutant-router-test-"));
+  t.after(async () => {
+    await rm(stateDir, { recursive: true, force: true });
+  });
+  const threadRepository = ThreadRepository.fromStateDir(stateDir);
+  await threadRepository.initialize();
 
   const handler = createControlPlaneRequestHandler({
     sseHub: new SseHub(),
@@ -57,6 +67,19 @@ test("POST /api/chat/abort keeps best-effort cancellation even when worker cance
     runLifecycle,
     runEventBuffer,
     chatHistoryStore: new ChatHistoryStore(),
+    threadRepository,
+    buildThreadSnapshot: () => {
+      const thread = threadRepository.getOrVirtual("main");
+      if (thread === undefined) {
+        return undefined;
+      }
+      return {
+        thread,
+        runs: [],
+        toolEventsByRun: {},
+        pendingPermissions: [],
+      };
+    },
     supervisor: {
       request: async () => {
         throw new Error("WORKER_TIMEOUT: session/cancel");
@@ -98,4 +121,245 @@ test("POST /api/chat/abort keeps best-effort cancellation even when worker cance
   const events = runEventBuffer.replay(accepted.runId, 0);
   assert.equal(events.length, 1);
   assert.equal(events[0]?.state, "aborted");
+});
+
+test("POST /api/permissions/resolve resolves pending permission and rejects invalid requests", async (t) => {
+  const runLifecycle = new RunLifecycle({
+    now: () => "2026-03-01T00:00:00.000Z",
+    newMessageId: () => "msg_test",
+  });
+  const runEventBuffer = new RunEventBuffer({ retentionMs: 60_000 });
+  const stateDir = await mkdtemp(join(tmpdir(), "adjutant-router-test-perm-"));
+  t.after(async () => {
+    await rm(stateDir, { recursive: true, force: true });
+  });
+  const threadRepository = ThreadRepository.fromStateDir(stateDir);
+  await threadRepository.initialize();
+  const permissionGateway = new PermissionGateway({
+    emitUiEvent: () => {},
+  });
+  const pending = permissionGateway.requestPermission({
+    requestId: "perm_1",
+    sessionId: "sess_perm",
+    title: "Allow bash command",
+  });
+
+  const handler = createControlPlaneRequestHandler({
+    sseHub: new SseHub(),
+    renderRootPage: () => "<!doctype html><html></html>",
+    buildSnapshot: () => ({ runs: [], toolEventsByRun: {}, pendingPermissions: [] }),
+    submitPrompt: async () => {
+      throw new Error("not used");
+    },
+    readRunAudit: async () => ({}),
+    runLifecycle,
+    runEventBuffer,
+    chatHistoryStore: new ChatHistoryStore(),
+    threadRepository,
+    buildThreadSnapshot: () => {
+      const thread = threadRepository.getOrVirtual("main");
+      if (thread === undefined) {
+        return undefined;
+      }
+      return {
+        thread,
+        runs: [],
+        toolEventsByRun: {},
+        pendingPermissions: [],
+      };
+    },
+    supervisor: {
+      request: async () => {
+        throw new Error("not used");
+      },
+    } as unknown as WorkerSupervisor,
+    permissionGateway,
+  });
+
+  const port = await allocatePort();
+  const server = createServer((req, res) => {
+    void handler(req, res);
+  });
+  await new Promise<void>((resolve) => {
+    server.listen(port, "127.0.0.1", () => resolve());
+  });
+  t.after(async () => {
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve());
+    });
+  });
+
+  const invalidRes = await fetch(`http://127.0.0.1:${port}/api/permissions/resolve`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ requestId: "perm_1", outcome: "cancelled" }),
+  });
+  assert.equal(invalidRes.status, 400);
+
+  const resolveRes = await fetch(`http://127.0.0.1:${port}/api/permissions/resolve`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ requestId: "perm_1", outcome: "allow" }),
+  });
+  assert.equal(resolveRes.status, 200);
+  assert.deepEqual(await resolveRes.json(), {});
+  assert.equal(await pending, "allow");
+
+  const missingRes = await fetch(`http://127.0.0.1:${port}/api/permissions/resolve`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ requestId: "perm_1", outcome: "allow" }),
+  });
+  assert.equal(missingRes.status, 404);
+});
+
+test("POST /api/chat/messages returns 404 when sessionKey is unknown", async (t) => {
+  const runLifecycle = new RunLifecycle({
+    now: () => "2026-03-01T00:00:00.000Z",
+    newMessageId: () => "msg_test",
+  });
+  const runEventBuffer = new RunEventBuffer({ retentionMs: 60_000 });
+  const stateDir = await mkdtemp(join(tmpdir(), "adjutant-router-test-chat-unknown-"));
+  t.after(async () => {
+    await rm(stateDir, { recursive: true, force: true });
+  });
+  const threadRepository = ThreadRepository.fromStateDir(stateDir);
+  await threadRepository.initialize();
+
+  const handler = createControlPlaneRequestHandler({
+    sseHub: new SseHub(),
+    renderRootPage: () => "<!doctype html><html></html>",
+    buildSnapshot: () => ({ runs: [], toolEventsByRun: {}, pendingPermissions: [] }),
+    submitPrompt: async () => {
+      throw new Error("not used");
+    },
+    readRunAudit: async () => ({}),
+    runLifecycle,
+    runEventBuffer,
+    chatHistoryStore: new ChatHistoryStore(),
+    threadRepository,
+    buildThreadSnapshot: () => {
+      const thread = threadRepository.getOrVirtual("main");
+      if (thread === undefined) {
+        return undefined;
+      }
+      return {
+        thread,
+        runs: [],
+        toolEventsByRun: {},
+        pendingPermissions: [],
+      };
+    },
+    supervisor: {
+      request: async () => {
+        throw new Error("not used");
+      },
+    } as unknown as WorkerSupervisor,
+    permissionGateway: new PermissionGateway({
+      emitUiEvent: () => {},
+    }),
+  });
+
+  const port = await allocatePort();
+  const server = createServer((req, res) => {
+    void handler(req, res);
+  });
+  await new Promise<void>((resolve) => {
+    server.listen(port, "127.0.0.1", () => resolve());
+  });
+  t.after(async () => {
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve());
+    });
+  });
+
+  const response = await fetch(`http://127.0.0.1:${port}/api/chat/messages`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      sessionKey: "thr_unknown",
+      message: "hello",
+      idempotencyKey: "chat_unknown_1",
+    }),
+  });
+  assert.equal(response.status, 404);
+  assert.deepEqual(await response.json(), {
+    code: "NOT_FOUND",
+    message: "unknown sessionKey: thr_unknown",
+  });
+});
+
+test("POST /api/commands rejects blank sessionKey", async (t) => {
+  const runLifecycle = new RunLifecycle({
+    now: () => "2026-03-01T00:00:00.000Z",
+    newMessageId: () => "msg_test",
+  });
+  const runEventBuffer = new RunEventBuffer({ retentionMs: 60_000 });
+  const stateDir = await mkdtemp(join(tmpdir(), "adjutant-router-test-command-blank-"));
+  t.after(async () => {
+    await rm(stateDir, { recursive: true, force: true });
+  });
+  const threadRepository = ThreadRepository.fromStateDir(stateDir);
+  await threadRepository.initialize();
+
+  const handler = createControlPlaneRequestHandler({
+    sseHub: new SseHub(),
+    renderRootPage: () => "<!doctype html><html></html>",
+    buildSnapshot: () => ({ runs: [], toolEventsByRun: {}, pendingPermissions: [] }),
+    submitPrompt: async () => {
+      throw new Error("not used");
+    },
+    readRunAudit: async () => ({}),
+    runLifecycle,
+    runEventBuffer,
+    chatHistoryStore: new ChatHistoryStore(),
+    threadRepository,
+    buildThreadSnapshot: () => {
+      const thread = threadRepository.getOrVirtual("main");
+      if (thread === undefined) {
+        return undefined;
+      }
+      return {
+        thread,
+        runs: [],
+        toolEventsByRun: {},
+        pendingPermissions: [],
+      };
+    },
+    supervisor: {
+      request: async () => {
+        throw new Error("not used");
+      },
+    } as unknown as WorkerSupervisor,
+    permissionGateway: new PermissionGateway({
+      emitUiEvent: () => {},
+    }),
+  });
+
+  const port = await allocatePort();
+  const server = createServer((req, res) => {
+    void handler(req, res);
+  });
+  await new Promise<void>((resolve) => {
+    server.listen(port, "127.0.0.1", () => resolve());
+  });
+  t.after(async () => {
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve());
+    });
+  });
+
+  const response = await fetch(`http://127.0.0.1:${port}/api/commands`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      sessionKey: "   ",
+      message: "hello",
+    }),
+  });
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), {
+    code: "INVALID_REQUEST",
+    message: "sessionKey/message are required",
+  });
 });

@@ -106,6 +106,10 @@ export class RunLifecycle {
   ): AcceptedResponse {
     const nextRunSequence = session.runSequence + 1;
     session.runSequence = nextRunSequence;
+    this.sessionsByKey.set(sessionKey, {
+      sessionId: session.sessionId,
+      runSequence: nextRunSequence,
+    });
 
     const runId = this.toRunId(session.sessionId, nextRunSequence);
     this.runIdBySessionId.set(session.sessionId, runId);

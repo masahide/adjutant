@@ -1,4 +1,5 @@
 import { access, constants } from "node:fs/promises";
+import { homedir } from "node:os";
 import { resolve } from "node:path";
 
 import { buildBootstrapContextFiles, renderProjectContext } from "./bootstrap-context.js";
@@ -103,7 +104,7 @@ async function resolveCompactionStore(stateDir?: string): Promise<SessionCompact
   const resolvedStateDir =
     stateDir !== undefined && stateDir.trim().length > 0
       ? resolve(stateDir.trim())
-      : resolve(process.cwd(), ".adjutant", "state");
+      : resolve(homedir(), ".adjutant");
 
   let store = compactionStoreCache.get(resolvedStateDir);
   if (store === undefined) {
@@ -159,12 +160,54 @@ const defaultRuntime: AgentRunnerRuntime = {
 };
 
 let runtimeOverride: Partial<AgentRunnerRuntime> | null = null;
+const reusableSessionBySessionId = new Map<string, PiAgentSessionLike>();
 
 function getRuntime(): AgentRunnerRuntime {
   return {
     ...defaultRuntime,
     ...(runtimeOverride ?? {}),
   };
+}
+
+async function resolveAgentSession(params: {
+  runtime: AgentRunnerRuntime;
+  options: AgentRunOptions;
+  cwd: string;
+  memoryScope: "main" | "spoke";
+  stateDir: string | undefined;
+}): Promise<{ session: PiAgentSessionLike; reusable: boolean }> {
+  const sessionId = params.options.sessionId?.trim();
+  if (typeof sessionId === "string" && sessionId.length > 0) {
+    const cached = reusableSessionBySessionId.get(sessionId);
+    if (cached !== undefined) {
+      return { session: cached, reusable: true };
+    }
+  }
+
+  const created = await params.runtime.createSession({
+    cwd: params.cwd,
+    model: process.env.ADJUTANT_MODEL,
+    memoryScope: params.memoryScope,
+    memoryWriteEnabled: params.options.memoryWriteEnabled,
+    stateDir: params.stateDir,
+  });
+
+  if (typeof sessionId === "string" && sessionId.length > 0) {
+    reusableSessionBySessionId.set(sessionId, created.session);
+    return { session: created.session, reusable: true };
+  }
+  return { session: created.session, reusable: false };
+}
+
+function disposeReusableSessions(): void {
+  for (const session of reusableSessionBySessionId.values()) {
+    try {
+      session.dispose();
+    } catch {
+      // Best-effort cleanup for test/runtime reset.
+    }
+  }
+  reusableSessionBySessionId.clear();
 }
 
 function inferToolKind(name: string): "read" | "edit" | "execute" | "search" {
@@ -391,11 +434,11 @@ export async function runAgent(options: AgentRunOptions): Promise<AgentRunResult
 
   const preparedPrompt = maybeBuildPromptWithBootstrap(options.prompt, bootstrapFiles);
 
-  const { session } = await runtime.createSession({
+  const { session, reusable } = await resolveAgentSession({
+    runtime,
+    options,
     cwd,
-    model: process.env.ADJUTANT_MODEL,
     memoryScope,
-    memoryWriteEnabled: options.memoryWriteEnabled,
     stateDir,
   });
 
@@ -597,10 +640,13 @@ export async function runAgent(options: AgentRunOptions): Promise<AgentRunResult
 
     options.signal?.removeEventListener("abort", abortHandler);
     unsubscribe();
-    session.dispose();
+    if (!reusable) {
+      session.dispose();
+    }
   }
 }
 
 export function setAgentRunnerRuntimeForTest(runtime: Partial<AgentRunnerRuntime> | null): void {
+  disposeReusableSessions();
   runtimeOverride = runtime;
 }

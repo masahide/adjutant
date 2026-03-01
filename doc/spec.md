@@ -350,7 +350,7 @@ flowchart LR
 | `ADJUTANT_MEMORY_SEARCH_CANDIDATE_MULTIPLIER` | `3`                                   | 候補拡張倍率                                    |
 | `ADJUTANT_MEMORY_SEARCH_VECTOR_WEIGHT`        | `0.7`                                 | hybrid score の vector 重み                     |
 | `ADJUTANT_MEMORY_SEARCH_TEXT_WEIGHT`          | `0.3`                                 | hybrid score の text 重み                       |
-| `ADJUTANT_SANDBOX_MODE`                       | `off`                                 | bash sandbox mode（`off` / `non-main` / `all`） |
+| `ADJUTANT_SANDBOX_MODE`                       | `all`                                 | bash sandbox mode（`off` / `non-main` / `all`） |
 | `ADJUTANT_SANDBOX_IMAGE`                      | `adjutant-sandbox:trixie-slim`        | sandbox Docker image                            |
 | `ADJUTANT_SANDBOX_AUTO_BUILD_IMAGE`           | `true`                                | 未存在時に sandbox image を自動 build する      |
 | `ADJUTANT_SANDBOX_CONTAINER_PREFIX`           | `adjutant-sandbox`                    | sandbox container 名の prefix                   |
@@ -506,9 +506,9 @@ flowchart LR
 
 ### 13.7 Bash Sandbox（Docker）
 
-- `ADJUTANT_SANDBOX_MODE=off`（既定）では従来どおりホスト実行。
+- `ADJUTANT_SANDBOX_MODE=all`（既定）では heartbeat を除く全セッションの bash 実行をコンテナ化。
 - `ADJUTANT_SANDBOX_MODE=non-main` では `memoryScope=main` 以外（spoke）の bash 実行のみをコンテナ化。
-- `ADJUTANT_SANDBOX_MODE=all` では heartbeat を除く全セッションの bash 実行をコンテナ化。
+- `ADJUTANT_SANDBOX_MODE=off` では従来どおりホスト実行。
 - 起動時（ACP 標準: `src/index.ts`、legacy 統合: `legacy/impl-20260228/src/assistant/main.ts`）は以下順で fail-safe 初期化する。
   1. Docker daemon 可用性確認（不可なら起動中断）
   2. sandbox image 存在確認（未存在時は `ADJUTANT_SANDBOX_AUTO_BUILD_IMAGE=true` なら自動 build）

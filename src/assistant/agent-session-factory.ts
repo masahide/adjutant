@@ -130,7 +130,6 @@ export function buildCustomToolDefinitions(options: CreatePiAgentSessionOptions)
   }
   const sandboxConfig = activeSandbox;
   if (
-    phaseBEnabled &&
     sandboxConfig !== null &&
     shouldSandbox(sandboxConfig.mode, options.memoryScope) &&
     options.memoryScope !== undefined

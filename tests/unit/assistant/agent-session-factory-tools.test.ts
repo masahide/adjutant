@@ -78,7 +78,7 @@ test("buildCustomToolDefinitions enables sandboxed bash by mode and memoryScope"
   const spokeTools = buildCustomToolDefinitions({
     cwd: process.cwd(),
     memoryScope: "spoke",
-    phaseBRolloutScope: "all",
+    phaseBRolloutScope: "main",
   });
   assert.equal(
     spokeTools.some((tool) => tool.name === "bash"),
