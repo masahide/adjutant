@@ -45,7 +45,22 @@ function resolveProjectRoot(): string {
 function createWorkerSupervisor(
   cwd: string,
   stateDir: string,
-  sandbox: { mode: "off" | "non-main" | "all"; enabled: boolean; containerName?: string },
+  sandbox: {
+    mode: "off" | "non-main" | "all";
+    enabled: boolean;
+    runSpec?: {
+      image: string;
+      hostWorkspaceDir: string;
+      containerWorkdir: string;
+      envAllowlist?: string[];
+      readOnlyRoot?: boolean;
+      tmpfs?: string[];
+      network?: string;
+      capDrop?: string[];
+      pidsLimit?: number;
+      memory?: string;
+    };
+  },
   onLog: (entry: Record<string, unknown>) => void,
   onNotification: (notification: { method: string; params: Record<string, unknown> }) => void
 ): WorkerSupervisor {
@@ -54,19 +69,32 @@ function createWorkerSupervisor(
     ACP_WORKER_SESSION_STORE_PATH: join(stateDir, "worker", "session-store.json"),
   };
 
-  if (sandbox.enabled && typeof sandbox.containerName === "string") {
+  if (sandbox.enabled && sandbox.runSpec !== undefined) {
     workerEnv.ACP_WORKER_SANDBOX_MODE = sandbox.mode;
-    workerEnv.ACP_WORKER_SANDBOX_CONTAINER_NAME = sandbox.containerName;
-    workerEnv.ACP_WORKER_SANDBOX_HOST_WORKSPACE_DIR = cwd;
-    workerEnv.ACP_WORKER_SANDBOX_WORKDIR =
-      process.env.ADJUTANT_SANDBOX_WORKDIR?.trim() || "/workspace";
-    workerEnv.ACP_WORKER_SANDBOX_ENV_ALLOWLIST = process.env.ADJUTANT_SANDBOX_ENV_ALLOWLIST ?? "";
+    workerEnv.ACP_WORKER_SANDBOX_IMAGE = sandbox.runSpec.image;
+    workerEnv.ACP_WORKER_SANDBOX_HOST_WORKSPACE_DIR = sandbox.runSpec.hostWorkspaceDir;
+    workerEnv.ACP_WORKER_SANDBOX_WORKDIR = sandbox.runSpec.containerWorkdir;
+    workerEnv.ACP_WORKER_SANDBOX_ENV_ALLOWLIST = (sandbox.runSpec.envAllowlist ?? []).join(",");
+    workerEnv.ACP_WORKER_SANDBOX_READ_ONLY_ROOT =
+      sandbox.runSpec.readOnlyRoot === false ? "0" : "1";
+    workerEnv.ACP_WORKER_SANDBOX_TMPFS = (sandbox.runSpec.tmpfs ?? []).join(",");
+    workerEnv.ACP_WORKER_SANDBOX_CAP_DROP = (sandbox.runSpec.capDrop ?? []).join(",");
+    workerEnv.ACP_WORKER_SANDBOX_NETWORK = sandbox.runSpec.network ?? "";
+    workerEnv.ACP_WORKER_SANDBOX_MEMORY = sandbox.runSpec.memory ?? "";
+    workerEnv.ACP_WORKER_SANDBOX_PIDS_LIMIT =
+      typeof sandbox.runSpec.pidsLimit === "number" ? String(sandbox.runSpec.pidsLimit) : "";
   } else {
     workerEnv.ACP_WORKER_SANDBOX_MODE = "off";
-    delete workerEnv.ACP_WORKER_SANDBOX_CONTAINER_NAME;
+    delete workerEnv.ACP_WORKER_SANDBOX_IMAGE;
     delete workerEnv.ACP_WORKER_SANDBOX_HOST_WORKSPACE_DIR;
     delete workerEnv.ACP_WORKER_SANDBOX_WORKDIR;
     delete workerEnv.ACP_WORKER_SANDBOX_ENV_ALLOWLIST;
+    delete workerEnv.ACP_WORKER_SANDBOX_READ_ONLY_ROOT;
+    delete workerEnv.ACP_WORKER_SANDBOX_TMPFS;
+    delete workerEnv.ACP_WORKER_SANDBOX_CAP_DROP;
+    delete workerEnv.ACP_WORKER_SANDBOX_NETWORK;
+    delete workerEnv.ACP_WORKER_SANDBOX_MEMORY;
+    delete workerEnv.ACP_WORKER_SANDBOX_PIDS_LIMIT;
   }
 
   return new WorkerSupervisor({

@@ -54,9 +54,8 @@ test("initializeSandboxRuntime fails closed when docker is unavailable", async (
   );
 });
 
-test("initializeSandboxRuntime provisions and disposes sandbox container", async () => {
+test("initializeSandboxRuntime prepares per-tool runSpec without creating containers", async () => {
   const calls: string[][] = [];
-  let inspectCount = 0;
   const runner = createRunner((args) => {
     calls.push(args);
     if (args[0] === "version") {
@@ -64,18 +63,6 @@ test("initializeSandboxRuntime provisions and disposes sandbox container", async
     }
     if (args[0] === "image" && args[1] === "inspect") {
       return { code: 0, stdout: "ok", stderr: "" };
-    }
-    if (args[0] === "inspect" && args[1] === "--type" && args[2] === "container") {
-      inspectCount += 1;
-      if (inspectCount === 1) {
-        return { code: 1, stdout: "", stderr: "No such object" };
-      }
-      return {
-        code: 0,
-        stdout:
-          '[{"Config":{"Labels":{"adjutant.sandbox.owner":"nonce-test"}},"State":{"Running":true}}]',
-        stderr: "",
-      };
     }
     return { code: 0, stdout: "", stderr: "" };
   });
@@ -86,26 +73,26 @@ test("initializeSandboxRuntime provisions and disposes sandbox container", async
       ...process.env,
       ADJUTANT_SANDBOX_MODE: "all",
       ADJUTANT_SANDBOX_AUTO_BUILD_IMAGE: "0",
+      ADJUTANT_SANDBOX_IMAGE: "adjutant-sandbox:test",
+      ADJUTANT_SANDBOX_WORKDIR: "/workspace",
+      ADJUTANT_SANDBOX_NETWORK: "none",
+      ADJUTANT_SANDBOX_PIDS_LIMIT: "128",
+      ADJUTANT_SANDBOX_MEMORY: "1g",
     },
-    ownerNonce: "nonce-test",
     runner,
   });
 
   assert.equal(runtime.enabled, true);
   assert.equal(runtime.mode, "all");
-  assert.equal(typeof runtime.containerName, "string");
+  assert.equal(runtime.runSpec?.image, "adjutant-sandbox:test");
+  assert.equal(runtime.runSpec?.containerWorkdir, "/workspace");
+  assert.equal(runtime.runSpec?.network, "none");
+  assert.equal(runtime.runSpec?.pidsLimit, 128);
+  assert.equal(runtime.runSpec?.memory, "1g");
 
   await runtime.dispose();
   assert.equal(
-    calls.some((args) => args[0] === "create"),
-    true
-  );
-  assert.equal(
-    calls.some((args) => args[0] === "start"),
-    true
-  );
-  assert.equal(
-    calls.some((args) => args[0] === "rm" && args[1] === "-f"),
-    true
+    calls.some((args) => args[0] === "create" || args[0] === "start" || args[0] === "rm"),
+    false
   );
 });

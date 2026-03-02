@@ -1,9 +1,10 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { resolve } from "node:path";
 
 import type { BashOperations } from "@mariozechner/pi-coding-agent";
 
 import { createPathMapper } from "./path-mapper.js";
-import type { SandboxMode } from "./types.js";
+import type { SandboxMode, SandboxRunSpec } from "./types.js";
 
 type SpawnLike = (
   command: string,
@@ -13,10 +14,13 @@ type SpawnLike = (
   }
 ) => ChildProcessWithoutNullStreams;
 
-type DockerExecEnvironment = NodeJS.ProcessEnv | Record<string, string> | undefined;
+type DockerRunEnvironment = NodeJS.ProcessEnv | Record<string, string> | undefined;
 const DEFAULT_SANDBOX_ENV_ALLOWLIST = ["LANG", "LC_ALL", "TERM", "TZ"] as const;
+const DEFAULT_SANDBOX_TMPFS = ["/tmp", "/var/tmp", "/run"] as const;
+const DEFAULT_SANDBOX_CAP_DROP = ["ALL"] as const;
+const SANDBOX_USER = "1000:1000";
 
-function normalizeEnvironment(env: DockerExecEnvironment): Record<string, string> {
+function normalizeEnvironment(env: DockerRunEnvironment): Record<string, string> {
   const result: Record<string, string> = {};
   if (env === undefined) {
     return result;
@@ -40,15 +44,45 @@ function resolveEnvAllowlist(customAllowlist: readonly string[] | undefined): Se
   return resolved;
 }
 
-export function buildDockerExecArgs(params: {
-  containerName: string;
+function parseOptionalLimit(value: string | undefined): string | undefined {
+  const normalized = value?.trim();
+  return normalized ? normalized : undefined;
+}
+
+export function buildDockerRunArgs(params: {
+  runSpec: SandboxRunSpec;
   containerCwd: string;
   command: string;
-  env?: DockerExecEnvironment;
-  envAllowlist?: readonly string[];
+  env?: DockerRunEnvironment;
 }): string[] {
-  const args = ["exec", "-i", "-w", params.containerCwd];
-  const envAllowlist = resolveEnvAllowlist(params.envAllowlist);
+  const args = ["run", "--rm", "-i", "--workdir", params.containerCwd];
+  const runSpec = params.runSpec;
+
+  if (runSpec.readOnlyRoot !== false) {
+    args.push("--read-only");
+  }
+  for (const entry of runSpec.tmpfs ?? DEFAULT_SANDBOX_TMPFS) {
+    args.push("--tmpfs", entry);
+  }
+  if (runSpec.network && runSpec.network.trim().length > 0) {
+    args.push("--network", runSpec.network.trim());
+  }
+  for (const cap of runSpec.capDrop ?? DEFAULT_SANDBOX_CAP_DROP) {
+    args.push("--cap-drop", cap);
+  }
+  args.push("--security-opt", "no-new-privileges");
+  if (typeof runSpec.pidsLimit === "number" && runSpec.pidsLimit > 0) {
+    args.push("--pids-limit", String(runSpec.pidsLimit));
+  }
+  const memoryLimit = parseOptionalLimit(runSpec.memory);
+  if (memoryLimit !== undefined) {
+    args.push("--memory", memoryLimit);
+  }
+
+  args.push("--user", SANDBOX_USER);
+  args.push("-v", `${resolve(runSpec.hostWorkspaceDir)}:${runSpec.containerWorkdir}`);
+
+  const envAllowlist = resolveEnvAllowlist(runSpec.envAllowlist);
   const env = normalizeEnvironment(params.env);
   for (const [key, value] of Object.entries(env)) {
     if (!envAllowlist.has(key)) {
@@ -56,7 +90,8 @@ export function buildDockerExecArgs(params: {
     }
     args.push("-e", `${key}=${value}`);
   }
-  args.push(params.containerName, "bash", "-lc", params.command);
+
+  args.push(runSpec.image, "bash", "-lc", params.command);
   return args;
 }
 
@@ -74,18 +109,16 @@ export function shouldSandbox(
 }
 
 export interface DockerBashOperationsOptions {
-  containerName: string;
-  hostWorkspaceDir: string;
-  containerWorkdir: string;
-  envAllowlist?: string[];
+  runSpec: SandboxRunSpec;
   dockerBin?: string;
   spawnImpl?: SpawnLike;
 }
 
 export function createDockerBashOperations(options: DockerBashOperationsOptions): BashOperations {
+  const runSpec = options.runSpec;
   const mapper = createPathMapper({
-    hostWorkspaceDir: options.hostWorkspaceDir,
-    containerWorkdir: options.containerWorkdir,
+    hostWorkspaceDir: runSpec.hostWorkspaceDir,
+    containerWorkdir: runSpec.containerWorkdir,
   });
   const dockerBin = options.dockerBin ?? "docker";
   const spawnImpl = options.spawnImpl ?? spawn;
@@ -96,12 +129,11 @@ export function createDockerBashOperations(options: DockerBashOperationsOptions)
         throw new Error("aborted");
       }
       const containerCwd = mapper.hostToContainer(cwd);
-      const args = buildDockerExecArgs({
-        containerName: options.containerName,
+      const args = buildDockerRunArgs({
+        runSpec,
         containerCwd,
         command,
         env: params.env,
-        envAllowlist: options.envAllowlist,
       });
 
       return await new Promise<{ exitCode: number | null }>((resolveExec, rejectExec) => {

@@ -13,10 +13,11 @@ test("configureWorkerSandboxFromEnv enables sandbox bash for spoke scope", async
   const configured = await configureWorkerSandboxFromEnv(
     {
       ACP_WORKER_SANDBOX_MODE: "all",
-      ACP_WORKER_SANDBOX_CONTAINER_NAME: "adjutant-sandbox-test",
+      ACP_WORKER_SANDBOX_IMAGE: "adjutant-sandbox:test",
       ACP_WORKER_SANDBOX_HOST_WORKSPACE_DIR: process.cwd(),
       ACP_WORKER_SANDBOX_WORKDIR: "/workspace",
       ACP_WORKER_SANDBOX_ENV_ALLOWLIST: "LANG,TERM",
+      ACP_WORKER_SANDBOX_NETWORK: "none",
     },
     process.cwd()
   );
@@ -57,7 +58,7 @@ test("configureWorkerSandboxFromEnv disables sandbox when mode is off", async ()
   );
 });
 
-test("configureWorkerSandboxFromEnv disables sandbox when container is missing", async () => {
+test("configureWorkerSandboxFromEnv disables sandbox when image is missing", async () => {
   configureSandbox(null);
 
   const configured = await configureWorkerSandboxFromEnv(

@@ -19,10 +19,20 @@ export interface SandboxConfig {
   docker: SandboxDockerConfig;
 }
 
+export interface SandboxRunSpec {
+  image: string;
+  hostWorkspaceDir: string;
+  containerWorkdir: string;
+  envAllowlist?: string[];
+  readOnlyRoot?: boolean;
+  tmpfs?: string[];
+  network?: string;
+  capDrop?: string[];
+  pidsLimit?: number;
+  memory?: string;
+}
+
 export interface ActiveSandboxConfig {
   mode: SandboxMode;
-  containerName: string;
-  workdir: string;
-  hostWorkspaceDir: string;
-  envAllowlist?: string[];
+  runSpec: SandboxRunSpec;
 }

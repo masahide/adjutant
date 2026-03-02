@@ -24,7 +24,7 @@
     - セッション間: 並行実行許可
     - セッション内: 同時 prompt を拒否（`SESSION_BUSY`）
     - cancel: セッション単位で確実に abort
-    を保証する。
+      を保証する。
   - `DockerBashOperations` を ephemeral 実行へ置換し、tool 実行ごとに独立コンテナを作成し終了時に削除する。
 
 # 2. 仕様と受け入れ条件 Specification and Acceptance Criteria
@@ -320,58 +320,58 @@ sequenceDiagram
 
 ### Phase 1 設計と準備
 
-- [ ] `Task-MSC-DESIGN-001` インターフェース契約確定（`SESSION_BUSY` / `INVALID_RECORD` / sandbox 実行契約の明文化）
-- [ ] `Task-MSC-DESIGN-002` Mermaid 図を `doc/spec.md` に反映
-- [ ] `Task-MSC-DESIGN-003` `SessionExecutionRegistry` と `SandboxRunSpec` の型定義を確定
-- [ ] `Task-MSC-DESIGN-004` テスト基盤確認（既存 `acp-transport` / sandbox unit 拡張方針）
+- [x] `Task-MSC-DESIGN-001` インターフェース契約確定（`SESSION_BUSY` / `INVALID_RECORD` / sandbox 実行契約の明文化）
+- [x] `Task-MSC-DESIGN-002` Mermaid 図を `doc/spec.md` に反映
+- [x] `Task-MSC-DESIGN-003` `SessionExecutionRegistry` と `SandboxRunSpec` の型定義を確定
+- [x] `Task-MSC-DESIGN-004` テスト基盤確認（既存 `acp-transport` / sandbox unit 拡張方針）
 
 ### Phase 2 セッション実行レジストリの実装
 
-- [ ] `Task-MSC-REG-RED-001` Unit: start/finish/cancel/busy の失敗テスト追加 Red
-- [ ] `Task-MSC-REG-GREEN-001` Impl: `SessionExecutionRegistry` 実装 Green
-- [ ] `Task-MSC-REG-REFACTOR-001` Refactor: `stdio-server` から状態管理重複除去
-- [ ] `Task-MSC-REG-INTEG-001` Integration: 同一セッション重複 prompt で `SESSION_BUSY` 検証
-- [ ] `Task-MSC-REG-DOC-001` Docs: 契約とエラーコード記載更新
+- [x] `Task-MSC-REG-RED-001` Unit: start/finish/cancel/busy の失敗テスト追加 Red
+- [x] `Task-MSC-REG-GREEN-001` Impl: `SessionExecutionRegistry` 実装 Green
+- [x] `Task-MSC-REG-REFACTOR-001` Refactor: `stdio-server` から状態管理重複除去
+- [x] `Task-MSC-REG-INTEG-001` Integration: 同一セッション重複 prompt で `SESSION_BUSY` 検証
+- [x] `Task-MSC-REG-DOC-001` Docs: 契約とエラーコード記載更新
 
 ### Phase 3 複数セッション並行 prompt の実装
 
-- [ ] `Task-MSC-CONC-RED-001` Integration: 2セッション同時 prompt の失敗テスト追加 Red
-- [ ] `Task-MSC-CONC-GREEN-001` Impl: `stdio-server` dispatch と adapter 連携を並行対応 Green
-- [ ] `Task-MSC-CONC-REFACTOR-001` Refactor: cancel 経路と run cleanup の共通化
-- [ ] `Task-MSC-CONC-INTEG-001` Integration: 片側 cancel 時の非干渉を検証
-- [ ] `Task-MSC-CONC-DOC-001` Docs: README ACP 実装プロファイル更新
+- [x] `Task-MSC-CONC-RED-001` Integration: 2セッション同時 prompt の失敗テスト追加 Red
+- [x] `Task-MSC-CONC-GREEN-001` Impl: `stdio-server` dispatch と adapter 連携を並行対応 Green
+- [x] `Task-MSC-CONC-REFACTOR-001` Refactor: cancel 経路と run cleanup の共通化
+- [x] `Task-MSC-CONC-INTEG-001` Integration: 片側 cancel 時の非干渉を検証
+- [x] `Task-MSC-CONC-DOC-001` Docs: README ACP 実装プロファイル更新
 
 ### Phase 4 sandbox ephemeral 化（`docker run --rm`）
 
-- [ ] `Task-MSC-SBX-RED-001` Unit: `docker run --rm` 引数生成・abort・timeout の失敗テスト追加 Red
-- [ ] `Task-MSC-SBX-GREEN-001` Impl: `DockerBashOperations` を `docker exec` から `docker run --rm` へ置換 Green
-- [ ] `Task-MSC-SBX-REFACTOR-001` Refactor: `sandbox/runtime` と worker bootstrap の `containerName` 依存を削除
-- [ ] `Task-MSC-SBX-INTEG-001` Integration: 並行 tool 実行時にコンテナ残存がないことを検証
-- [ ] `Task-MSC-SBX-DOC-001` Docs: sandbox lifecycle（per-tool）を `README.md` / `doc/spec.md` に追記
+- [x] `Task-MSC-SBX-RED-001` Unit: `docker run --rm` 引数生成・abort・timeout の失敗テスト追加 Red
+- [x] `Task-MSC-SBX-GREEN-001` Impl: `DockerBashOperations` を `docker exec` から `docker run --rm` へ置換 Green
+- [x] `Task-MSC-SBX-REFACTOR-001` Refactor: `sandbox/runtime` と worker bootstrap の `containerName` 依存を削除
+- [x] `Task-MSC-SBX-INTEG-001` Integration: 並行 tool 実行時にコンテナ残存がないことを検証
+- [x] `Task-MSC-SBX-DOC-001` Docs: sandbox lifecycle（per-tool）を `README.md` / `doc/spec.md` に追記
 
 ### Phase 5 統合と検証
 
-- [ ] `Task-MSC-VERIFY-001` 全体テスト実行（対象 unit/integration + `pnpm check`）
-- [ ] `Task-MSC-VERIFY-002` エッジケース確認（完了直前 cancel, unknown session, docker fail）
-- [ ] `Task-MSC-VERIFY-003` ログ確認（error code と sessionId 相関）
-- [ ] `Task-MSC-VERIFY-004` 最終ドキュメント同期（`doc/spec.md`, `README.md`）
+- [x] `Task-MSC-VERIFY-001` 全体テスト実行（対象 unit/integration + `pnpm check`）
+- [x] `Task-MSC-VERIFY-002` エッジケース確認（完了直前 cancel, unknown session, docker fail）
+- [x] `Task-MSC-VERIFY-003` ログ確認（error code と sessionId 相関）
+- [x] `Task-MSC-VERIFY-004` 最終ドキュメント同期（`doc/spec.md`, `README.md`）
 
 # 8. 完了の定義 Definition of Done
 
 ## 8.1 機能DoD Functional DoD
 
-- [ ] 受け入れ条件 1-6 を満たす
-- [ ] 複数セッション同時実行が再現テストで安定して成功する
-- [ ] 同一セッション重複 prompt が `SESSION_BUSY` で一貫して拒否される
-- [ ] tool 実行時に `docker run --rm` が使用され、コンテナ残骸が残らない
-- [ ] エラー契約（`INVALID_RECORD`, `SESSION_BUSY`, `DOWNSTREAM_ERROR`）が明文化される
+- [x] 受け入れ条件 1-6 を満たす
+- [x] 複数セッション同時実行が再現テストで安定して成功する
+- [x] 同一セッション重複 prompt が `SESSION_BUSY` で一貫して拒否される
+- [x] tool 実行時に `docker run --rm` が使用され、コンテナ残骸が残らない
+- [x] エラー契約（`INVALID_RECORD`, `SESSION_BUSY`, `DOWNSTREAM_ERROR`）が明文化される
 
 ## 8.2 品質DoD Quality DoD
 
-- [ ] 追加/変更テストが全てパスする
-- [ ] `pnpm check` が成功する
-- [ ] デバッグ用コードや一時ログが残っていない
-- [ ] 主要変更が `README.md` と `doc/spec.md` に反映される
+- [x] 追加/変更テストが全てパスする
+- [x] `pnpm check` が成功する
+- [x] デバッグ用コードや一時ログが残っていない
+- [x] 主要変更が `README.md` と `doc/spec.md` に反映される
 
 # 9. 懸念事項と未確定事項 Concerns and Questions
 

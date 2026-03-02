@@ -150,11 +150,11 @@
 
 ## 15. コントロールプレーン永続化 (JSONL ジャーナル)
 
-| パス                                                           | R/W | 定義箇所                                            | 説明                                                                         |
-| -------------------------------------------------------------- | --- | --------------------------------------------------- | ---------------------------------------------------------------------------- |
-| `{stateDir}/journal/control-plane/threads.jsonl`               | R/W | `src/control-plane/http/thread-repository.ts:143`   | スレッド (ThreadRecord) の upsert イベント。起動時にリプレイして復元         |
-| `{stateDir}/journal/control-plane/session-recovery.jsonl`      | R/W | `src/control-plane/acp/session-recovery-store.ts:80` | セッション復旧情報 (sessionKey↔sessionId) の upsert イベント                |
-| `{stateDir}/journal/control-plane/chat-history.jsonl`          | R/W | `src/control-plane/http/chat-history-store.ts:127`  | チャット履歴 (user/assistant メッセージ)。起動時にリプレイしてメモリ復元     |
+| パス                                                      | R/W | 定義箇所                                             | 説明                                                                     |
+| --------------------------------------------------------- | --- | ---------------------------------------------------- | ------------------------------------------------------------------------ |
+| `{stateDir}/journal/control-plane/threads.jsonl`          | R/W | `src/control-plane/http/thread-repository.ts:143`    | スレッド (ThreadRecord) の upsert イベント。起動時にリプレイして復元     |
+| `{stateDir}/journal/control-plane/session-recovery.jsonl` | R/W | `src/control-plane/acp/session-recovery-store.ts:80` | セッション復旧情報 (sessionKey↔sessionId) の upsert イベント            |
+| `{stateDir}/journal/control-plane/chat-history.jsonl`     | R/W | `src/control-plane/http/chat-history-store.ts:127`   | チャット履歴 (user/assistant メッセージ)。起動時にリプレイしてメモリ復元 |
 
 ### chat-history.jsonl フォーマット
 

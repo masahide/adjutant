@@ -96,8 +96,9 @@ pnpm check               # format -> typecheck -> test
 | `ADJUTANT_ROUTE_LLM_MAX_CONCURRENT`            | `1`                                                  | route LLM 判定の同時実行上限（1で逐次）                                 |
 | `ADJUTANT_SANDBOX_MODE`                        | `off`                                                | bash sandbox mode（`off` / `non-main` / `all`）                         |
 | `ADJUTANT_SANDBOX_IMAGE`                       | `adjutant-sandbox:trixie-slim`                       | sandbox Docker image                                                    |
-| `ADJUTANT_SANDBOX_CONTAINER_PREFIX`            | `adjutant-sandbox`                                   | sandbox container 名の prefix                                           |
+| `ADJUTANT_SANDBOX_AUTO_BUILD_IMAGE`            | `true`                                               | sandbox image が未存在時に自動 build                                    |
 | `ADJUTANT_SANDBOX_WORKDIR`                     | `/workspace`                                         | コンテナ内作業ディレクトリ                                              |
+| `ADJUTANT_SANDBOX_ENV_ALLOWLIST`               | `LANG,LC_ALL,TERM,TZ`                                | sandbox へ受け渡す環境変数 allowlist                                    |
 | `ADJUTANT_SANDBOX_NETWORK`                     | 未設定（bridge）                                     | Docker network（例: `none`）                                            |
 | `ADJUTANT_SANDBOX_MEMORY`                      | 未設定                                               | Docker memory limit（例: `1g`）                                         |
 | `ADJUTANT_SANDBOX_PIDS_LIMIT`                  | `256`                                                | Docker pids limit                                                       |
@@ -113,6 +114,7 @@ ADJUTANT_SANDBOX_MODE=all pnpm start
 - `off`: ホスト実行（既定）
 - `non-main`: main 以外（spoke）のみコンテナ実行
 - `all`: heartbeat を除く全セッションをコンテナ実行
+- 実行方式は tool 呼び出しごとの `docker run --rm`（常駐コンテナは使わない）
 - sandbox イメージには `bash` / `git` / `curl` / `jq` / `rg`（ripgrep）を同梱
 - Docker 利用不可またはイメージ未ビルド時は fail-safe で起動中断します
 
@@ -187,6 +189,8 @@ ADJUTANT_DISABLE_DOM_CAPTURE=1 pnpm start
 - stable 対応: `initialize`, `authenticate`, `session/new`, `session/load`（capability有効時）, `session/prompt`, `session/cancel`, `session/update`
 - unstable: `session/list`, `session/resume`, `session/fork`, `session/set_model`（feature flag で隔離、既定無効）
 - v1 非スコープ: FS capability（`fs/read_text_file`, `fs/write_text_file`）と terminal gateway 一式
+- 実行制約: 異なる `sessionId` は並行実行可能、同一 `sessionId` の同時 `session/prompt` は `SESSION_BUSY` で拒否
+- エラー契約: 未知 `sessionId` は `INVALID_RECORD` を返却
 
 stdio 起動例:
 

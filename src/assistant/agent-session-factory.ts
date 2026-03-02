@@ -136,10 +136,7 @@ export function buildCustomToolDefinitions(options: CreatePiAgentSessionOptions)
   ) {
     const sandboxBashTool = createBashTool(options.cwd, {
       operations: createDockerBashOperations({
-        containerName: sandboxConfig.containerName,
-        hostWorkspaceDir: sandboxConfig.hostWorkspaceDir,
-        containerWorkdir: sandboxConfig.workdir,
-        envAllowlist: sandboxConfig.envAllowlist,
+        runSpec: sandboxConfig.runSpec,
       }),
     });
     customTools.push(sandboxBashTool as unknown as ToolDefinition);
