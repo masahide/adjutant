@@ -29,7 +29,7 @@ export const TooltipIconButton = forwardRef<HTMLButtonElement, TooltipIconButton
         <TooltipContent side={side}>{tooltip}</TooltipContent>
       </Tooltip>
     );
-  },
+  }
 );
 
 TooltipIconButton.displayName = "TooltipIconButton";

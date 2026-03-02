@@ -1,14 +1,5 @@
-import {
-  ThreadListItemPrimitive,
-  ThreadListPrimitive,
-  useAui,
-} from "@assistant-ui/react";
-import {
-  ArchiveIcon,
-  MessageSquareIcon,
-  PlusIcon,
-  Trash2Icon,
-} from "lucide-react";
+import { ThreadListItemPrimitive, ThreadListPrimitive, useAui } from "@assistant-ui/react";
+import { ArchiveIcon, MessageSquareIcon, PlusIcon, Trash2Icon } from "lucide-react";
 import type { FC } from "react";
 
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
@@ -17,9 +8,7 @@ export const ThreadListSidebar: FC = () => {
   return (
     <aside className="flex flex-col border-r border-border/40 bg-[#0a0e14]">
       <div className="flex flex-col gap-3 p-3 pb-2">
-        <div className="px-1 text-lg font-bold tracking-tight text-foreground/90">
-          Adjutant
-        </div>
+        <div className="px-1 text-lg font-bold tracking-tight text-foreground/90">Adjutant</div>
         <ThreadListPrimitive.New asChild>
           <button
             type="button"

@@ -1,21 +1,19 @@
-import { memo, useCallback, useRef, useState } from "react";
+import { memo, useCallback, useRef, useState, type FC, type PropsWithChildren } from "react";
 import {
   AlertCircleIcon,
   CheckIcon,
   ChevronDownIcon,
   LoaderIcon,
+  WrenchIcon,
   XCircleIcon,
 } from "lucide-react";
 import {
   useScrollLock,
+  useAuiState,
   type ToolCallMessagePartStatus,
   type ToolCallMessagePartComponent,
 } from "@assistant-ui/react";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
 
 const ANIMATION_DURATION = 200;
@@ -54,7 +52,7 @@ function ToolFallbackRoot({
       }
       controlledOnOpenChange?.(open);
     },
-    [lockScroll, isControlled, controlledOnOpenChange],
+    [lockScroll, isControlled, controlledOnOpenChange]
   );
 
   return (
@@ -65,7 +63,7 @@ function ToolFallbackRoot({
       onOpenChange={handleOpenChange}
       className={cn(
         "aui-tool-fallback-root group/tool-fallback-root w-full rounded-lg border py-3",
-        className,
+        className
       )}
       style={
         {
@@ -109,7 +107,7 @@ function ToolFallbackTrigger({
       data-slot="tool-fallback-trigger"
       className={cn(
         "aui-tool-fallback-trigger group/trigger flex w-full items-center gap-2 px-4 text-sm transition-colors",
-        className,
+        className
       )}
       {...props}
     >
@@ -118,14 +116,14 @@ function ToolFallbackTrigger({
         className={cn(
           "aui-tool-fallback-trigger-icon size-4 shrink-0",
           isCancelled && "text-muted-foreground",
-          isRunning && "animate-spin",
+          isRunning && "animate-spin"
         )}
       />
       <span
         data-slot="tool-fallback-trigger-label"
         className={cn(
           "aui-tool-fallback-trigger-label-wrapper relative inline-block grow text-left leading-none",
-          isCancelled && "text-muted-foreground line-through",
+          isCancelled && "text-muted-foreground line-through"
         )}
       >
         <span>
@@ -147,7 +145,7 @@ function ToolFallbackTrigger({
           "aui-tool-fallback-trigger-chevron size-4 shrink-0",
           "transition-transform duration-(--animation-duration) ease-out",
           "group-data-[state=closed]/trigger:-rotate-90",
-          "group-data-[state=open]/trigger:rotate-0",
+          "group-data-[state=open]/trigger:rotate-0"
         )}
       />
     </CollapsibleTrigger>
@@ -171,7 +169,7 @@ function ToolFallbackContent({
         "data-[state=closed]:pointer-events-none",
         "data-[state=open]:duration-(--animation-duration)",
         "data-[state=closed]:duration-(--animation-duration)",
-        className,
+        className
       )}
       {...props}
     >
@@ -233,11 +231,7 @@ function ToolFallbackError({
   if (status?.type !== "incomplete") return null;
 
   const error = status.error;
-  const errorText = error
-    ? typeof error === "string"
-      ? error
-      : JSON.stringify(error)
-    : null;
+  const errorText = error ? (typeof error === "string" ? error : JSON.stringify(error)) : null;
 
   if (!errorText) return null;
 
@@ -262,7 +256,10 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({ toolName, argsText, re
   const isCancelled = status?.type === "incomplete" && status.reason === "cancelled";
 
   return (
-    <ToolFallbackRoot className={cn(isCancelled && "border-muted-foreground/30 bg-muted/30")}>
+    <ToolFallbackRoot
+      defaultOpen
+      className={cn(isCancelled && "border-muted-foreground/30 bg-muted/30")}
+    >
       <ToolFallbackTrigger toolName={toolName} status={status} />
       <ToolFallbackContent>
         <ToolFallbackError status={status} />
@@ -290,6 +287,169 @@ ToolFallback.Args = ToolFallbackArgs;
 ToolFallback.Result = ToolFallbackResult;
 ToolFallback.Error = ToolFallbackError;
 
+// ---------------------------------------------------------------------------
+// ToolGroup – outer collapsible wrapper for consecutive tool-call parts
+// ---------------------------------------------------------------------------
+
+function ToolGroupRoot({
+  className,
+  open: controlledOpen,
+  onOpenChange: controlledOnOpenChange,
+  defaultOpen = false,
+  children,
+  ...props
+}: Omit<React.ComponentProps<typeof Collapsible>, "open" | "onOpenChange"> & {
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  defaultOpen?: boolean;
+}) {
+  const collapsibleRef = useRef<HTMLDivElement>(null);
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(defaultOpen);
+  const lockScroll = useScrollLock(collapsibleRef, ANIMATION_DURATION);
+
+  const isControlled = controlledOpen !== undefined;
+  const isOpen = isControlled ? controlledOpen : uncontrolledOpen;
+
+  const handleOpenChange = useCallback(
+    (open: boolean) => {
+      if (!open) {
+        lockScroll();
+      }
+      if (!isControlled) {
+        setUncontrolledOpen(open);
+      }
+      controlledOnOpenChange?.(open);
+    },
+    [lockScroll, isControlled, controlledOnOpenChange]
+  );
+
+  return (
+    <Collapsible
+      ref={collapsibleRef}
+      data-slot="tool-group-root"
+      open={isOpen}
+      onOpenChange={handleOpenChange}
+      className={cn(
+        "aui-tool-group-root group/tool-group-root mb-4 w-full rounded-lg border px-3 py-2",
+        className
+      )}
+      style={
+        {
+          "--animation-duration": `${ANIMATION_DURATION}ms`,
+        } as React.CSSProperties
+      }
+      {...props}
+    >
+      {children}
+    </Collapsible>
+  );
+}
+
+function ToolGroupTrigger({
+  active,
+  toolCount,
+  className,
+  ...props
+}: React.ComponentProps<typeof CollapsibleTrigger> & {
+  active?: boolean;
+  toolCount: number;
+}) {
+  const label = `Used tools (${toolCount})`;
+
+  return (
+    <CollapsibleTrigger
+      data-slot="tool-group-trigger"
+      className={cn(
+        "aui-tool-group-trigger group/trigger flex max-w-[75%] items-center gap-2 py-1 text-muted-foreground text-sm transition-colors hover:text-foreground",
+        className
+      )}
+      {...props}
+    >
+      <WrenchIcon
+        data-slot="tool-group-trigger-icon"
+        className="aui-tool-group-trigger-icon size-4 shrink-0"
+      />
+      <span
+        data-slot="tool-group-trigger-label"
+        className="aui-tool-group-trigger-label-wrapper relative inline-block leading-none"
+      >
+        <span>{label}</span>
+        {active ? (
+          <span
+            aria-hidden
+            data-slot="tool-group-trigger-shimmer"
+            className="aui-tool-group-trigger-shimmer shimmer pointer-events-none absolute inset-0 motion-reduce:animate-none"
+          >
+            {label}
+          </span>
+        ) : null}
+      </span>
+      <ChevronDownIcon
+        data-slot="tool-group-trigger-chevron"
+        className={cn(
+          "aui-tool-group-trigger-chevron mt-0.5 size-4 shrink-0",
+          "transition-transform duration-(--animation-duration) ease-out",
+          "group-data-[state=closed]/trigger:-rotate-90",
+          "group-data-[state=open]/trigger:rotate-0"
+        )}
+      />
+    </CollapsibleTrigger>
+  );
+}
+
+function ToolGroupContent({
+  className,
+  children,
+  ...props
+}: React.ComponentProps<typeof CollapsibleContent>) {
+  return (
+    <CollapsibleContent
+      data-slot="tool-group-content"
+      className={cn(
+        "aui-tool-group-content relative overflow-hidden text-sm outline-none",
+        "group/collapsible-content ease-out",
+        "data-[state=closed]:animate-collapsible-up",
+        "data-[state=open]:animate-collapsible-down",
+        "data-[state=closed]:fill-mode-forwards",
+        "data-[state=closed]:pointer-events-none",
+        "data-[state=open]:duration-(--animation-duration)",
+        "data-[state=closed]:duration-(--animation-duration)",
+        className
+      )}
+      {...props}
+    >
+      <div className="flex flex-col gap-2 pt-2">{children}</div>
+    </CollapsibleContent>
+  );
+}
+
+const ToolGroupImpl: FC<PropsWithChildren<{ startIndex: number; endIndex: number }>> = ({
+  children,
+  startIndex,
+  endIndex,
+}) => {
+  const toolCount = endIndex - startIndex + 1;
+
+  const isToolRunning = useAuiState((s) => {
+    if (s.message.status?.type !== "running") return false;
+    const lastIndex = s.message.parts.length - 1;
+    if (lastIndex < 0) return false;
+    const lastType = s.message.parts[lastIndex]?.type;
+    if (lastType !== "tool-call") return false;
+    return lastIndex >= startIndex && lastIndex <= endIndex;
+  });
+
+  return (
+    <ToolGroupRoot defaultOpen={isToolRunning}>
+      <ToolGroupTrigger active={isToolRunning} toolCount={toolCount} />
+      <ToolGroupContent aria-busy={isToolRunning}>{children}</ToolGroupContent>
+    </ToolGroupRoot>
+  );
+};
+
+const ToolGroup = memo(ToolGroupImpl);
+ToolGroup.displayName = "ToolGroup";
+
 export {
   ToolFallback,
   ToolFallbackRoot,
@@ -298,4 +458,5 @@ export {
   ToolFallbackArgs,
   ToolFallbackResult,
   ToolFallbackError,
+  ToolGroup,
 };

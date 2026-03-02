@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildCustomToolDefinitions, configureSandbox } from "../../../src/assistant/agent-session-factory.js";
+import {
+  buildCustomToolDefinitions,
+  configureSandbox,
+} from "../../../src/assistant/agent-session-factory.js";
 import { configureWorkerSandboxFromEnv } from "../../../src/agent-worker-acp/sandbox-bootstrap.js";
 
 test("configureWorkerSandboxFromEnv enables sandbox bash for spoke scope", async () => {
