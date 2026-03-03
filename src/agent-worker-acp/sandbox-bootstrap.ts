@@ -32,10 +32,7 @@ function parseOptionalTrimmed(value: string | undefined): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function buildActiveSandboxConfig(
-  env: NodeJS.ProcessEnv,
-  cwd: string
-): ActiveSandboxConfig | null {
+function buildActiveSandboxConfig(env: NodeJS.ProcessEnv, cwd: string): ActiveSandboxConfig | null {
   const mode = parseSandboxMode(env.ACP_WORKER_SANDBOX_MODE);
   if (mode === "off") {
     return null;
@@ -45,8 +42,7 @@ function buildActiveSandboxConfig(
   if (containerName === undefined || containerName.length === 0) {
     return null;
   }
-  const workdir =
-    parseOptionalTrimmed(env.ACP_WORKER_SANDBOX_WORKDIR) ?? DEFAULT_CONTAINER_WORKDIR;
+  const workdir = parseOptionalTrimmed(env.ACP_WORKER_SANDBOX_WORKDIR) ?? DEFAULT_CONTAINER_WORKDIR;
   const hostWorkspaceDir = parseOptionalTrimmed(env.ACP_WORKER_SANDBOX_HOST_WORKSPACE_DIR) ?? cwd;
   const envAllowlist = parseCsv(env.ACP_WORKER_SANDBOX_ENV_ALLOWLIST);
 

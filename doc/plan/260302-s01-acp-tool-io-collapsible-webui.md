@@ -342,42 +342,47 @@ sequenceDiagram
 
 ### Phase 1 設計と準備
 
-- [ ] `Task-TOOLIO-P1-001` Contract: `ChatStreamEvent` / `ToolEventRecord` 追加フィールドを `src/control-plane/contracts/http-api.ts` へ定義
-- [ ] `Task-TOOLIO-P1-002` Design: payload 正規化ユーティリティ（truncate/serialize）仕様確定
-- [ ] `Task-TOOLIO-P1-003` Diagram: 本計画のクラス図/シーケンス図を反映
-- [ ] `Task-TOOLIO-P1-004` Test Setup: runtime-hooks から分離した pure helper テスト基盤を追加
+- [x] `Task-TOOLIO-P1-001` Contract: `ChatStreamEvent` / `ToolEventRecord` 追加フィールドを `src/control-plane/contracts/http-api.ts` へ定義
+- [x] `Task-TOOLIO-P1-002` Design: payload 正規化ユーティリティ（truncate/serialize）仕様確定
+- [x] `Task-TOOLIO-P1-003` Diagram: 本計画のクラス図/シーケンス図を反映
+- [x] `Task-TOOLIO-P1-004` Test Setup: runtime-hooks から分離した pure helper テスト基盤を追加
 
 ### Phase 2 control-plane 変換実装
 
-- [ ] `Task-TOOLIO-P2-RED-001` Test: `mapSessionUpdateToChatStreamEvent` が tool I/O を返す失敗テストを追加
-- [ ] `Task-TOOLIO-P2-GREEN-001` Impl: `chat-stream-event-mapper.ts` に `toolInput/toolOutput/toolError` マッピング実装
-- [ ] `Task-TOOLIO-P2-RED-002` Test: `snapshot-builder` / `buildThreadSnapshot` が raw payload を含める失敗テスト追加
-- [ ] `Task-TOOLIO-P2-GREEN-002` Impl: snapshot API へ raw payload を含める
-- [ ] `Task-TOOLIO-P2-REFACTOR-001` Refactor: mapper 内の tool payload 正規化関数を共通化
+- [x] `Task-TOOLIO-P2-RED-001` Test: `mapSessionUpdateToChatStreamEvent` が tool I/O を返す失敗テストを追加
+- [x] `Task-TOOLIO-P2-GREEN-001` Impl: `chat-stream-event-mapper.ts` に `toolInput/toolOutput/toolError` マッピング実装
+- [x] `Task-TOOLIO-P2-RED-002` Test: `snapshot-builder` / `buildThreadSnapshot` が raw payload を含める失敗テスト追加
+- [x] `Task-TOOLIO-P2-GREEN-002` Impl: snapshot API へ raw payload を含める
+- [x] `Task-TOOLIO-P2-REFACTOR-001` Refactor: mapper 内の tool payload 正規化関数を共通化
 
 ### Phase 3 WebUI 折りたたみ表示実装
 
-- [ ] `Task-TOOLIO-P3-RED-001` Test: runtime helper が tool start/update を tool-call part に変換する失敗テスト
-- [ ] `Task-TOOLIO-P3-GREEN-001` Impl: `runtime-hooks.tsx` に tool part 管理（upsert/merge）を実装
-- [ ] `Task-TOOLIO-P3-GREEN-002` Impl: history 読み込み時に snapshot の `toolEventsByRun` を assistant メッセージへ統合
-- [ ] `Task-TOOLIO-P3-REFACTOR-001` Refactor: `upsertAssistantMessage` を text/thinking/tool 共通で扱う構造へ整理
-- [ ] `Task-TOOLIO-P3-INTEG-001` Integration: WebUI で折りたたみ開閉時に args/result が見えることを確認する統合テスト
+- [x] `Task-TOOLIO-P3-RED-001` Test: runtime helper が tool start/update を tool-call part に変換する失敗テスト
+- [x] `Task-TOOLIO-P3-GREEN-001` Impl: `runtime-hooks.tsx` に tool part 管理（upsert/merge）を実装
+- [x] `Task-TOOLIO-P3-GREEN-002` Impl: history 読み込み時に snapshot の `toolEventsByRun` を assistant メッセージへ統合
+- [x] `Task-TOOLIO-P3-REFACTOR-001` Refactor: `upsertAssistantMessage` を text/thinking/tool 共通で扱う構造へ整理
+- [x] `Task-TOOLIO-P3-INTEG-001` Integration: WebUI で折りたたみ開閉時に args/result が見えることを確認する統合テスト
 
 ### Phase 4 統合と検証
 
-- [ ] `Task-TOOLIO-P4-001` 全体テスト実行（`pnpm check`。`playwright-cli` 手動検証は含めない）
-- [ ] `Task-TOOLIO-P4-002` `tests/integration/control-plane-http-sse.test.ts` で tool I/O イベント検証追加
-- [ ] `Task-TOOLIO-P4-003` 既存 API 非回帰確認（`/api/commands`, `/api/events/stream`, `/api/chat/*`）
-- [ ] `Task-TOOLIO-P4-004` ドキュメント更新（必要なら `doc/spec.md` へ契約追記）
-- [ ] `Task-TOOLIO-P4-005` `playwright-cli` で WebUI E2E 手動検証を実装タスクとして実施（`open` → メッセージ送信 → tool 折りたたみクリック → `snapshot --filename=doc/plan/artifacts/260302-s01-tool-io-collapsible.yml`）し、表示確認結果を記録
+- [ ] `Task-TOOLIO-P4-001` 全体テスト実行（`pnpm check`）
+- [x] `Task-TOOLIO-P4-002` `tests/integration/control-plane-http-sse.test.ts` で tool I/O イベント検証追加
+- [x] `Task-TOOLIO-P4-003` 既存 API 非回帰確認（`/api/commands`, `/api/events/stream`, `/api/chat/*`）
+- [x] `Task-TOOLIO-P4-004` ドキュメント更新（必要なら `doc/spec.md` へ契約追記）
+- [x] `Task-TOOLIO-P4-005` `playwright-cli` で WebUI E2E 手動検証を実装タスクとして実施（`open` → メッセージ送信 → tool 折りたたみクリック → `snapshot --filename=doc/plan/artifacts/260302-s01-tool-io-collapsible.yml`）し、表示確認結果を記録
+
+補足（2026-03-02 時点）:
+
+- `Task-TOOLIO-P4-001` は依存復旧後に再実行したが、`prettier --check .` の不一致（19ファイル）で失敗。`.claude` 配下を含む既存フォーマット差分が残っているため完了保留。
+- `Task-TOOLIO-P4-005` は `playwright-cli` で実施済み。証跡は `doc/plan/artifacts/260302-s01-tool-io-collapsible.yml` と `doc/plan/artifacts/260302-s01-tool-io-collapsible-playwright-report.md`。
 
 ## 8. 完了の定義 Definition of Done
 
 ### 8.1 機能DoD Functional DoD
 
-- [ ] chat SSE で tool input/output が配信される
-- [ ] WebUI で tool call が折りたたみ表示され、展開時に args/result/error が確認できる
-- [ ] thread 再読み込み後も tool I/O が復元される
+- [x] chat SSE で tool input/output が配信される
+- [x] WebUI で tool call が折りたたみ表示され、展開時に args/result/error が確認できる
+- [x] thread 再読み込み後も tool I/O が復元される
 - [ ] 受け入れ条件 1〜7 を満たす
 
 ### 8.2 品質DoD Quality DoD

@@ -16,6 +16,13 @@ import type {
   PermissionSummary,
   ThreadSnapshotResponse,
 } from "../control-plane/contracts/http-api.js";
+import {
+  buildAssistantMessageContent,
+  mapChatToolEventToState,
+  mergeHistoryWithToolEvents,
+  type ToolCallPartState,
+  upsertToolCallStates,
+} from "./tool-call-parts.js";
 
 type ThreadMetadata = {
   status: "regular" | "archived";
@@ -82,20 +89,6 @@ function extractThreadMessageText(message: ThreadMessage): string {
     .trim();
 }
 
-function toThreadMessageLike(message: ChatHistoryMessage, index: number): ThreadMessageLike {
-  const normalizedRunId = typeof message.runId === "string" ? message.runId.trim() : "";
-  const stableId =
-    normalizedRunId.length > 0
-      ? `${message.role}:${normalizedRunId}`
-      : `${message.role}:${message.timestamp}:${index}`;
-  return {
-    id: stableId,
-    role: message.role,
-    content: message.content,
-    createdAt: new Date(message.timestamp),
-  };
-}
-
 function parseAppendMessageText(content: unknown): string {
   if (typeof content === "string") {
     return content;
@@ -160,17 +153,19 @@ async function resolveThreadSessionKeyForSend(aui: ReturnType<typeof useAui>): P
 
 function upsertAssistantMessage(
   messages: readonly ThreadMessageLike[],
-  input: { runId: string; text: string; thinking?: string }
+  input: {
+    runId: string;
+    text: string;
+    thinking?: string;
+    toolStates: readonly ToolCallPartState[];
+  }
 ): ThreadMessageLike[] {
   const messageId = `assistant:${input.runId}`;
-  const content: Array<{ type: "text"; text: string } | { type: "reasoning"; text: string }> = [];
-  if (input.thinking) {
-    content.push({ type: "reasoning", text: input.thinking });
-  }
-  if (input.text) {
-    content.push({ type: "text", text: input.text });
-  }
-  const messageContent = content.length > 0 ? content : "";
+  const messageContent = buildAssistantMessageContent({
+    text: input.text,
+    thinking: input.thinking,
+    toolStates: input.toolStates,
+  });
 
   const next = [...messages];
   const index = next.findIndex((message) => message.id === messageId);
@@ -187,10 +182,6 @@ function upsertAssistantMessage(
     content: messageContent,
   });
   return next;
-}
-
-function mergeHistoryMessages(messages: ChatHistoryMessage[]): ThreadMessageLike[] {
-  return messages.map((message, index) => toThreadMessageLike(message, index));
 }
 
 async function fetchJson<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
@@ -219,6 +210,12 @@ type PendingPermissionItem = {
   requestId: string;
   title: string;
   toolCallId?: string;
+};
+
+type AssistantRunState = {
+  text: string;
+  thinking: string;
+  toolStates: ToolCallPartState[];
 };
 
 function mapPendingPermissions(summary: PermissionSummary[]): PendingPermissionItem[] {
@@ -382,12 +379,14 @@ function createThreadListAdapter(baseUrl: string): unstable_RemoteThreadListAdap
           // Stage 3 fallback: patch failure should not block local title rendering.
         }
       }
-      return createAssistantStream((controller) => {
-        if (title.length > 0) {
-          controller.appendText(title);
+      return createAssistantStream(
+        (controller: { appendText: (value: string) => void; close: () => void }) => {
+          if (title.length > 0) {
+            controller.appendText(title);
+          }
+          controller.close();
         }
-        controller.close();
-      });
+      );
     },
     async fetch(threadId: string) {
       if (fallbackThreads.has(threadId)) {
@@ -429,9 +428,41 @@ function useAdjutantExternalStoreRuntime(baseUrl = "") {
   const reconnectAttemptsRef = useRef(0);
   const lastSeqByRunIdRef = useRef(new Map<string, number>());
   const terminalRunRef = useRef<string | undefined>(undefined);
-  const assistantTextByRunId = useRef(new Map<string, string>());
-  const assistantThinkingByRunId = useRef(new Map<string, string>());
+  const assistantStateByRunIdRef = useRef(new Map<string, AssistantRunState>());
   latestSessionKeyRef.current = sessionKey;
+
+  const ensureAssistantRunState = useCallback((runId: string): AssistantRunState => {
+    const current = assistantStateByRunIdRef.current.get(runId);
+    if (current !== undefined) {
+      return current;
+    }
+    const created: AssistantRunState = {
+      text: "",
+      thinking: "",
+      toolStates: [],
+    };
+    assistantStateByRunIdRef.current.set(runId, created);
+    return created;
+  }, []);
+
+  const syncAssistantMessage = useCallback(
+    (runId: string) => {
+      const state = ensureAssistantRunState(runId);
+      setMessages((previous) =>
+        upsertAssistantMessage(previous, {
+          runId,
+          text: state.text,
+          thinking: state.thinking || undefined,
+          toolStates: state.toolStates,
+        })
+      );
+    },
+    [ensureAssistantRunState]
+  );
+
+  const clearAssistantRunState = useCallback((runId: string) => {
+    assistantStateByRunIdRef.current.delete(runId);
+  }, []);
 
   const stopActiveStream = useCallback((options?: { clearRunId?: boolean }) => {
     if (reconnectTimerRef.current !== undefined) {
@@ -472,51 +503,39 @@ function useAdjutantExternalStoreRuntime(baseUrl = "") {
         lastSeqByRunIdRef.current.set(runId, event.seq);
         reconnectAttemptsRef.current = 0;
 
-        if (event.state === "delta" && typeof event.thinking === "string") {
-          const current = assistantThinkingByRunId.current.get(event.runId) ?? "";
-          const nextThinking = `${current}${event.thinking}`;
-          assistantThinkingByRunId.current.set(event.runId, nextThinking);
-          const currentText = assistantTextByRunId.current.get(event.runId) ?? "";
-          setMessages((previous) =>
-            upsertAssistantMessage(previous, {
-              runId: event.runId,
-              text: currentText,
-              thinking: nextThinking,
-            })
-          );
-          return;
-        }
+        if (event.state === "delta") {
+          const state = ensureAssistantRunState(event.runId);
+          let updated = false;
 
-        if (event.state === "delta" && typeof event.message === "string") {
-          const current = assistantTextByRunId.current.get(event.runId) ?? "";
-          const nextText = `${current}${event.message}`;
-          assistantTextByRunId.current.set(event.runId, nextText);
-          const currentThinking = assistantThinkingByRunId.current.get(event.runId) ?? "";
-          setMessages((previous) =>
-            upsertAssistantMessage(previous, {
-              runId: event.runId,
-              text: nextText,
-              thinking: currentThinking || undefined,
-            })
-          );
+          if (typeof event.thinking === "string") {
+            state.thinking = `${state.thinking}${event.thinking}`;
+            updated = true;
+          }
+
+          if (typeof event.message === "string") {
+            state.text = `${state.text}${event.message}`;
+            updated = true;
+          }
+
+          const toolState = mapChatToolEventToState(event);
+          if (toolState !== undefined) {
+            state.toolStates = upsertToolCallStates(state.toolStates, toolState);
+            updated = true;
+          }
+
+          if (updated) {
+            syncAssistantMessage(event.runId);
+          }
           return;
         }
 
         if (event.state === "final") {
-          const nextText =
-            typeof event.message === "string"
-              ? event.message
-              : (assistantTextByRunId.current.get(event.runId) ?? "");
-          const finalThinking = assistantThinkingByRunId.current.get(event.runId) || undefined;
-          setMessages((previous) =>
-            upsertAssistantMessage(previous, {
-              runId: event.runId,
-              text: nextText,
-              thinking: finalThinking,
-            })
-          );
-          assistantTextByRunId.current.delete(event.runId);
-          assistantThinkingByRunId.current.delete(event.runId);
+          const state = ensureAssistantRunState(event.runId);
+          if (typeof event.message === "string") {
+            state.text = event.message;
+          }
+          syncAssistantMessage(event.runId);
+          clearAssistantRunState(event.runId);
           lastSeqByRunIdRef.current.delete(event.runId);
           terminalRunRef.current = runId;
           activeRunSessionKeyRef.current = undefined;
@@ -526,8 +545,7 @@ function useAdjutantExternalStoreRuntime(baseUrl = "") {
         }
 
         if (event.state === "aborted") {
-          assistantTextByRunId.current.delete(event.runId);
-          assistantThinkingByRunId.current.delete(event.runId);
+          clearAssistantRunState(event.runId);
           lastSeqByRunIdRef.current.delete(event.runId);
           terminalRunRef.current = runId;
           activeRunSessionKeyRef.current = undefined;
@@ -538,14 +556,11 @@ function useAdjutantExternalStoreRuntime(baseUrl = "") {
 
         if (event.state === "error") {
           const errorText = event.errorMessage ?? "run failed";
-          setMessages((previous) =>
-            upsertAssistantMessage(previous, {
-              runId: event.runId,
-              text: `Error: ${errorText}`,
-            })
-          );
-          assistantTextByRunId.current.delete(event.runId);
-          assistantThinkingByRunId.current.delete(event.runId);
+          const state = ensureAssistantRunState(event.runId);
+          state.text = `Error: ${errorText}`;
+          state.thinking = "";
+          syncAssistantMessage(event.runId);
+          clearAssistantRunState(event.runId);
           lastSeqByRunIdRef.current.delete(event.runId);
           terminalRunRef.current = runId;
           activeRunSessionKeyRef.current = undefined;
@@ -590,7 +605,13 @@ function useAdjutantExternalStoreRuntime(baseUrl = "") {
         }, delayMs);
       };
     },
-    [baseUrl, stopActiveStream]
+    [
+      baseUrl,
+      clearAssistantRunState,
+      ensureAssistantRunState,
+      stopActiveStream,
+      syncAssistantMessage,
+    ]
   );
 
   useEffect(() => {
@@ -613,8 +634,7 @@ function useAdjutantExternalStoreRuntime(baseUrl = "") {
           runIdRef.current = undefined;
           activeRunSessionKeyRef.current = undefined;
           lastSeqByRunIdRef.current.clear();
-          assistantTextByRunId.current.clear();
-          assistantThinkingByRunId.current.clear();
+          assistantStateByRunIdRef.current.clear();
           return;
         }
         const hasThread = await fetchThreadRecord(baseUrl, sessionKey);
@@ -627,23 +647,29 @@ function useAdjutantExternalStoreRuntime(baseUrl = "") {
           runIdRef.current = undefined;
           activeRunSessionKeyRef.current = undefined;
           lastSeqByRunIdRef.current.clear();
-          assistantTextByRunId.current.clear();
-          assistantThinkingByRunId.current.clear();
+          assistantStateByRunIdRef.current.clear();
           return;
         }
         const history = await fetchJson<{ messages: ChatHistoryMessage[] }>(
           `${baseUrl}/api/chat/history?sessionKey=${encodeURIComponent(sessionKey)}`
         );
+        const snapshot = await fetchJson<ThreadSnapshotResponse>(
+          `${baseUrl}/api/threads/${encodeURIComponent(sessionKey)}/snapshot`
+        ).catch(() => undefined);
         if (disposed) {
           return;
         }
-        setMessages(mergeHistoryMessages(history.messages));
+        setMessages(
+          mergeHistoryWithToolEvents({
+            messages: history.messages,
+            toolEventsByRun: snapshot?.toolEventsByRun ?? {},
+          })
+        );
         setIsRunning(false);
         runIdRef.current = undefined;
         activeRunSessionKeyRef.current = undefined;
         lastSeqByRunIdRef.current.clear();
-        assistantTextByRunId.current.clear();
-        assistantThinkingByRunId.current.clear();
+        assistantStateByRunIdRef.current.clear();
       } catch {
         if (disposed) {
           return;
@@ -652,8 +678,7 @@ function useAdjutantExternalStoreRuntime(baseUrl = "") {
         runIdRef.current = undefined;
         activeRunSessionKeyRef.current = undefined;
         lastSeqByRunIdRef.current.clear();
-        assistantTextByRunId.current.clear();
-        assistantThinkingByRunId.current.clear();
+        assistantStateByRunIdRef.current.clear();
         setIsRunning(false);
       }
     })();
@@ -674,8 +699,7 @@ function useAdjutantExternalStoreRuntime(baseUrl = "") {
       terminalRunRef.current = undefined;
       activeRunSessionKeyRef.current = undefined;
       lastSeqByRunIdRef.current.clear();
-      assistantTextByRunId.current.clear();
-      assistantThinkingByRunId.current.clear();
+      assistantStateByRunIdRef.current.clear();
     };
   }, [baseUrl, sessionKey, stopActiveStream]);
 
@@ -684,8 +708,7 @@ function useAdjutantExternalStoreRuntime(baseUrl = "") {
     terminalRunRef.current = currentRunId;
     if (currentRunId !== undefined) {
       lastSeqByRunIdRef.current.delete(currentRunId);
-      assistantTextByRunId.current.delete(currentRunId);
-      assistantThinkingByRunId.current.delete(currentRunId);
+      assistantStateByRunIdRef.current.delete(currentRunId);
     }
     stopActiveStream({ clearRunId: true });
     try {
@@ -746,8 +769,11 @@ function useAdjutantExternalStoreRuntime(baseUrl = "") {
         terminalRunRef.current = undefined;
         reconnectAttemptsRef.current = 0;
         lastSeqByRunIdRef.current.set(accepted.runId, -1);
-        assistantTextByRunId.current.set(accepted.runId, "");
-        assistantThinkingByRunId.current.set(accepted.runId, "");
+        assistantStateByRunIdRef.current.set(accepted.runId, {
+          text: "",
+          thinking: "",
+          toolStates: [],
+        });
         stopActiveStream({ clearRunId: false });
         connectRunStream(accepted.runId, 0);
       } catch {

@@ -1,4 +1,5 @@
 import type { ClientNotification } from "../../contracts/acp/rpc-types.js";
+import { extractToolError, normalizeToolPayload } from "../http/tool-payload-normalizer.js";
 
 export interface ToolEventBridgeRecord {
   runId: string;
@@ -9,6 +10,7 @@ export interface ToolEventBridgeRecord {
   status?: "pending" | "in_progress" | "completed" | "failed";
   rawInput?: unknown;
   rawOutput?: unknown;
+  error?: string;
   content?: unknown;
   updatedAt: string;
 }
@@ -24,6 +26,47 @@ function isObject(value: unknown): value is Record<string, unknown> {
 
 function getString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function hasOwn(record: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(record, key);
+}
+
+function toComparableJson(value: unknown): string {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return '"[unserializable]"';
+  }
+}
+
+function statusRank(value: ToolEventBridgeRecord["status"]): number {
+  if (value === "pending") {
+    return 1;
+  }
+  if (value === "in_progress") {
+    return 2;
+  }
+  if (value === "completed" || value === "failed") {
+    return 3;
+  }
+  return 0;
+}
+
+function mergeStatus(
+  current: ToolEventBridgeRecord["status"],
+  next: ToolEventBridgeRecord["status"]
+): ToolEventBridgeRecord["status"] {
+  if (next === undefined) {
+    return current;
+  }
+  if (current === undefined) {
+    return next;
+  }
+  if (statusRank(next) >= statusRank(current)) {
+    return next;
+  }
+  return current;
 }
 
 export class ToolEventBridge {
@@ -60,6 +103,8 @@ export class ToolEventBridge {
 
     const runMap = this.byRunId.get(runId) ?? new Map<string, ToolEventBridgeRecord>();
     const current = runMap.get(toolCallId);
+    const status = mergeStatus(current?.status, this.normalizeStatus(update.status));
+    const error = status === "failed" ? (extractToolError(update) ?? current?.error) : undefined;
 
     const next: ToolEventBridgeRecord = {
       runId,
@@ -67,9 +112,14 @@ export class ToolEventBridge {
       toolCallId,
       title: getString(update.title) ?? current?.title,
       kind: getString(update.kind) ?? current?.kind,
-      status: this.normalizeStatus(update.status) ?? current?.status,
-      rawInput: update.rawInput ?? current?.rawInput,
-      rawOutput: update.rawOutput ?? current?.rawOutput,
+      status,
+      rawInput: hasOwn(update, "rawInput")
+        ? normalizeToolPayload(update.rawInput)
+        : current?.rawInput,
+      rawOutput: hasOwn(update, "rawOutput")
+        ? normalizeToolPayload(update.rawOutput)
+        : current?.rawOutput,
+      error,
       content: update.content ?? current?.content,
       updatedAt: this.now(),
     };
@@ -116,9 +166,10 @@ export class ToolEventBridge {
       prev.title === next.title &&
       prev.kind === next.kind &&
       prev.status === next.status &&
-      JSON.stringify(prev.rawInput) === JSON.stringify(next.rawInput) &&
-      JSON.stringify(prev.rawOutput) === JSON.stringify(next.rawOutput) &&
-      JSON.stringify(prev.content) === JSON.stringify(next.content)
+      toComparableJson(prev.rawInput) === toComparableJson(next.rawInput) &&
+      toComparableJson(prev.rawOutput) === toComparableJson(next.rawOutput) &&
+      prev.error === next.error &&
+      toComparableJson(prev.content) === toComparableJson(next.content)
     );
   }
 }

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import nodeTest, { type TestContext } from "node:test";
 
 import {
   buildCustomToolDefinitions,
@@ -12,6 +12,12 @@ import { createMarkdownSummaryBatchService } from "../../src/assistant/markdown-
 import { clearMemorySqliteIndexCacheForTest } from "../../src/assistant/memory/sqlite-index.js";
 import { AgentAuditLog } from "../../src/control-plane/audit/agent-audit-log.js";
 import { readRunAudit } from "../../src/control-plane/audit/audit-reader.js";
+
+const TEST_TIMEOUT_MS = 30_000;
+
+const test = (name: string, fn: (t: TestContext) => Promise<void> | void): void => {
+  nodeTest(name, { timeout: TEST_TIMEOUT_MS }, fn);
+};
 
 type ToolResult = { details?: unknown };
 

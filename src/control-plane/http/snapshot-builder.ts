@@ -4,6 +4,7 @@ import {
   type RunSummary,
   type SnapshotResponse,
 } from "../contracts/http-api.js";
+import { normalizeToolPayload } from "./tool-payload-normalizer.js";
 
 interface ToolEventInput {
   runId: string;
@@ -12,6 +13,9 @@ interface ToolEventInput {
   status?: "pending" | "in_progress" | "completed" | "failed";
   title?: string;
   kind?: string;
+  rawInput?: unknown;
+  rawOutput?: unknown;
+  error?: string;
   updatedAt: string;
 }
 
@@ -38,6 +42,9 @@ export function buildSnapshotResponse(deps: SnapshotBuildDeps): SnapshotResponse
         status: record.status,
         title: record.title,
         kind: record.kind,
+        rawInput: normalizeToolPayload(record.rawInput),
+        rawOutput: normalizeToolPayload(record.rawOutput),
+        error: record.error,
         updatedAt: record.updatedAt,
       }));
     toolEventsByRun[runId] = records;

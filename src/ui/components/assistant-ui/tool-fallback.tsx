@@ -1,21 +1,11 @@
 import { memo, useCallback, useRef, useState } from "react";
-import {
-  AlertCircleIcon,
-  CheckIcon,
-  ChevronDownIcon,
-  LoaderIcon,
-  XCircleIcon,
-} from "lucide-react";
+import { AlertCircleIcon, CheckIcon, ChevronDownIcon, LoaderIcon, XCircleIcon } from "lucide-react";
 import {
   useScrollLock,
   type ToolCallMessagePartStatus,
   type ToolCallMessagePartComponent,
 } from "@assistant-ui/react";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
 
 const ANIMATION_DURATION = 200;
@@ -54,7 +44,7 @@ function ToolFallbackRoot({
       }
       controlledOnOpenChange?.(open);
     },
-    [lockScroll, isControlled, controlledOnOpenChange],
+    [lockScroll, isControlled, controlledOnOpenChange]
   );
 
   return (
@@ -65,7 +55,7 @@ function ToolFallbackRoot({
       onOpenChange={handleOpenChange}
       className={cn(
         "aui-tool-fallback-root group/tool-fallback-root w-full rounded-lg border py-3",
-        className,
+        className
       )}
       style={
         {
@@ -97,7 +87,7 @@ function ToolFallbackTrigger({
   toolName: string;
   status?: ToolCallMessagePartStatus;
 }) {
-  const statusType = status?.type ?? "complete";
+  const statusType = (status?.type ?? "complete") as ToolStatus;
   const isRunning = statusType === "running";
   const isCancelled = status?.type === "incomplete" && status.reason === "cancelled";
 
@@ -109,7 +99,7 @@ function ToolFallbackTrigger({
       data-slot="tool-fallback-trigger"
       className={cn(
         "aui-tool-fallback-trigger group/trigger flex w-full items-center gap-2 px-4 text-sm transition-colors",
-        className,
+        className
       )}
       {...props}
     >
@@ -118,14 +108,14 @@ function ToolFallbackTrigger({
         className={cn(
           "aui-tool-fallback-trigger-icon size-4 shrink-0",
           isCancelled && "text-muted-foreground",
-          isRunning && "animate-spin",
+          isRunning && "animate-spin"
         )}
       />
       <span
         data-slot="tool-fallback-trigger-label"
         className={cn(
           "aui-tool-fallback-trigger-label-wrapper relative inline-block grow text-left leading-none",
-          isCancelled && "text-muted-foreground line-through",
+          isCancelled && "text-muted-foreground line-through"
         )}
       >
         <span>
@@ -147,7 +137,7 @@ function ToolFallbackTrigger({
           "aui-tool-fallback-trigger-chevron size-4 shrink-0",
           "transition-transform duration-(--animation-duration) ease-out",
           "group-data-[state=closed]/trigger:-rotate-90",
-          "group-data-[state=open]/trigger:rotate-0",
+          "group-data-[state=open]/trigger:rotate-0"
         )}
       />
     </CollapsibleTrigger>
@@ -171,7 +161,7 @@ function ToolFallbackContent({
         "data-[state=closed]:pointer-events-none",
         "data-[state=open]:duration-(--animation-duration)",
         "data-[state=closed]:duration-(--animation-duration)",
-        className,
+        className
       )}
       {...props}
     >
@@ -225,23 +215,35 @@ function ToolFallbackResult({
 
 function ToolFallbackError({
   status,
+  isError,
+  result,
   className,
   ...props
 }: React.ComponentProps<"div"> & {
   status?: ToolCallMessagePartStatus;
+  isError?: boolean;
+  result?: unknown;
 }) {
-  if (status?.type !== "incomplete") return null;
+  const statusError =
+    status?.type === "incomplete"
+      ? status.error
+        ? typeof status.error === "string"
+          ? status.error
+          : JSON.stringify(status.error)
+        : undefined
+      : undefined;
 
-  const error = status.error;
-  const errorText = error
-    ? typeof error === "string"
-      ? error
-      : JSON.stringify(error)
-    : null;
+  const resultError =
+    isError === true && result !== undefined
+      ? typeof result === "string"
+        ? result
+        : JSON.stringify(result)
+      : undefined;
 
+  const errorText = statusError ?? resultError;
   if (!errorText) return null;
 
-  const isCancelled = status.reason === "cancelled";
+  const isCancelled = status?.type === "incomplete" && status.reason === "cancelled";
   const headerText = isCancelled ? "Cancelled reason:" : "Error:";
 
   return (
@@ -258,14 +260,20 @@ function ToolFallbackError({
   );
 }
 
-const ToolFallbackImpl: ToolCallMessagePartComponent = ({ toolName, argsText, result, status }) => {
+const ToolFallbackImpl: ToolCallMessagePartComponent = ({
+  toolName,
+  argsText,
+  result,
+  status,
+  isError,
+}) => {
   const isCancelled = status?.type === "incomplete" && status.reason === "cancelled";
 
   return (
     <ToolFallbackRoot className={cn(isCancelled && "border-muted-foreground/30 bg-muted/30")}>
       <ToolFallbackTrigger toolName={toolName} status={status} />
       <ToolFallbackContent>
-        <ToolFallbackError status={status} />
+        <ToolFallbackError status={status} isError={isError} result={result} />
         <ToolFallbackArgs argsText={argsText} className={cn(isCancelled && "opacity-60")} />
         {!isCancelled && <ToolFallbackResult result={result} />}
       </ToolFallbackContent>

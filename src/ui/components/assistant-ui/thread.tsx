@@ -201,14 +201,17 @@ function UserMessage() {
           <UserActionBar />
         </div>
       </div>
-
     </MessagePrimitive.Root>
   );
 }
 
 function UserActionBar() {
   return (
-    <ActionBarPrimitive.Root hideWhenRunning autohide="not-last" className="flex flex-col items-end">
+    <ActionBarPrimitive.Root
+      hideWhenRunning
+      autohide="not-last"
+      className="flex flex-col items-end"
+    >
       <ActionBarPrimitive.Edit asChild>
         <TooltipIconButton tooltip="Edit" className="p-4">
           <PencilIcon />

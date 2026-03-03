@@ -724,6 +724,9 @@ export async function main(): Promise<void> {
             status: record.status,
             title: record.title,
             kind: record.kind,
+            rawInput: record.rawInput,
+            rawOutput: record.rawOutput,
+            error: record.error,
             updatedAt: record.updatedAt,
           };
         })

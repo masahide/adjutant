@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import test from "node:test";
+import nodeTest, { type TestContext } from "node:test";
 
 interface JsonRpcEnvelope {
   jsonrpc: "2.0";
@@ -10,6 +10,12 @@ interface JsonRpcEnvelope {
   result?: Record<string, unknown>;
   error?: { code: number; message: string };
 }
+
+const TEST_TIMEOUT_MS = 30_000;
+
+const test = (name: string, fn: (t: TestContext) => Promise<void> | void): void => {
+  nodeTest(name, { timeout: TEST_TIMEOUT_MS }, fn);
+};
 
 function waitForCondition(
   predicate: (envelope: JsonRpcEnvelope) => boolean,
