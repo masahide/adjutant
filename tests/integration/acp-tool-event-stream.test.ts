@@ -68,3 +68,35 @@ test("tool event bridge restores missing start and dedupes duplicate update", ()
   assert.deepEqual(events[0]?.rawInput, { command: "pnpm test" });
   assert.deepEqual(events[0]?.rawOutput, { exitCode: 0 });
 });
+
+test("tool event bridge keeps terminal status when start event arrives late", () => {
+  const runtime = new UiRuntime({
+    resolveRunId: (sessionId) => (sessionId === "sess_1" ? "run_1" : undefined),
+  });
+
+  runtime.onAcpSessionUpdate(
+    toolUpdate("sess_1", {
+      sessionUpdate: "tool_call_update",
+      toolCallId: "call_late_start",
+      title: "Run tests",
+      status: "completed",
+      rawOutput: { exitCode: 0 },
+    })
+  );
+
+  runtime.onAcpSessionUpdate(
+    toolUpdate("sess_1", {
+      sessionUpdate: "tool_call",
+      toolCallId: "call_late_start",
+      title: "Run tests",
+      status: "pending",
+      rawInput: { command: "pnpm test" },
+    })
+  );
+
+  const events = runtime.listToolEvents("run_1");
+  assert.equal(events.length, 1);
+  assert.equal(events[0]?.status, "completed");
+  assert.deepEqual(events[0]?.rawInput, { command: "pnpm test" });
+  assert.deepEqual(events[0]?.rawOutput, { exitCode: 0 });
+});

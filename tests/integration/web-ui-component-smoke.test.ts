@@ -3,13 +3,14 @@ import test from "node:test";
 
 import { fireEvent, render, waitFor, cleanup } from "@testing-library/react";
 import { JSDOM } from "jsdom";
-import { createElement } from "react";
+import { createElement, type ComponentType } from "react";
 
 import type {
   PermissionSummary,
   ToolEventRecord,
 } from "../../src/control-plane/contracts/http-api.js";
 import { ControlPlaneConsole } from "../../src/ui/components/control-plane-console.js";
+import { ToolFallback } from "../../src/ui/components/assistant-ui/tool-fallback.js";
 
 function installDom(): () => void {
   const dom = new JSDOM("<!doctype html><html><body></body></html>", {
@@ -20,12 +21,21 @@ function installDom(): () => void {
   const previousDocument = globalThis.document;
   const previousHTMLElement = globalThis.HTMLElement;
   const previousEvent = globalThis.Event;
+  const previousGetComputedStyle = globalThis.getComputedStyle;
+  const previousRequestAnimationFrame = globalThis.requestAnimationFrame;
+  const previousCancelAnimationFrame = globalThis.cancelAnimationFrame;
 
   Object.assign(globalThis, {
     window: dom.window,
     document: dom.window.document,
     HTMLElement: dom.window.HTMLElement,
     Event: dom.window.Event,
+    getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
+    requestAnimationFrame:
+      dom.window.requestAnimationFrame?.bind(dom.window) ??
+      ((callback: FrameRequestCallback) => setTimeout(() => callback(Date.now()), 16)),
+    cancelAnimationFrame:
+      dom.window.cancelAnimationFrame?.bind(dom.window) ?? ((id: number) => clearTimeout(id)),
   });
 
   return () => {
@@ -36,6 +46,9 @@ function installDom(): () => void {
       document: previousDocument,
       HTMLElement: previousHTMLElement,
       Event: previousEvent,
+      getComputedStyle: previousGetComputedStyle,
+      requestAnimationFrame: previousRequestAnimationFrame,
+      cancelAnimationFrame: previousCancelAnimationFrame,
     });
   };
 }
@@ -123,4 +136,41 @@ test("ControlPlaneConsole smoke: send, tool history, pending permissions", async
       true
     );
   });
+});
+
+test("ToolFallback smoke: collapsible shows args/result on open and hides on close", async (t) => {
+  const restoreDom = installDom();
+  t.after(() => {
+    restoreDom();
+  });
+
+  const view = render(
+    createElement(ToolFallback as unknown as ComponentType<Record<string, unknown>>, {
+      type: "tool-call",
+      toolCallId: "call_smoke_1",
+      toolName: "bash",
+      args: {},
+      argsText: '{"cmd":"echo hi"}',
+      result: { stdout: "hi" },
+      status: { type: "complete" },
+    })
+  );
+
+  assert.equal(view.queryByText("Result:"), null);
+  assert.equal(view.queryByText('{"cmd":"echo hi"}'), null);
+
+  fireEvent.click(view.getByText("Used tool:", { exact: false }));
+
+  await waitFor(() => {
+    assert.notEqual(view.queryByText("Result:"), null);
+  });
+  assert.notEqual(view.queryByText('{"cmd":"echo hi"}'), null);
+  assert.notEqual(view.queryByText(/"stdout"\s*:\s*"hi"/), null);
+
+  fireEvent.click(view.getByText("Used tool:", { exact: false }));
+
+  await waitFor(() => {
+    assert.equal(view.queryByText("Result:"), null);
+  });
+  assert.equal(view.queryByText('{"cmd":"echo hi"}'), null);
 });

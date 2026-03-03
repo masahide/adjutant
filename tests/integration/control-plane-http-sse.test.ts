@@ -4,7 +4,13 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import nodeTest, { type TestContext } from "node:test";
+
+const TEST_TIMEOUT_MS = 30_000;
+
+const test = (name: string, fn: (t: TestContext) => Promise<void> | void): void => {
+  nodeTest(name, { timeout: TEST_TIMEOUT_MS }, fn);
+};
 
 type CommandAccepted = {
   messageId: string;
@@ -28,6 +34,12 @@ type ChatStreamEvent = {
   sessionKey: string;
   message?: string;
   errorMessage?: string;
+  toolCallId?: string;
+  toolName?: string;
+  toolStatus?: "started" | "completed" | "failed";
+  toolInput?: unknown;
+  toolOutput?: unknown;
+  toolError?: string;
 };
 
 type ChatHistoryResponse = {
@@ -51,6 +63,9 @@ type SnapshotResponse = {
     Array<{
       toolCallId: string;
       status: string;
+      rawInput?: unknown;
+      rawOutput?: unknown;
+      error?: string;
     }>
   >;
   pendingPermissions: unknown[];
@@ -1215,6 +1230,14 @@ test("tool_call updates are reflected in SSE and snapshot history", async (t) =>
   assert.equal(commandRes.status, 202);
   const accepted = (await commandRes.json()) as CommandAccepted;
 
+  const chatSse = await openSsePath(
+    runtime.baseUrl,
+    `/api/chat/runs/${encodeURIComponent(accepted.runId)}/stream?seq=0`
+  );
+  t.after(() => {
+    chatSse.close();
+  });
+
   const toolStart = await sse.waitFor(
     (event) =>
       event.event === "run/update" &&
@@ -1236,6 +1259,24 @@ test("tool_call updates are reflected in SSE and snapshot history", async (t) =>
       (event.data.update as Record<string, unknown>).toolCallId === "fake_call_1"
   );
 
+  const chatToolStarted = (await chatSse.waitFor(
+    (event) =>
+      event.event === "chat" &&
+      (event.data as ChatStreamEvent).runId === accepted.runId &&
+      (event.data as ChatStreamEvent).toolCallId === "fake_call_1" &&
+      (event.data as ChatStreamEvent).toolStatus === "started"
+  )) as { event: string; data: ChatStreamEvent };
+  assert.deepEqual(chatToolStarted.data.toolInput, { prompt: "hello-tool-history" });
+
+  const chatToolCompleted = (await chatSse.waitFor(
+    (event) =>
+      event.event === "chat" &&
+      (event.data as ChatStreamEvent).runId === accepted.runId &&
+      (event.data as ChatStreamEvent).toolCallId === "fake_call_1" &&
+      (event.data as ChatStreamEvent).toolStatus === "completed"
+  )) as { event: string; data: ChatStreamEvent };
+  assert.deepEqual(chatToolCompleted.data.toolOutput, { ok: true });
+
   await sse.waitFor(
     (event) => event.event === "run/completed" && event.data.runId === accepted.runId
   );
@@ -1247,6 +1288,8 @@ test("tool_call updates are reflected in SSE and snapshot history", async (t) =>
   assert.equal(history.length >= 1, true);
   assert.equal(history[0]?.toolCallId, "fake_call_1");
   assert.equal(history[0]?.status, "completed");
+  assert.deepEqual(history[0]?.rawInput, { prompt: "hello-tool-history" });
+  assert.deepEqual(history[0]?.rawOutput, { ok: true });
 
   // reload simulation: initial hydration via snapshot can restore persisted in-memory history
   const snapshotResReload = await fetch(`${runtime.baseUrl}/api/snapshot`);
@@ -1468,4 +1511,68 @@ test("agent audit logs run/tool events and run audit API returns summary", async
   assert.equal(rawLog.includes('"type":"run.start"'), true);
   assert.equal(rawLog.includes('"type":"tool.start"'), true);
   assert.equal(rawLog.includes('"type":"run.end"'), true);
+});
+
+test("existing API endpoints remain compatible after tool I/O extension", async (t) => {
+  const runtime = await startControlPlane();
+  t.after(async () => {
+    await stopControlPlane(runtime.child);
+  });
+
+  const sse = await openSse(runtime.baseUrl);
+  t.after(() => {
+    sse.close();
+  });
+
+  const commandRes = await fetch(`${runtime.baseUrl}/api/commands`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ sessionKey: "main", message: "compat-command" }),
+  });
+  assert.equal(commandRes.status, 202);
+  const commandAccepted = (await commandRes.json()) as CommandAccepted;
+  assert.equal(typeof commandAccepted.runId, "string");
+  assert.ok(commandAccepted.runId.length > 0);
+
+  await sse.waitFor(
+    (event) => event.event === "run/accepted" && event.data.runId === commandAccepted.runId
+  );
+  await sse.waitFor(
+    (event) => event.event === "run/completed" && event.data.runId === commandAccepted.runId
+  );
+
+  const chatRes = await fetch(`${runtime.baseUrl}/api/chat/messages`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      sessionKey: "main",
+      message: "compat-chat",
+      idempotencyKey: "compat_chat_1",
+    }),
+  });
+  assert.equal(chatRes.status, 202);
+  const chatAccepted = (await chatRes.json()) as ChatAccepted;
+  assert.equal(typeof chatAccepted.runId, "string");
+  assert.ok(chatAccepted.runId.length > 0);
+
+  const chatSse = await openSsePath(
+    runtime.baseUrl,
+    `/api/chat/runs/${encodeURIComponent(chatAccepted.runId)}/stream?seq=0`
+  );
+  t.after(() => {
+    chatSse.close();
+  });
+
+  await chatSse.waitFor(
+    (event) =>
+      event.event === "chat" &&
+      event.data.runId === chatAccepted.runId &&
+      event.data.state === "final"
+  );
+
+  const historyRes = await fetch(`${runtime.baseUrl}/api/chat/history?sessionKey=main`);
+  assert.equal(historyRes.status, 200);
+  const history = (await historyRes.json()) as ChatHistoryResponse;
+  assert.equal(Array.isArray(history.messages), true);
+  assert.equal(history.messages.length >= 2, true);
 });

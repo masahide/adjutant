@@ -656,6 +656,11 @@ classDiagram
   - `POST /api/commands`
   - `GET /api/snapshot`
   - `GET /api/events/stream`
+  - `GET /api/chat/runs/:runId/stream` (`event: chat`)
+    - `ChatStreamEvent` は後方互換の optional 拡張として
+      `toolCallId` / `toolName` / `toolStatus` / `toolInput` / `toolOutput` / `toolError` を持つ
+  - `GET /api/threads/:threadId/snapshot`
+    - `toolEventsByRun[runId][]` は optional で `rawInput` / `rawOutput` / `error` を含む
   - `POST /api/commands` は `idempotencyKey` を受け付け、同一 payload 再送時は run を再作成せず既存 `runId` を返す
   - 同一 `idempotencyKey` で payload が異なる場合は `409 INVALID_REQUEST` を返す
 

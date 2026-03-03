@@ -1,5 +1,6 @@
 import type { PermissionGatewayEvent } from "../acp/permission-gateway.js";
 import type { ChatStreamEvent, RunFailureSummary } from "./run-event-buffer.js";
+import { extractToolError, normalizeToolPayload } from "./tool-payload-normalizer.js";
 
 type SessionUpdateRecord = Record<string, unknown>;
 
@@ -77,6 +78,7 @@ export function mapSessionUpdateToChatStreamEvent(input: {
       toolCallId: asString(input.update.toolCallId),
       toolName,
       toolStatus: "started",
+      toolInput: normalizeToolPayload(input.update.rawInput),
     };
     if (rawInput !== undefined) {
       event.toolArgs = safeStringify(rawInput);
@@ -91,6 +93,7 @@ export function mapSessionUpdateToChatStreamEvent(input: {
     }
     const toolName = asString(input.update.title) ?? asString(input.update.kind) ?? "tool";
     const rawOutput = input.update.rawOutput;
+    const toolError = status === "failed" ? extractToolError(input.update) : undefined;
     const event: Omit<ChatStreamEvent, "seq"> = {
       state: "delta",
       runId: input.runId,
@@ -98,9 +101,14 @@ export function mapSessionUpdateToChatStreamEvent(input: {
       toolCallId: asString(input.update.toolCallId),
       toolName,
       toolStatus: status,
+      toolInput: normalizeToolPayload(input.update.rawInput),
+      toolOutput: normalizeToolPayload(input.update.rawOutput),
+      toolError,
     };
     if (rawOutput !== undefined) {
       event.toolResult = safeStringify(rawOutput);
+    } else if (toolError !== undefined) {
+      event.toolResult = toolError;
     }
     return event;
   }

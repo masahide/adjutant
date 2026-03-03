@@ -85,6 +85,7 @@ describe("mapSessionUpdateToChatStreamEvent", () => {
         toolCallId: "tc_1",
         title: "read",
         kind: "read",
+        rawInput: { path: "README.md" },
       },
     });
     assert.deepEqual(result, {
@@ -94,7 +95,84 @@ describe("mapSessionUpdateToChatStreamEvent", () => {
       toolCallId: "tc_1",
       toolName: "read",
       toolStatus: "started",
+      toolInput: { path: "README.md" },
     });
+  });
+
+  it("maps tool_call_update to completed with normalized output", () => {
+    const result = mapSessionUpdateToChatStreamEvent({
+      runId: "run_5b",
+      sessionKey: "main",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "tc_1",
+        title: "read",
+        status: "completed",
+        rawOutput: { ok: true, lines: 3 },
+      },
+    });
+    assert.deepEqual(result, {
+      state: "delta",
+      runId: "run_5b",
+      sessionKey: "main",
+      toolCallId: "tc_1",
+      toolName: "read",
+      toolStatus: "completed",
+      toolInput: undefined,
+      toolOutput: { ok: true, lines: 3 },
+      toolError: undefined,
+    });
+  });
+
+  it("maps failed update and derives toolError from content text", () => {
+    const result = mapSessionUpdateToChatStreamEvent({
+      runId: "run_5c",
+      sessionKey: "main",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "tc_1",
+        status: "failed",
+        content: [
+          {
+            type: "content",
+            content: {
+              type: "text",
+              text: "permission denied",
+            },
+          },
+        ],
+      },
+    });
+    assert.equal(result?.toolStatus, "failed");
+    assert.equal(result?.toolError, "permission denied");
+  });
+
+  it("normalizes oversized tool payload to truncated string", () => {
+    const result = mapSessionUpdateToChatStreamEvent({
+      runId: "run_5d",
+      sessionKey: "main",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "tc_oversized",
+        title: "write",
+        rawInput: "x".repeat(32 * 1024),
+      },
+    });
+    assert.equal(typeof result?.toolInput, "string");
+    assert.equal((result?.toolInput as string).includes("[truncated "), true);
+  });
+
+  it("returns undefined for tool_call_update with invalid status", () => {
+    const result = mapSessionUpdateToChatStreamEvent({
+      runId: "run_5e",
+      sessionKey: "main",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "tc_1",
+        status: "unknown_status",
+      },
+    });
+    assert.equal(result, undefined);
   });
 
   it("returns undefined for unknown sessionUpdate type", () => {

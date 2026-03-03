@@ -95,7 +95,7 @@ function ToolFallbackTrigger({
   toolName: string;
   status?: ToolCallMessagePartStatus;
 }) {
-  const statusType = status?.type ?? "complete";
+  const statusType = (status?.type ?? "complete") as ToolStatus;
   const isRunning = statusType === "running";
   const isCancelled = status?.type === "incomplete" && status.reason === "cancelled";
 
@@ -223,19 +223,35 @@ function ToolFallbackResult({
 
 function ToolFallbackError({
   status,
+  isError,
+  result,
   className,
   ...props
 }: React.ComponentProps<"div"> & {
   status?: ToolCallMessagePartStatus;
+  isError?: boolean;
+  result?: unknown;
 }) {
-  if (status?.type !== "incomplete") return null;
+  const statusError =
+    status?.type === "incomplete"
+      ? status.error
+        ? typeof status.error === "string"
+          ? status.error
+          : JSON.stringify(status.error)
+        : undefined
+      : undefined;
 
-  const error = status.error;
-  const errorText = error ? (typeof error === "string" ? error : JSON.stringify(error)) : null;
+  const resultError =
+    isError === true && result !== undefined
+      ? typeof result === "string"
+        ? result
+        : JSON.stringify(result)
+      : undefined;
 
+  const errorText = statusError ?? resultError;
   if (!errorText) return null;
 
-  const isCancelled = status.reason === "cancelled";
+  const isCancelled = status?.type === "incomplete" && status.reason === "cancelled";
   const headerText = isCancelled ? "Cancelled reason:" : "Error:";
 
   return (
@@ -252,7 +268,13 @@ function ToolFallbackError({
   );
 }
 
-const ToolFallbackImpl: ToolCallMessagePartComponent = ({ toolName, argsText, result, status }) => {
+const ToolFallbackImpl: ToolCallMessagePartComponent = ({
+  toolName,
+  argsText,
+  result,
+  status,
+  isError,
+}) => {
   const isCancelled = status?.type === "incomplete" && status.reason === "cancelled";
 
   return (
@@ -262,7 +284,7 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({ toolName, argsText, re
     >
       <ToolFallbackTrigger toolName={toolName} status={status} />
       <ToolFallbackContent>
-        <ToolFallbackError status={status} />
+        <ToolFallbackError status={status} isError={isError} result={result} />
         <ToolFallbackArgs argsText={argsText} className={cn(isCancelled && "opacity-60")} />
         {!isCancelled && <ToolFallbackResult result={result} />}
       </ToolFallbackContent>

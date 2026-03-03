@@ -3,6 +3,8 @@ import test from "node:test";
 
 import {
   toPermissionSummary,
+  type ChatStreamEvent,
+  type ToolEventRecord,
   type StreamEventType,
 } from "../../../../src/control-plane/contracts/http-api.js";
 
@@ -29,4 +31,39 @@ test("toPermissionSummary converts createdAt to requestedAt", () => {
 test("StreamEventType accepts ACP naming convention with slash separator", () => {
   const type: StreamEventType = "permission/requested";
   assert.equal(type, "permission/requested");
+});
+
+test("ChatStreamEvent / ToolEventRecord keep new tool I/O fields optional", () => {
+  const legacyEvent: ChatStreamEvent = {
+    seq: 1,
+    state: "delta",
+    runId: "session:sess_1:run:1",
+    sessionKey: "main",
+    message: "hello",
+  };
+  assert.equal(legacyEvent.message, "hello");
+
+  const withToolIo: ChatStreamEvent = {
+    seq: 2,
+    state: "delta",
+    runId: "session:sess_1:run:1",
+    sessionKey: "main",
+    toolCallId: "call_1",
+    toolStatus: "completed",
+    toolInput: { cmd: "pnpm check" },
+    toolOutput: { exitCode: 0 },
+    toolError: undefined,
+  };
+  assert.deepEqual(withToolIo.toolOutput, { exitCode: 0 });
+
+  const toolRecord: ToolEventRecord = {
+    runId: "session:sess_1:run:1",
+    sessionId: "sess_1",
+    toolCallId: "call_1",
+    status: "completed",
+    updatedAt: "2026-03-02T00:00:00.000Z",
+    rawInput: { cmd: "pnpm check" },
+    rawOutput: { exitCode: 0 },
+  };
+  assert.deepEqual(toolRecord.rawInput, { cmd: "pnpm check" });
 });

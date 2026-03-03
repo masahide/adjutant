@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import nodeTest, { type TestContext } from "node:test";
 
 import type {
   CollectorIngestRequest,
@@ -10,6 +10,12 @@ import type {
 } from "../../src/contracts/process-rpc/method-types.js";
 import { WorkerSupervisor } from "../../src/control-plane/acp/worker-supervisor.js";
 import { DeliverCompletionStore } from "../../src/control-plane/deliver-completion-store.js";
+
+const TEST_TIMEOUT_MS = 30_000;
+
+const test = (name: string, fn: (t: TestContext) => Promise<void> | void): void => {
+  nodeTest(name, { timeout: TEST_TIMEOUT_MS }, fn);
+};
 
 function accepted(messageId: string): {
   messageId: string;

@@ -31,6 +31,8 @@ test("buildSnapshotResponse projects tool history and pending permissions", () =
         status: "completed",
         title: "fake_tool",
         kind: "execute",
+        rawInput: { query: "hello" },
+        rawOutput: { ok: true },
         updatedAt: "2026-02-28T12:00:02.000Z",
       },
     ],
@@ -49,6 +51,8 @@ test("buildSnapshotResponse projects tool history and pending permissions", () =
   assert.equal(snapshot.runs.length, 1);
   assert.equal(snapshot.toolEventsByRun.run_1?.length, 1);
   assert.equal(snapshot.toolEventsByRun.run_1?.[0]?.toolCallId, "call_completed");
+  assert.deepEqual(snapshot.toolEventsByRun.run_1?.[0]?.rawInput, { query: "hello" });
+  assert.deepEqual(snapshot.toolEventsByRun.run_1?.[0]?.rawOutput, { ok: true });
   assert.equal(snapshot.pendingPermissions.length, 1);
   assert.equal(snapshot.pendingPermissions[0]?.requestedAt, "2026-02-28T12:00:03.000Z");
 });

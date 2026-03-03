@@ -72,6 +72,9 @@ export type ToolEventRecord = {
   status: "pending" | "in_progress" | "completed" | "failed";
   title?: string;
   kind?: string;
+  rawInput?: unknown;
+  rawOutput?: unknown;
+  error?: string;
   updatedAt: string;
 };
 
@@ -97,6 +100,9 @@ export type ChatStreamEvent = {
   toolStatus?: "started" | "completed" | "failed";
   toolArgs?: string;
   toolResult?: string;
+  toolInput?: unknown;
+  toolOutput?: unknown;
+  toolError?: string;
   permissionRequest?: {
     requestId: string;
     title: string;
