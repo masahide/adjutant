@@ -462,7 +462,7 @@ const ToolGroupImpl: FC<PropsWithChildren<{ startIndex: number; endIndex: number
   });
 
   return (
-    <ToolGroupRoot defaultOpen={isToolRunning}>
+    <ToolGroupRoot>
       <ToolGroupTrigger active={isToolRunning} toolCount={toolCount} />
       <ToolGroupContent aria-busy={isToolRunning}>{children}</ToolGroupContent>
     </ToolGroupRoot>
