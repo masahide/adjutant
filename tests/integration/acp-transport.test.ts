@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import test from "node:test";
+import nodeTest, { type TestContext } from "node:test";
+
+const TEST_TIMEOUT_MS = 30_000;
+
+const test = (name: string, fn: (t: TestContext) => Promise<void> | void): void => {
+  nodeTest(name, { timeout: TEST_TIMEOUT_MS }, fn);
+};
 
 interface JsonRpcEnvelope {
   jsonrpc: "2.0";
@@ -46,7 +52,7 @@ function waitForCondition(
   });
 }
 
-function startWorker(t: test.TestContext, env: NodeJS.ProcessEnv = {}): WorkerClient {
+function startWorker(t: TestContext, env: NodeJS.ProcessEnv = {}): WorkerClient {
   const child = spawn(
     process.execPath,
     ["--import", "tsx", "src/agent-worker-acp/stdio-server.ts"],

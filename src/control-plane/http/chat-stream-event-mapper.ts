@@ -31,15 +31,6 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value as Record<string, unknown>;
 }
 
-function safeStringify(value: unknown): string {
-  if (typeof value === "string") return value;
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
-}
-
 export function mapSessionUpdateToChatStreamEvent(input: {
   runId: string;
   sessionKey: string;
@@ -70,8 +61,7 @@ export function mapSessionUpdateToChatStreamEvent(input: {
 
   if (type === "tool_call") {
     const toolName = asString(input.update.title) ?? asString(input.update.kind) ?? "tool";
-    const rawInput = input.update.rawInput;
-    const event: Omit<ChatStreamEvent, "seq"> = {
+    return {
       state: "delta",
       runId: input.runId,
       sessionKey: input.sessionKey,
@@ -80,10 +70,6 @@ export function mapSessionUpdateToChatStreamEvent(input: {
       toolStatus: "started",
       toolInput: normalizeToolPayload(input.update.rawInput),
     };
-    if (rawInput !== undefined) {
-      event.toolArgs = safeStringify(rawInput);
-    }
-    return event;
   }
 
   if (type === "tool_call_update") {
@@ -92,9 +78,8 @@ export function mapSessionUpdateToChatStreamEvent(input: {
       return undefined;
     }
     const toolName = asString(input.update.title) ?? asString(input.update.kind) ?? "tool";
-    const rawOutput = input.update.rawOutput;
     const toolError = status === "failed" ? extractToolError(input.update) : undefined;
-    const event: Omit<ChatStreamEvent, "seq"> = {
+    return {
       state: "delta",
       runId: input.runId,
       sessionKey: input.sessionKey,
@@ -105,12 +90,6 @@ export function mapSessionUpdateToChatStreamEvent(input: {
       toolOutput: normalizeToolPayload(input.update.rawOutput),
       toolError,
     };
-    if (rawOutput !== undefined) {
-      event.toolResult = safeStringify(rawOutput);
-    } else if (toolError !== undefined) {
-      event.toolResult = toolError;
-    }
-    return event;
   }
 
   return undefined;

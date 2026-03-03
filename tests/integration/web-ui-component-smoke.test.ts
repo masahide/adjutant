@@ -1,5 +1,11 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import nodeTest, { type TestContext } from "node:test";
+
+const TEST_TIMEOUT_MS = 30_000;
+
+const test = (name: string, fn: (t: TestContext) => Promise<void> | void): void => {
+  nodeTest(name, { timeout: TEST_TIMEOUT_MS }, fn);
+};
 
 import { fireEvent, render, waitFor, cleanup } from "@testing-library/react";
 import { JSDOM } from "jsdom";
