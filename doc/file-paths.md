@@ -148,6 +148,37 @@
 - `{timelinePath}` (timeline.jsonl)
 - `{idempotencyStorePath}` (idempotency.jsonl)
 
+## 15. コントロールプレーン永続化 (JSONL ジャーナル)
+
+| パス                                                      | R/W | 定義箇所                                             | 説明                                                                     |
+| --------------------------------------------------------- | --- | ---------------------------------------------------- | ------------------------------------------------------------------------ |
+| `{stateDir}/journal/control-plane/threads.jsonl`          | R/W | `src/control-plane/http/thread-repository.ts:143`    | スレッド (ThreadRecord) の upsert イベント。起動時にリプレイして復元     |
+| `{stateDir}/journal/control-plane/session-recovery.jsonl` | R/W | `src/control-plane/acp/session-recovery-store.ts:80` | セッション復旧情報 (sessionKey↔sessionId) の upsert イベント            |
+| `{stateDir}/journal/control-plane/chat-history.jsonl`     | R/W | `src/control-plane/http/chat-history-store.ts:127`   | チャット履歴 (user/assistant メッセージ)。起動時にリプレイしてメモリ復元 |
+
+### chat-history.jsonl フォーマット
+
+各行は以下の JSON オブジェクト（JSONL）:
+
+```jsonc
+{
+  "sessionKey": "main",
+  "role": "user" | "assistant",
+  "content": "plain text" | [ChatHistoryContentPart, ...],
+  "runId": "run-xxx",
+  "toolCount": 2,          // assistant のみ (省略可)
+  "timestamp": "2026-03-02T10:00:00.000Z"
+}
+```
+
+`content` が配列の場合、各要素は `ChatHistoryContentPart`:
+
+- `{ type: "text", text: "..." }` — テキスト本文
+- `{ type: "reasoning", text: "..." }` — AI の思考 (thinking)
+- `{ type: "tool-call", toolCallId, toolName, argsText?, result?, isError? }` — ツール呼び出しと結果
+
+起動時に `ChatHistoryStore.initialize()` がファイルを行単位で読み込み、`sessionKey` ごとにメモリ上の Map へ復元する。書き込みは `appendJournal()` で非同期追記（失敗は非致命的）。
+
 ---
 
 ## デフォルト設定時のディレクトリツリー
@@ -196,6 +227,11 @@
     ├── heartbeat-runs.jsonl                 [W]   HB実行記録
     ├── audit/
     │   └── agent-audit.ndjson               [W]   エージェント監査ログ
+    ├── journal/
+    │   └── control-plane/
+    │       ├── threads.jsonl                [R/W] スレッド管理
+    │       ├── session-recovery.jsonl       [R/W] セッション復旧
+    │       └── chat-history.jsonl           [R/W] チャット履歴
     ├── memory/
     │   └── main.sqlite                      [R/W] メモリーサーチDB
     └── agents/main/

@@ -353,7 +353,7 @@ flowchart LR
 | `ADJUTANT_SANDBOX_MODE`                       | `all`                                 | bash sandbox mode（`off` / `non-main` / `all`） |
 | `ADJUTANT_SANDBOX_IMAGE`                      | `adjutant-sandbox:trixie-slim`        | sandbox Docker image                            |
 | `ADJUTANT_SANDBOX_AUTO_BUILD_IMAGE`           | `true`                                | 未存在時に sandbox image を自動 build する      |
-| `ADJUTANT_SANDBOX_CONTAINER_PREFIX`           | `adjutant-sandbox`                    | sandbox container 名の prefix                   |
+| `ADJUTANT_SANDBOX_ENV_ALLOWLIST`              | `LANG,LC_ALL,TERM,TZ`                 | sandbox に引き渡す環境変数 allowlist            |
 | `ADJUTANT_SANDBOX_WORKDIR`                    | `/workspace`                          | コンテナ内作業ディレクトリ                      |
 | `ADJUTANT_SANDBOX_NETWORK`                    | 未設定（bridge）                      | Docker network（例: `none`）                    |
 | `ADJUTANT_SANDBOX_MEMORY`                     | 未設定                                | Docker memory limit（例: `1g`）                 |
@@ -512,10 +512,9 @@ flowchart LR
 - 起動時（ACP 標準: `src/index.ts`、legacy 統合: `legacy/impl-20260228/src/assistant/main.ts`）は以下順で fail-safe 初期化する。
   1. Docker daemon 可用性確認（不可なら起動中断）
   2. sandbox image 存在確認（未存在時は `ADJUTANT_SANDBOX_AUTO_BUILD_IMAGE=true` なら自動 build）
-  3. owner nonce 付きコンテナ確保（`{prefix}-{nonce}`）
-  4. `configureSandbox()` でセッションファクトリへ注入
-- コンテナ生成時は `adjutant.sandbox.owner=<nonce>` を付与し、shutdown 時は owner 一致時のみ `docker rm -f` を実行する（他プロセスのコンテナは破壊しない）。
-- bash 実行は `docker exec -i -w <mappedCwd> <container> bash -lc "<command>"` を使用し、ホスト workspace は bind mount で共有する。
+  3. `configureSandbox()` へ per-tool 実行 spec を注入
+- bash 実行は `docker run --rm -i -w <mappedCwd> ... <image> bash -lc "<command>"` を使用し、tool 呼び出し単位でコンテナを作成・終了時削除する。
+- 常駐コンテナは保持しないため、並行セッション時も tool 実行は独立コンテナとして分離される。
 - sandbox イメージには `bash` / `git` / `curl` / `jq` / `rg`（ripgrep）を同梱する。
 
 ## 14. ACP 分離アーキテクチャ（s02 基準）
@@ -610,6 +609,38 @@ sequenceDiagram
   D-->>CP: deliver/completed(messageId)
 ```
 
+#### Worker 実行制御クラス図
+
+```mermaid
+classDiagram
+  class StdioServer {
+    -sessionStore: WorkerSessionStore
+    -executionRegistry: SessionExecutionRegistry
+    -adapter: AgentRunnerAdapter
+  }
+
+  class SessionExecutionRegistry {
+    -activeBySessionId: Map~string, SessionExecutionState~
+    +tryStart(sessionId) SessionExecutionState
+    +finish(sessionId, runId)
+    +cancel(sessionId) bool
+    +isActive(sessionId) bool
+  }
+
+  class AgentRunnerAdapter {
+    +prompt(params, options) SessionPromptExecutionResult
+  }
+
+  class DockerBashOperations {
+    +exec(command, cwd, params)
+    +buildDockerRunArgs(spec)
+  }
+
+  StdioServer --> SessionExecutionRegistry
+  StdioServer --> AgentRunnerAdapter
+  AgentRunnerAdapter --> DockerBashOperations
+```
+
 ### 14.5 境界契約
 
 - ACP（control-plane <-> worker）
@@ -617,6 +648,7 @@ sequenceDiagram
   - optional stable: `authenticate`, `session/load`, `session/set_mode`, `session/set_config_option`
   - optional stable は実装任意（phase/プロセスごとに採否を決定）。未採用時は capability 不在として `UNSUPPORTED_CAPABILITY` を返却する。
   - optional unstable: `session/list`, `session/resume`, `session/fork`, `session/set_model`（feature flag 有効時のみ）
+  - 実行制約: 異なる `sessionId` の `session/prompt` は並行実行可能、同一 `sessionId` の同時 `session/prompt` は `SESSION_BUSY` を返却
 - Process RPC（control-plane <-> collector/deliver）
   - request/response: `collector/ingest`, `deliver/enqueue`（同期 `accepted`）
   - notification: `deliver/completed`（非同期、at-least-once）
@@ -676,7 +708,7 @@ data: {"runId":"session:sess_xxx:run:1","update":{"sessionUpdate":"agent_message
 
 ### 14.8 エラー分類と回復
 
-- 代表エラー: `UNSUPPORTED_CAPABILITY`, `ACP_PROTOCOL_ERROR`, `JOURNAL_APPEND_FAILED`, `WORKER_TIMEOUT`, `WORKER_CRASHED`, `DOWNSTREAM_ERROR`, `INVALID_RECORD`
+- 代表エラー: `UNSUPPORTED_CAPABILITY`, `ACP_PROTOCOL_ERROR`, `JOURNAL_APPEND_FAILED`, `WORKER_TIMEOUT`, `WORKER_CRASHED`, `DOWNSTREAM_ERROR`, `INVALID_RECORD`, `SESSION_BUSY`
 - worker 異常終了時は supervisor が再起動を試行し、構造化ログへ理由を記録する。
 - process 再起動時は journal + cursor から未処理のみ再開する。
 - 運用ロールバック手順は `doc/runbook/phase-b-rollback.md` を正本とする。

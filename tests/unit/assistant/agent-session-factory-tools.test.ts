@@ -60,10 +60,12 @@ test("buildCustomToolDefinitions defaults phase B rollout to main-only", () => {
 test("buildCustomToolDefinitions enables sandboxed bash by mode and memoryScope", () => {
   configureSandbox({
     mode: "non-main",
-    containerName: "sandbox-test",
-    workdir: "/workspace",
-    hostWorkspaceDir: process.cwd(),
-    envAllowlist: ["LANG"],
+    runSpec: {
+      image: "adjutant-sandbox:test",
+      hostWorkspaceDir: process.cwd(),
+      containerWorkdir: "/workspace",
+      envAllowlist: ["LANG"],
+    },
   });
 
   const mainTools = buildCustomToolDefinitions({

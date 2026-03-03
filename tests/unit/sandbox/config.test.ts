@@ -14,4 +14,3 @@ test("resolveSandboxConfig falls back to all for invalid sandbox mode", () => {
   } as NodeJS.ProcessEnv);
   assert.equal(config.mode, "all");
 });
-

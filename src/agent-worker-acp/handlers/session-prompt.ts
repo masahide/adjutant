@@ -7,7 +7,9 @@ import type {
 
 export async function handleSessionPrompt(
   params: SessionPromptParams,
-  deps: { adapter: AgentRunnerAdapter }
+  deps: { adapter: AgentRunnerAdapter; signal?: AbortSignal }
 ): Promise<SessionPromptExecutionResult> {
-  return deps.adapter.prompt(params);
+  return deps.adapter.prompt(params, {
+    signal: deps.signal,
+  });
 }

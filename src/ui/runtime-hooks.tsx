@@ -158,19 +158,64 @@ async function resolveThreadSessionKeyForSend(aui: ReturnType<typeof useAui>): P
   throw new Error(`thread is not initialized: ${refreshed}`);
 }
 
-function upsertAssistantMessage(
-  messages: readonly ThreadMessageLike[],
-  input: { runId: string; text: string; thinking?: string }
-): ThreadMessageLike[] {
-  const messageId = `assistant:${input.runId}`;
-  const content: Array<{ type: "text"; text: string } | { type: "reasoning"; text: string }> = [];
+type ToolCallEntry = {
+  toolCallId: string;
+  toolName: string;
+  status: "started" | "completed" | "failed";
+  argsText?: string;
+  result?: string;
+};
+
+type AssistantContentPart =
+  | { type: "text"; text: string }
+  | { type: "reasoning"; text: string }
+  | {
+      type: "tool-call";
+      toolCallId: string;
+      toolName: string;
+      argsText?: string;
+      result?: unknown;
+      isError?: boolean;
+    };
+
+function buildAssistantContent(input: {
+  thinking?: string;
+  text: string;
+  toolCalls: ToolCallEntry[];
+}): AssistantContentPart[] | string {
+  const content: AssistantContentPart[] = [];
   if (input.thinking) {
     content.push({ type: "reasoning", text: input.thinking });
+  }
+  for (const tc of input.toolCalls) {
+    const part: AssistantContentPart & { type: "tool-call" } = {
+      type: "tool-call",
+      toolCallId: tc.toolCallId,
+      toolName: tc.toolName,
+    };
+    if (tc.argsText) {
+      part.argsText = tc.argsText;
+    }
+    if (tc.status === "completed") {
+      part.result = tc.result ?? "done";
+    } else if (tc.status === "failed") {
+      part.result = tc.result ?? "failed";
+      part.isError = true;
+    }
+    content.push(part);
   }
   if (input.text) {
     content.push({ type: "text", text: input.text });
   }
-  const messageContent = content.length > 0 ? content : "";
+  return content.length > 0 ? content : "";
+}
+
+function upsertAssistantMessage(
+  messages: readonly ThreadMessageLike[],
+  input: { runId: string; text: string; thinking?: string; toolCalls: ToolCallEntry[] }
+): ThreadMessageLike[] {
+  const messageId = `assistant:${input.runId}`;
+  const messageContent = buildAssistantContent(input);
 
   const next = [...messages];
   const index = next.findIndex((message) => message.id === messageId);
@@ -431,6 +476,7 @@ function useAdjutantExternalStoreRuntime(baseUrl = "") {
   const terminalRunRef = useRef<string | undefined>(undefined);
   const assistantTextByRunId = useRef(new Map<string, string>());
   const assistantThinkingByRunId = useRef(new Map<string, string>());
+  const toolCallsByRunId = useRef(new Map<string, Map<string, ToolCallEntry>>());
   latestSessionKeyRef.current = sessionKey;
 
   const stopActiveStream = useCallback((options?: { clearRunId?: boolean }) => {
@@ -472,6 +518,50 @@ function useAdjutantExternalStoreRuntime(baseUrl = "") {
         lastSeqByRunIdRef.current.set(runId, event.seq);
         reconnectAttemptsRef.current = 0;
 
+        const getToolCalls = (rid: string): ToolCallEntry[] => {
+          const map = toolCallsByRunId.current.get(rid);
+          return map ? [...map.values()] : [];
+        };
+
+        // Handle tool-call delta events
+        if (
+          event.state === "delta" &&
+          typeof event.toolCallId === "string" &&
+          typeof event.toolName === "string" &&
+          typeof event.toolStatus === "string"
+        ) {
+          let map = toolCallsByRunId.current.get(event.runId);
+          if (!map) {
+            map = new Map();
+            toolCallsByRunId.current.set(event.runId, map);
+          }
+          const existing = map.get(event.toolCallId);
+          map.set(event.toolCallId, {
+            toolCallId: event.toolCallId,
+            toolName: event.toolName,
+            status: event.toolStatus,
+            argsText:
+              typeof event.toolArgs === "string"
+                ? event.toolArgs
+                : (existing?.argsText ?? undefined),
+            result:
+              typeof event.toolResult === "string"
+                ? event.toolResult
+                : (existing?.result ?? undefined),
+          });
+          const currentText = assistantTextByRunId.current.get(event.runId) ?? "";
+          const currentThinking = assistantThinkingByRunId.current.get(event.runId) ?? "";
+          setMessages((previous) =>
+            upsertAssistantMessage(previous, {
+              runId: event.runId,
+              text: currentText,
+              thinking: currentThinking || undefined,
+              toolCalls: getToolCalls(event.runId),
+            })
+          );
+          return;
+        }
+
         if (event.state === "delta" && typeof event.thinking === "string") {
           const current = assistantThinkingByRunId.current.get(event.runId) ?? "";
           const nextThinking = `${current}${event.thinking}`;
@@ -482,6 +572,7 @@ function useAdjutantExternalStoreRuntime(baseUrl = "") {
               runId: event.runId,
               text: currentText,
               thinking: nextThinking,
+              toolCalls: getToolCalls(event.runId),
             })
           );
           return;
@@ -497,6 +588,7 @@ function useAdjutantExternalStoreRuntime(baseUrl = "") {
               runId: event.runId,
               text: nextText,
               thinking: currentThinking || undefined,
+              toolCalls: getToolCalls(event.runId),
             })
           );
           return;
@@ -508,15 +600,20 @@ function useAdjutantExternalStoreRuntime(baseUrl = "") {
               ? event.message
               : (assistantTextByRunId.current.get(event.runId) ?? "");
           const finalThinking = assistantThinkingByRunId.current.get(event.runId) || undefined;
+          // Capture tool calls before clearing refs — React's functional updater
+          // runs asynchronously during reconciliation, so refs must be read eagerly.
+          const finalToolCalls = getToolCalls(event.runId);
           setMessages((previous) =>
             upsertAssistantMessage(previous, {
               runId: event.runId,
               text: nextText,
               thinking: finalThinking,
+              toolCalls: finalToolCalls,
             })
           );
           assistantTextByRunId.current.delete(event.runId);
           assistantThinkingByRunId.current.delete(event.runId);
+          toolCallsByRunId.current.delete(event.runId);
           lastSeqByRunIdRef.current.delete(event.runId);
           terminalRunRef.current = runId;
           activeRunSessionKeyRef.current = undefined;
@@ -528,6 +625,7 @@ function useAdjutantExternalStoreRuntime(baseUrl = "") {
         if (event.state === "aborted") {
           assistantTextByRunId.current.delete(event.runId);
           assistantThinkingByRunId.current.delete(event.runId);
+          toolCallsByRunId.current.delete(event.runId);
           lastSeqByRunIdRef.current.delete(event.runId);
           terminalRunRef.current = runId;
           activeRunSessionKeyRef.current = undefined;
@@ -538,14 +636,17 @@ function useAdjutantExternalStoreRuntime(baseUrl = "") {
 
         if (event.state === "error") {
           const errorText = event.errorMessage ?? "run failed";
+          const errorToolCalls = getToolCalls(event.runId);
           setMessages((previous) =>
             upsertAssistantMessage(previous, {
               runId: event.runId,
               text: `Error: ${errorText}`,
+              toolCalls: errorToolCalls,
             })
           );
           assistantTextByRunId.current.delete(event.runId);
           assistantThinkingByRunId.current.delete(event.runId);
+          toolCallsByRunId.current.delete(event.runId);
           lastSeqByRunIdRef.current.delete(event.runId);
           terminalRunRef.current = runId;
           activeRunSessionKeyRef.current = undefined;
@@ -615,6 +716,7 @@ function useAdjutantExternalStoreRuntime(baseUrl = "") {
           lastSeqByRunIdRef.current.clear();
           assistantTextByRunId.current.clear();
           assistantThinkingByRunId.current.clear();
+          toolCallsByRunId.current.clear();
           return;
         }
         const hasThread = await fetchThreadRecord(baseUrl, sessionKey);
@@ -629,6 +731,7 @@ function useAdjutantExternalStoreRuntime(baseUrl = "") {
           lastSeqByRunIdRef.current.clear();
           assistantTextByRunId.current.clear();
           assistantThinkingByRunId.current.clear();
+          toolCallsByRunId.current.clear();
           return;
         }
         const history = await fetchJson<{ messages: ChatHistoryMessage[] }>(
@@ -644,6 +747,7 @@ function useAdjutantExternalStoreRuntime(baseUrl = "") {
         lastSeqByRunIdRef.current.clear();
         assistantTextByRunId.current.clear();
         assistantThinkingByRunId.current.clear();
+        toolCallsByRunId.current.clear();
       } catch {
         if (disposed) {
           return;
@@ -654,6 +758,7 @@ function useAdjutantExternalStoreRuntime(baseUrl = "") {
         lastSeqByRunIdRef.current.clear();
         assistantTextByRunId.current.clear();
         assistantThinkingByRunId.current.clear();
+        toolCallsByRunId.current.clear();
         setIsRunning(false);
       }
     })();
@@ -676,6 +781,7 @@ function useAdjutantExternalStoreRuntime(baseUrl = "") {
       lastSeqByRunIdRef.current.clear();
       assistantTextByRunId.current.clear();
       assistantThinkingByRunId.current.clear();
+      toolCallsByRunId.current.clear();
     };
   }, [baseUrl, sessionKey, stopActiveStream]);
 
@@ -686,6 +792,7 @@ function useAdjutantExternalStoreRuntime(baseUrl = "") {
       lastSeqByRunIdRef.current.delete(currentRunId);
       assistantTextByRunId.current.delete(currentRunId);
       assistantThinkingByRunId.current.delete(currentRunId);
+      toolCallsByRunId.current.delete(currentRunId);
     }
     stopActiveStream({ clearRunId: true });
     try {
@@ -748,6 +855,7 @@ function useAdjutantExternalStoreRuntime(baseUrl = "") {
         lastSeqByRunIdRef.current.set(accepted.runId, -1);
         assistantTextByRunId.current.set(accepted.runId, "");
         assistantThinkingByRunId.current.set(accepted.runId, "");
+        toolCallsByRunId.current.set(accepted.runId, new Map());
         stopActiveStream({ clearRunId: false });
         connectRunStream(accepted.runId, 0);
       } catch {

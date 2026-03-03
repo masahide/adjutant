@@ -30,6 +30,10 @@ export interface SessionPromptExecutionResult extends SessionPromptResult {
   text: string;
 }
 
+export interface PromptExecutionOptions {
+  signal?: AbortSignal;
+}
+
 function isLegacyToolCallEvent(value: unknown): value is LegacyToolCallEvent {
   if (typeof value !== "object" || value === null) {
     return false;
@@ -51,10 +55,22 @@ export class AgentRunnerAdapter {
     this.sessionBridge = deps.sessionBridge ?? new SessionBridge();
   }
 
-  async prompt(params: SessionPromptParams): Promise<SessionPromptExecutionResult> {
+  async prompt(
+    params: SessionPromptParams,
+    options: PromptExecutionOptions = {}
+  ): Promise<SessionPromptExecutionResult> {
     const session = this.sessionBridge.ensureSession(params.sessionId);
     const run = this.sessionBridge.startRun(params.sessionId);
     const controller = new AbortController();
+    const externalSignal = options.signal;
+    const onExternalAbort = () => {
+      controller.abort();
+    };
+    if (externalSignal?.aborted === true) {
+      controller.abort();
+    } else {
+      externalSignal?.addEventListener("abort", onExternalAbort, { once: true });
+    }
     const requestSessionKey = this.resolveSessionKey(params, session.sessionKey);
     const requestMemoryScope = this.resolveMemoryScope(params, requestSessionKey);
     const memoryWriteEnabled = this.resolveMemoryWriteEnabled(params);
@@ -101,6 +117,7 @@ export class AgentRunnerAdapter {
 
       throw error;
     } finally {
+      externalSignal?.removeEventListener("abort", onExternalAbort);
       this.activeRuns.delete(params.sessionId);
     }
   }

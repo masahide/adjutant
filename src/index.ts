@@ -45,7 +45,22 @@ function resolveProjectRoot(): string {
 function createWorkerSupervisor(
   cwd: string,
   stateDir: string,
-  sandbox: { mode: "off" | "non-main" | "all"; enabled: boolean; containerName?: string },
+  sandbox: {
+    mode: "off" | "non-main" | "all";
+    enabled: boolean;
+    runSpec?: {
+      image: string;
+      hostWorkspaceDir: string;
+      containerWorkdir: string;
+      envAllowlist?: string[];
+      readOnlyRoot?: boolean;
+      tmpfs?: string[];
+      network?: string;
+      capDrop?: string[];
+      pidsLimit?: number;
+      memory?: string;
+    };
+  },
   onLog: (entry: Record<string, unknown>) => void,
   onNotification: (notification: { method: string; params: Record<string, unknown> }) => void
 ): WorkerSupervisor {
@@ -54,19 +69,32 @@ function createWorkerSupervisor(
     ACP_WORKER_SESSION_STORE_PATH: join(stateDir, "worker", "session-store.json"),
   };
 
-  if (sandbox.enabled && typeof sandbox.containerName === "string") {
+  if (sandbox.enabled && sandbox.runSpec !== undefined) {
     workerEnv.ACP_WORKER_SANDBOX_MODE = sandbox.mode;
-    workerEnv.ACP_WORKER_SANDBOX_CONTAINER_NAME = sandbox.containerName;
-    workerEnv.ACP_WORKER_SANDBOX_HOST_WORKSPACE_DIR = cwd;
-    workerEnv.ACP_WORKER_SANDBOX_WORKDIR =
-      process.env.ADJUTANT_SANDBOX_WORKDIR?.trim() || "/workspace";
-    workerEnv.ACP_WORKER_SANDBOX_ENV_ALLOWLIST = process.env.ADJUTANT_SANDBOX_ENV_ALLOWLIST ?? "";
+    workerEnv.ACP_WORKER_SANDBOX_IMAGE = sandbox.runSpec.image;
+    workerEnv.ACP_WORKER_SANDBOX_HOST_WORKSPACE_DIR = sandbox.runSpec.hostWorkspaceDir;
+    workerEnv.ACP_WORKER_SANDBOX_WORKDIR = sandbox.runSpec.containerWorkdir;
+    workerEnv.ACP_WORKER_SANDBOX_ENV_ALLOWLIST = (sandbox.runSpec.envAllowlist ?? []).join(",");
+    workerEnv.ACP_WORKER_SANDBOX_READ_ONLY_ROOT =
+      sandbox.runSpec.readOnlyRoot === false ? "0" : "1";
+    workerEnv.ACP_WORKER_SANDBOX_TMPFS = (sandbox.runSpec.tmpfs ?? []).join(",");
+    workerEnv.ACP_WORKER_SANDBOX_CAP_DROP = (sandbox.runSpec.capDrop ?? []).join(",");
+    workerEnv.ACP_WORKER_SANDBOX_NETWORK = sandbox.runSpec.network ?? "";
+    workerEnv.ACP_WORKER_SANDBOX_MEMORY = sandbox.runSpec.memory ?? "";
+    workerEnv.ACP_WORKER_SANDBOX_PIDS_LIMIT =
+      typeof sandbox.runSpec.pidsLimit === "number" ? String(sandbox.runSpec.pidsLimit) : "";
   } else {
     workerEnv.ACP_WORKER_SANDBOX_MODE = "off";
-    delete workerEnv.ACP_WORKER_SANDBOX_CONTAINER_NAME;
+    delete workerEnv.ACP_WORKER_SANDBOX_IMAGE;
     delete workerEnv.ACP_WORKER_SANDBOX_HOST_WORKSPACE_DIR;
     delete workerEnv.ACP_WORKER_SANDBOX_WORKDIR;
     delete workerEnv.ACP_WORKER_SANDBOX_ENV_ALLOWLIST;
+    delete workerEnv.ACP_WORKER_SANDBOX_READ_ONLY_ROOT;
+    delete workerEnv.ACP_WORKER_SANDBOX_TMPFS;
+    delete workerEnv.ACP_WORKER_SANDBOX_CAP_DROP;
+    delete workerEnv.ACP_WORKER_SANDBOX_NETWORK;
+    delete workerEnv.ACP_WORKER_SANDBOX_MEMORY;
+    delete workerEnv.ACP_WORKER_SANDBOX_PIDS_LIMIT;
   }
 
   return new WorkerSupervisor({
@@ -236,7 +264,8 @@ export async function main(): Promise<void> {
   const runLifecycle = new RunLifecycle();
   const sseHub = new SseHub();
   const runEventBuffer = new RunEventBuffer({ retentionMs: 60_000 });
-  const chatHistoryStore = new ChatHistoryStore();
+  const chatHistoryStore = ChatHistoryStore.fromStateDir(stateDir);
+  await chatHistoryStore.initialize();
   const sessionThreadCoordinator = new SessionThreadCoordinator({
     threadRepository,
     recoveryStore,
@@ -259,6 +288,29 @@ export async function main(): Promise<void> {
       if (tracked.runId === runId) {
         permissionRequestRunById.delete(requestId);
       }
+    }
+  };
+
+  // Run-level accumulators for thinking text and tool calls (used to build structured history content).
+  const runThinkingAccum = new Map<string, string>();
+  type ToolCallAccumEntry = {
+    toolCallId: string;
+    toolName: string;
+    status: string;
+    argsText?: string;
+    result?: string;
+  };
+  const runToolCallAccum = new Map<string, Map<string, ToolCallAccumEntry>>();
+  const clearRunAccumulators = (runId: string) => {
+    runThinkingAccum.delete(runId);
+    runToolCallAccum.delete(runId);
+  };
+  const safeStringify = (value: unknown): string => {
+    if (typeof value === "string") return value;
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch {
+      return String(value);
     }
   };
 
@@ -365,22 +417,51 @@ export async function main(): Promise<void> {
       }
 
       const sessionUpdate = (update as Record<string, unknown>).sessionUpdate;
+
+      // Accumulate thinking chunks for structured history content.
+      if (sessionUpdate === "agent_thinking_chunk") {
+        const content = (update as Record<string, unknown>).content;
+        const text =
+          typeof content === "object" && content !== null
+            ? (content as Record<string, unknown>).text
+            : undefined;
+        if (typeof text === "string") {
+          const prev = runThinkingAccum.get(runId) ?? "";
+          runThinkingAccum.set(runId, prev + text);
+        }
+      }
+
       if (sessionUpdate === "tool_call") {
         const title = (update as Record<string, unknown>).title;
         const kind = (update as Record<string, unknown>).kind;
         const toolCallId = (update as Record<string, unknown>).toolCallId;
+        const rawInput = (update as Record<string, unknown>).rawInput;
         const toolName =
           typeof title === "string" && title.trim().length > 0
             ? title.trim()
             : typeof kind === "string" && kind.trim().length > 0
               ? kind.trim()
               : "tool";
+        // Accumulate tool call for structured history content.
+        if (typeof toolCallId === "string") {
+          let tcMap = runToolCallAccum.get(runId);
+          if (!tcMap) {
+            tcMap = new Map();
+            runToolCallAccum.set(runId, tcMap);
+          }
+          tcMap.set(toolCallId, {
+            toolCallId,
+            toolName,
+            status: "started",
+            argsText: rawInput !== undefined ? safeStringify(rawInput) : undefined,
+          });
+        }
         agentAuditLog.appendToolStart({
           runId,
           sessionKey: run.sessionKey,
           toolName,
           toolCallId: typeof toolCallId === "string" ? toolCallId : undefined,
-          args: (update as Record<string, unknown>).rawInput,
+          args: rawInput,
         });
         logControlPlane({
           event: "tool_call.started",
@@ -392,15 +473,52 @@ export async function main(): Promise<void> {
       } else if (sessionUpdate === "tool_call_update") {
         const toolCallId = (update as Record<string, unknown>).toolCallId;
         const status = (update as Record<string, unknown>).status;
+        const updateTitle = (update as Record<string, unknown>).title;
+        const updateKind = (update as Record<string, unknown>).kind;
+        const rawOutput = (update as Record<string, unknown>).rawOutput;
+        const updateToolName =
+          typeof updateTitle === "string" && updateTitle.trim().length > 0
+            ? updateTitle.trim()
+            : typeof updateKind === "string" && updateKind.trim().length > 0
+              ? updateKind.trim()
+              : undefined;
+
+        // Update tool call accumulator: upsert to handle updates for previously unseen toolCallIds.
+        if (typeof toolCallId === "string") {
+          let tcMap = runToolCallAccum.get(runId);
+          if (!tcMap) {
+            tcMap = new Map();
+            runToolCallAccum.set(runId, tcMap);
+          }
+          const existing = tcMap.get(toolCallId);
+          if (existing) {
+            if (status === "completed" || status === "failed") {
+              existing.status = status as string;
+            }
+            if (updateToolName && existing.toolName === "tool") {
+              existing.toolName = updateToolName;
+            }
+            if (rawOutput !== undefined) {
+              existing.result = safeStringify(rawOutput);
+            }
+          } else {
+            tcMap.set(toolCallId, {
+              toolCallId,
+              toolName: updateToolName ?? "tool",
+              status: typeof status === "string" ? (status as string) : "started",
+              result: rawOutput !== undefined ? safeStringify(rawOutput) : undefined,
+            });
+          }
+        }
         if (status === "completed" || status === "failed") {
-          const toolName = "tool";
+          const toolName = updateToolName ?? "tool";
           agentAuditLog.appendToolEnd({
             runId,
             sessionKey: run.sessionKey,
             toolName,
             toolCallId: typeof toolCallId === "string" ? toolCallId : undefined,
             status: status === "completed" ? "ok" : "error",
-            resultSummary: (update as Record<string, unknown>).rawOutput,
+            resultSummary: rawOutput,
             error:
               status === "failed" && typeof (update as Record<string, unknown>).error === "string"
                 ? ((update as Record<string, unknown>).error as string)
@@ -588,6 +706,7 @@ export async function main(): Promise<void> {
 
         const runBeforeCompletion = runLifecycle.runs().get(accepted.runId);
         if (runBeforeCompletion?.status === "cancelled") {
+          clearRunAccumulators(accepted.runId);
           return;
         }
         const stopReason = typeof result.stopReason === "string" ? result.stopReason : "end_turn";
@@ -604,12 +723,17 @@ export async function main(): Promise<void> {
             text,
           })
         );
+        const accumulatedThinking = runThinkingAccum.get(accepted.runId);
+        const accumulatedToolCalls = runToolCallAccum.get(accepted.runId);
         chatHistoryStore.appendAssistantMessage({
           sessionKey: input.sessionKey,
           runId: accepted.runId,
           message: text,
+          thinking: accumulatedThinking,
+          toolCalls: accumulatedToolCalls ? [...accumulatedToolCalls.values()] : undefined,
           timestamp: done.finishedAt ?? new Date().toISOString(),
         });
+        clearRunAccumulators(accepted.runId);
         emitSse("run/completed", {
           runId: accepted.runId,
           sessionId: session.sessionId,
@@ -636,6 +760,7 @@ export async function main(): Promise<void> {
       } catch (error) {
         const runBeforeFailure = runLifecycle.runs().get(accepted.runId);
         if (runBeforeFailure?.status === "cancelled") {
+          clearRunAccumulators(accepted.runId);
           return;
         }
 
@@ -674,6 +799,7 @@ export async function main(): Promise<void> {
           message: summary.errorMessage,
         });
       } finally {
+        clearRunAccumulators(accepted.runId);
         clearPermissionRequestRun(accepted.runId);
         runLifecycle.clearActiveSessionRun(session.sessionId);
         await sessionThreadCoordinator.persistSessionRecovery({

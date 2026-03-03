@@ -95,6 +95,8 @@ export type ChatStreamEvent = {
   toolCallId?: string;
   toolName?: string;
   toolStatus?: "started" | "completed" | "failed";
+  toolArgs?: string;
+  toolResult?: string;
   permissionRequest?: {
     requestId: string;
     title: string;
@@ -127,9 +129,21 @@ export type PostChatAbortRequest = {
 // v1 は 200 OK + 空オブジェクト応答を契約とする。
 export type PostChatAbortResponse = Record<string, never>;
 
+export type ChatHistoryContentPart =
+  | { type: "text"; text: string }
+  | { type: "reasoning"; text: string }
+  | {
+      type: "tool-call";
+      toolCallId: string;
+      toolName: string;
+      argsText?: string;
+      result?: unknown;
+      isError?: boolean;
+    };
+
 export type ChatHistoryMessage = {
   role: "user" | "assistant";
-  content: string;
+  content: string | ChatHistoryContentPart[];
   runId?: string;
   toolCount?: number;
   timestamp: string;

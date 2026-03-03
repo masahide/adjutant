@@ -21,7 +21,7 @@ import { Button } from "@/components/ui/button";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import { MarkdownText } from "@/components/assistant-ui/markdown-text";
 import { Reasoning, ReasoningGroup } from "@/components/assistant-ui/reasoning";
-import { ToolFallback } from "@/components/assistant-ui/tool-fallback";
+import { ToolFallback, ToolGroup } from "@/components/assistant-ui/tool-fallback";
 
 import { useThreadPendingPermissions } from "../../runtime-hooks.js";
 
@@ -201,14 +201,17 @@ function UserMessage() {
           <UserActionBar />
         </div>
       </div>
-
     </MessagePrimitive.Root>
   );
 }
 
 function UserActionBar() {
   return (
-    <ActionBarPrimitive.Root hideWhenRunning autohide="not-last" className="flex flex-col items-end">
+    <ActionBarPrimitive.Root
+      hideWhenRunning
+      autohide="not-last"
+      className="flex flex-col items-end"
+    >
       <ActionBarPrimitive.Edit asChild>
         <TooltipIconButton tooltip="Edit" className="p-4">
           <PencilIcon />
@@ -256,6 +259,7 @@ function AssistantMessage() {
             Text: MarkdownText,
             Reasoning,
             ReasoningGroup,
+            ToolGroup,
             tools: { Fallback: ToolFallback },
           }}
         />

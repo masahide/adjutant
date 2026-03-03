@@ -8,6 +8,7 @@ import { handleSessionLoad } from "./handlers/session-load.js";
 import { handleSessionNew } from "./handlers/session-new.js";
 import { handleSessionPrompt } from "./handlers/session-prompt.js";
 import { configureWorkerSandboxFromEnv } from "./sandbox-bootstrap.js";
+import { SessionExecutionRegistry } from "./session-execution-registry.js";
 import { WorkerSessionStore } from "./session-store.js";
 import { WorkerRuntimeError } from "./errors.js";
 
@@ -58,6 +59,7 @@ async function main(): Promise<void> {
       writeEnvelope(notification);
     },
   });
+  const executionRegistry = new SessionExecutionRegistry();
 
   const rl = createInterface({
     input: process.stdin,
@@ -168,15 +170,36 @@ async function main(): Promise<void> {
           writeError(id, -32602, "sessionId and prompt are required");
           return;
         }
+        const sessionId = params.sessionId;
+        const prompt = params.prompt;
 
-        const result = await handleSessionPrompt(
-          {
-            sessionId: params.sessionId,
-            prompt: params.prompt,
-            meta: isObject(params.meta) ? params.meta : undefined,
-          },
-          { adapter }
-        );
+        const existingSession = sessionStore.load(sessionId);
+        if (existingSession === undefined) {
+          throw new WorkerRuntimeError("INVALID_RECORD", `Unknown sessionId: ${sessionId}`);
+        }
+
+        const execution = executionRegistry.tryStart(sessionId);
+        if (execution === null) {
+          throw new WorkerRuntimeError("SESSION_BUSY", `session is already running: ${sessionId}`);
+        }
+
+        const result = await (async () => {
+          try {
+            return await handleSessionPrompt(
+              {
+                sessionId,
+                prompt,
+                meta: isObject(params.meta) ? params.meta : undefined,
+              },
+              {
+                adapter,
+                signal: execution.controller.signal,
+              }
+            );
+          } finally {
+            executionRegistry.finish(sessionId, execution.runId);
+          }
+        })();
 
         writeSuccess(id, result);
         return;
@@ -192,7 +215,22 @@ async function main(): Promise<void> {
           return;
         }
 
-        writeSuccess(id, handleSessionCancel({ sessionId: params.sessionId }, { adapter }));
+        const existingSession = sessionStore.load(params.sessionId);
+        if (existingSession === undefined) {
+          throw new WorkerRuntimeError("INVALID_RECORD", `Unknown sessionId: ${params.sessionId}`);
+        }
+
+        writeSuccess(
+          id,
+          handleSessionCancel(
+            { sessionId: params.sessionId },
+            {
+              adapter: {
+                cancelSession: (sessionId: string) => executionRegistry.cancel(sessionId),
+              },
+            }
+          )
+        );
         return;
       }
 

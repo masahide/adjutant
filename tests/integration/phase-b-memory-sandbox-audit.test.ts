@@ -32,10 +32,12 @@ test("Phase B integration: memory/sandbox tool wiring and audit summary", async 
 
   configureSandbox({
     mode: "non-main",
-    containerName: "sandbox-int",
-    workdir: "/workspace",
-    hostWorkspaceDir: root,
-    envAllowlist: ["LANG"],
+    runSpec: {
+      image: "adjutant-sandbox:test",
+      hostWorkspaceDir: root,
+      containerWorkdir: "/workspace",
+      envAllowlist: ["LANG"],
+    },
   });
 
   const mainTools = buildCustomToolDefinitions({
