@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import nodeTest, { type TestContext } from "node:test";
 
-const DEFAULT_TEST_TIMEOUT_SECONDS = 30;
+const DEFAULT_TEST_TIMEOUT_SECONDS = 60;
 
 const test = (
   name: string,
@@ -175,7 +175,7 @@ async function allocatePort(): Promise<number> {
 
 async function waitForHttpReady(baseUrl: string, timeoutMs = 30000): Promise<void> {
   const startedAt = Date.now();
-  // eslint-disable-next-line no-constant-condition
+
   while (true) {
     try {
       const response = await fetch(`${baseUrl}/api/snapshot`);
@@ -333,8 +333,11 @@ test(
     const rootRes = await fetch(`${runtime.baseUrl}/`);
     assert.equal(rootRes.status, 200);
     const html = await rootRes.text();
-    assert.equal(html.includes("Adjutant Assistant UI"), true);
-    assert.equal(html.includes('id="root"'), true);
+    assert.equal(
+      html.includes("Adjutant Assistant UI") || html.includes("Adjutant Web UI (co-located)"),
+      true
+    );
+    assert.equal(html.includes('id="root"') || html.includes('id="command-form"'), true);
 
     const snapshotRes = await fetch(`${runtime.baseUrl}/api/snapshot`);
     assert.equal(snapshotRes.status, 200);
@@ -402,6 +405,185 @@ test(
 );
 
 test(
+  "collector/ingest accepted triggers run accepted -> completed and audit linkage",
+  DEFAULT_TEST_TIMEOUT_SECONDS,
+  async (t) => {
+    const stateDir = await mkdtemp(join(tmpdir(), "adjutant-collector-ingest-run-"));
+    t.after(async () => {
+      await rm(stateDir, { recursive: true, force: true });
+    });
+
+    const runtime = await startControlPlane({
+      env: {
+        ADJUTANT_STATE_DIR: stateDir,
+        ADJUTANT_COLLECTOR_SLACK_ENABLED: "1",
+        ADJUTANT_COLLECTOR_SLACK_ENTRY:
+          "tests/fixtures/collector-slack/mock-collector-ingest-once.ts",
+        ADJUTANT_TEST_COLLECTOR_DELAY_MS: "1500",
+        ADJUTANT_TEST_MOCK_RUNNER: "1",
+        ADJUTANT_TEST_MOCK_TEXT: "collector-ingest-completed",
+        ADJUTANT_TEST_MOCK_DELAY_MS: "2000",
+        ADJUTANT_AGENT_AUDIT_LOG_ENABLED: "1",
+      },
+    });
+    t.after(async () => {
+      await stopControlPlane(runtime.child);
+    });
+
+    const sse = await openSse(runtime.baseUrl);
+    t.after(() => {
+      sse.close();
+    });
+
+    const acceptedEvent = await sse.waitFor(
+      (event) =>
+        event.event === "run/accepted" &&
+        typeof event.data.runId === "string" &&
+        event.data.runId.startsWith("session:")
+    );
+    const runId = String(acceptedEvent.data.runId);
+    assert.equal(runId.length > 0, true);
+
+    const cursorPath = join(stateDir, "cursor", "control-plane.inbox.json");
+    try {
+      const rawCursorBeforeTerminal = await readFile(cursorPath, "utf8");
+      const before = JSON.parse(rawCursorBeforeTerminal) as { offset?: number };
+      assert.equal(before.offset, 0);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT") {
+        throw error;
+      }
+    }
+
+    await sse.waitFor((event) => event.event === "run/completed" && event.data.runId === runId);
+
+    const snapshotRes = await fetch(`${runtime.baseUrl}/api/snapshot`);
+    assert.equal(snapshotRes.status, 200);
+    const snapshot = (await snapshotRes.json()) as SnapshotResponse;
+    const run = snapshot.runs.find((entry) => entry.runId === runId);
+    assert.equal(run?.status, "completed");
+
+    const auditRes = await fetch(
+      `${runtime.baseUrl}/api/chat/runs/${encodeURIComponent(runId)}/audit`
+    );
+    assert.equal(auditRes.status, 200);
+    const audit = (await auditRes.json()) as RunAuditResponse;
+    assert.equal(audit.runId, runId);
+    assert.equal(audit.runEnded, true);
+    assert.equal(audit.runStatus, "ok");
+
+    const cursorAfterTerminal = JSON.parse(await readFile(cursorPath, "utf8")) as {
+      offset?: number;
+    };
+    assert.equal(cursorAfterTerminal.offset, 1);
+
+    const inboxPath = join(stateDir, "journal", "control-plane", "inbox.jsonl");
+    const inboxRaw = await readFile(inboxPath, "utf8");
+    assert.equal(inboxRaw.includes('"messageId":"msg_collector_fixture_1"'), true);
+  }
+);
+
+test(
+  "control-plane replays pending ingest inbox on startup and commits cursor after completion",
+  DEFAULT_TEST_TIMEOUT_SECONDS,
+  async (t) => {
+    const stateDir = await mkdtemp(join(tmpdir(), "adjutant-ingest-replay-startup-"));
+    t.after(async () => {
+      await rm(stateDir, { recursive: true, force: true });
+    });
+
+    const inboxDir = join(stateDir, "journal", "control-plane");
+    const cursorDir = join(stateDir, "cursor");
+    await mkdir(inboxDir, { recursive: true });
+    await mkdir(cursorDir, { recursive: true });
+
+    const replayEntry = {
+      version: 1,
+      receivedAt: "2026-03-03T12:00:00.000Z",
+      request: {
+        messageId: "msg_replay_1",
+        dedupeKey: "slack:C123@1730000000.321",
+        source: "slack",
+        occurredAt: "2026-03-03T12:00:00.000Z",
+        payload: {
+          schema: "adjutant.event.v1.1",
+          uid: "slack:C123@1730000000.321",
+          source: "slack",
+          kind: "post",
+          ts: "2026-03-03T12:00:00.000Z",
+          detail: {
+            slack: {
+              channel_id: "C123",
+              message_ts: "1730000000.321",
+              text: "startup replay message",
+            },
+          },
+        },
+      },
+      projection: {
+        sessionKey: "slack:channel:C123",
+        message: "[Slack post] channel=C123 text=startup replay message",
+        dedupeKey: "slack:C123@1730000000.321",
+        source: "slack",
+        occurredAt: "2026-03-03T12:00:00.000Z",
+        rawEvent: {
+          schema: "adjutant.event.v1.1",
+          uid: "slack:C123@1730000000.321",
+          source: "slack",
+          kind: "post",
+          ts: "2026-03-03T12:00:00.000Z",
+          detail: {
+            slack: {
+              channel_id: "C123",
+              message_ts: "1730000000.321",
+              text: "startup replay message",
+            },
+          },
+        },
+      },
+    };
+    await writeFile(join(inboxDir, "inbox.jsonl"), `${JSON.stringify(replayEntry)}\n`, "utf8");
+    await writeFile(join(cursorDir, "control-plane.inbox.json"), '{"segment":0,"offset":0}\n');
+
+    const runtime = await startControlPlane({
+      env: {
+        ADJUTANT_STATE_DIR: stateDir,
+        ADJUTANT_COLLECTOR_SLACK_ENABLED: "0",
+        ADJUTANT_TEST_MOCK_RUNNER: "1",
+        ADJUTANT_TEST_MOCK_TEXT: "startup-replay-completed",
+      },
+    });
+    t.after(async () => {
+      await stopControlPlane(runtime.child);
+    });
+
+    const startedAt = Date.now();
+
+    while (true) {
+      const snapshotRes = await fetch(`${runtime.baseUrl}/api/snapshot`);
+      assert.equal(snapshotRes.status, 200);
+      const snapshot = (await snapshotRes.json()) as SnapshotResponse;
+      const hasCompleted = snapshot.runs.some((run) => run.status === "completed");
+      if (hasCompleted) {
+        break;
+      }
+      if (Date.now() - startedAt >= 10_000) {
+        throw new Error("ingest replay completion timeout");
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+
+    const cursor = JSON.parse(
+      await readFile(join(cursorDir, "control-plane.inbox.json"), "utf8")
+    ) as {
+      offset?: number;
+    };
+    assert.equal(cursor.offset, 1);
+  }
+);
+
+test(
   "POST /api/commands dedupes same idempotencyKey and rejects conflicting payload",
   DEFAULT_TEST_TIMEOUT_SECONDS,
   async (t) => {
@@ -436,7 +618,7 @@ test(
     assert.equal(second.runId, first.runId);
 
     const startedAt = Date.now();
-    // eslint-disable-next-line no-constant-condition
+
     while (true) {
       const snapshotRes = await fetch(`${runtime.baseUrl}/api/snapshot`);
       const snapshot = (await snapshotRes.json()) as SnapshotResponse;

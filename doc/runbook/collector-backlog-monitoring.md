@@ -7,7 +7,7 @@
 ## 2. 指標定義
 
 - `ingest_backlog_count`
-  - 定義: control-plane journal に受理済みで `completed|failed` 未確定の件数
+  - 定義: control-plane journal に受理済みで `completed|failed|cancelled` 未確定の件数
 - `oldest_ingest_age_seconds`
   - 定義: 最古の未確定 ingest が受理されてからの経過秒
 
@@ -33,9 +33,10 @@
 
 1. `control-plane` のログで `WORKER_TIMEOUT` / `WORKER_CRASHED` / `ACP_PROTOCOL_ERROR` の有無を確認する。
 2. `collector-slack` のログで CDP 再接続ループや `collector/ingest` timeout の有無を確認する。
-3. backlog が増え続ける場合、`collector-slack` を一時停止して新規 ingest を止める。
-4. worker のヘルスを確認し、必要に応じて `control-plane` を再起動して journal replay で再処理する。
-5. 復旧後、同一 `dedupeKey` の再送が `INVALID_REQUEST` ではなく冪等受理されることを確認する。
+3. `state/cursor/control-plane.inbox.json` の `committedSeq` が停滞していないか確認する。
+4. backlog が増え続ける場合、`collector-slack` を一時停止して新規 ingest を止める。
+5. worker のヘルスを確認し、必要に応じて `control-plane` を再起動して journal replay で再処理する。
+6. 復旧後、同一 `dedupeKey` の再送が `INVALID_REQUEST` ではなく冪等受理されることを確認する。
 
 ## 6. エスカレーション
 

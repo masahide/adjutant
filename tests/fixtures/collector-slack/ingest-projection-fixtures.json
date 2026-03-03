@@ -1,0 +1,140 @@
+[
+  {
+    "name": "channel post maps to channel session key and post template",
+    "request": {
+      "messageId": "msg_post_channel",
+      "dedupeKey": "slack:C123@1730000000.123",
+      "source": "slack",
+      "occurredAt": "2026-03-01T10:00:00.000Z",
+      "payload": {
+        "schema": "adjutant.event.v1.1",
+        "uid": "slack:C123@1730000000.123",
+        "source": "slack",
+        "kind": "post",
+        "ts": "2026-03-01T10:00:00.000Z",
+        "detail": {
+          "slack": {
+            "channel_id": "C123",
+            "message_ts": "1730000000.123",
+            "text": "hello"
+          }
+        }
+      }
+    },
+    "expected": {
+      "sessionKey": "slack:channel:C123",
+      "message": "[Slack post] channel=C123 text=hello"
+    }
+  },
+  {
+    "name": "thread post maps to thread session key",
+    "request": {
+      "messageId": "msg_post_thread",
+      "dedupeKey": "slack:C123@1730000000.124",
+      "source": "slack",
+      "occurredAt": "2026-03-01T10:00:01.000Z",
+      "payload": {
+        "schema": "adjutant.event.v1.1",
+        "uid": "slack:C123@1730000000.124",
+        "source": "slack",
+        "kind": "post",
+        "ts": "2026-03-01T10:00:01.000Z",
+        "detail": {
+          "slack": {
+            "channel_id": "C123",
+            "message_ts": "1730000000.124",
+            "thread_ts": "1730000000.001",
+            "text": "thread reply"
+          }
+        }
+      }
+    },
+    "expected": {
+      "sessionKey": "slack:channel:C123:thread:1730000000.001",
+      "message": "[Slack post] channel=C123 text=thread reply"
+    }
+  },
+  {
+    "name": "reaction maps to thread session key and reaction template",
+    "request": {
+      "messageId": "msg_reaction",
+      "dedupeKey": "slack:C123@1730000000.123:thumbsup:added:U123",
+      "source": "slack",
+      "occurredAt": "2026-03-01T10:00:02.000Z",
+      "payload": {
+        "schema": "adjutant.event.v1.1",
+        "uid": "slack:C123@1730000000.123:thumbsup:added:U123",
+        "source": "slack",
+        "kind": "reaction",
+        "action": "added",
+        "ts": "2026-03-01T10:00:02.000Z",
+        "detail": {
+          "slack": {
+            "channel_id": "C123",
+            "message_ts": "1730000000.123",
+            "emoji": "thumbsup",
+            "message_text": "hello"
+          }
+        }
+      }
+    },
+    "expected": {
+      "sessionKey": "slack:channel:C123:thread:1730000000.123",
+      "message": "[Slack reaction] channel=C123 emoji=thumbsup message=hello"
+    }
+  },
+  {
+    "name": "group notification maps to group session key",
+    "request": {
+      "messageId": "msg_notification_group",
+      "dedupeKey": "slack:G777@1730000000.200:message:U1",
+      "source": "slack",
+      "occurredAt": "2026-03-01T10:00:03.000Z",
+      "payload": {
+        "schema": "adjutant.event.v1.1",
+        "uid": "slack:G777@1730000000.200:message:U1",
+        "source": "slack",
+        "kind": "notification",
+        "ts": "2026-03-01T10:00:03.000Z",
+        "detail": {
+          "slack": {
+            "channel_id": "G777",
+            "notification_type": "message",
+            "message_text": "group note"
+          }
+        }
+      }
+    },
+    "expected": {
+      "sessionKey": "slack:group:G777",
+      "message": "[Slack notification] type=message channel=G777 message=group note"
+    }
+  },
+  {
+    "name": "dm post maps to dm session key",
+    "request": {
+      "messageId": "msg_post_dm",
+      "dedupeKey": "slack:D321@1730000000.300",
+      "source": "slack",
+      "occurredAt": "2026-03-01T10:00:04.000Z",
+      "payload": {
+        "schema": "adjutant.event.v1.1",
+        "uid": "slack:D321@1730000000.300",
+        "source": "slack",
+        "kind": "post",
+        "ts": "2026-03-01T10:00:04.000Z",
+        "detail": {
+          "slack": {
+            "channel_id": "D321",
+            "message_ts": "1730000000.300",
+            "text": "dm hello"
+          }
+        }
+      }
+    },
+    "expected": {
+      "sessionKey": "slack:D321",
+      "message": "[Slack post] channel=D321 text=dm hello"
+    }
+  }
+]

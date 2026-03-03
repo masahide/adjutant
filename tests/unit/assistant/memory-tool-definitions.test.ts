@@ -3,6 +3,7 @@ import { access, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 
 import { resolveMemorySearchRuntimeConfig } from "../../../src/assistant/memory/config.js";
 import { createMemoryToolDefinitions } from "../../../src/assistant/memory/tool-definitions.js";
@@ -19,8 +20,15 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-async function executeTool(tool: any, params: unknown) {
-  return (await tool.execute("call_test", params, undefined, undefined, undefined)) as ToolResult;
+async function executeTool(tool: ToolDefinition, params: unknown) {
+  const execute = tool.execute as unknown as (
+    toolCallId: string,
+    rawParams: unknown,
+    signal?: AbortSignal,
+    onUpdate?: unknown,
+    context?: unknown
+  ) => Promise<ToolResult>;
+  return await execute("call_test", params);
 }
 
 test("createMemoryToolDefinitions exposes memory_search and memory_get", async (t) => {

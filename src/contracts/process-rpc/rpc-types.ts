@@ -4,6 +4,7 @@ import {
   type DeliverCompletedNotification,
   type DeliverEnqueueRequest,
 } from "./method-types.js";
+import { isSlackNormalizedEvent } from "../../core/events.js";
 
 export interface JsonRpcRequest<TParams = unknown> {
   jsonrpc: "2.0";
@@ -68,9 +69,9 @@ export function validateCollectorIngestRequest(value: unknown): value is Collect
   return (
     isString(value.messageId) &&
     isString(value.dedupeKey) &&
-    isString(value.source) &&
+    value.source === "slack" &&
     isString(value.occurredAt) &&
-    "payload" in value
+    isSlackNormalizedEvent(value.payload)
   );
 }
 

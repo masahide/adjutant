@@ -1,3 +1,4 @@
+import { type CSSProperties } from "react";
 import {
   ArrowUpIcon,
   BotIcon,
@@ -37,7 +38,7 @@ export function Thread() {
           "--thread-max-width": "48rem",
           "--accent-color": "#10a37f",
           "--accent-foreground": "#ffffff",
-        } as React.CSSProperties
+        } as CSSProperties
       }
     >
       <ThreadPrimitive.Viewport

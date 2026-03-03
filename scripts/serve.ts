@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, createWriteStream } from "node:fs"
 import { join, resolve } from "node:path";
 import type { ChildProcess } from "node:child_process";
 import { ensureSlackWithCdp } from "./lib/slackCdp.js";
+import { applyCollectorRuntimeDefaults } from "./lib/collectorRuntime.js";
 
 type CliOptions = {
   skipSlackHelper: boolean;
@@ -68,14 +69,20 @@ async function main(): Promise<void> {
   const logger = createLogger("serve");
   const slackLogger = createLogger("slack-helper");
 
+  const collector = applyCollectorRuntimeDefaults(process.env);
+  logger(
+    "info",
+    `collector-slack 設定: enabled=${collector.enabled} entry=${collector.entry} endpointFile=${collector.cdpEndpointFile}`
+  );
+
   const configPath = resolve(process.cwd(), options.configPath);
   const runtimeConfig = loadRuntimeConfig(configPath, logger);
 
   const logsDir = join(process.cwd(), "logs", "runtime");
   mkdirSync(logsDir, { recursive: true });
 
-  const host = process.env.CDP_HOST ?? "127.0.0.1";
-  const port = Number(process.env.CDP_PORT ?? "9222");
+  const host = collector.cdpHost;
+  const port = collector.cdpPort;
 
   if (!options.skipSlackHelper) {
     logger("info", "Slack の CDP 利用可否を確認します。");

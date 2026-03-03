@@ -1,4 +1,10 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import {
+  attachUtf8LineReader,
+  computeNextRestartCount,
+  isUnexpectedChildExit,
+  sleep,
+} from "../supervisor/stdio-supervisor-utils.js";
 
 interface JsonRpcRequest {
   jsonrpc: "2.0";
@@ -34,7 +40,6 @@ export interface WorkerRequestOptions {
 
 export class WorkerSupervisor {
   private child?: ChildProcessWithoutNullStreams;
-  private buffer = "";
   private nextId = 1;
   private restartCount = 0;
   private stopping = false;
@@ -130,18 +135,8 @@ export class WorkerSupervisor {
     });
     this.ready = false;
 
-    child.stdout.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => {
-      this.buffer += chunk;
-      let newlineIndex = this.buffer.indexOf("\n");
-      while (newlineIndex >= 0) {
-        const line = this.buffer.slice(0, newlineIndex).trim();
-        this.buffer = this.buffer.slice(newlineIndex + 1);
-        if (line.length > 0) {
-          this.handleEnvelope(line);
-        }
-        newlineIndex = this.buffer.indexOf("\n");
-      }
+    attachUtf8LineReader(child.stdout, (line) => {
+      this.handleEnvelope(line);
     });
     child.stdin.on("error", (error) => {
       if (this.stopping) {
@@ -169,11 +164,10 @@ export class WorkerSupervisor {
     });
 
     child.on("exit", (code, signal) => {
-      const crashed = !this.stopping && (code !== 0 || signal !== null);
+      const crashed = isUnexpectedChildExit(this.stopping, code, signal);
       this.failAllPending(
         new Error(`WORKER_CRASHED: exit=${String(code)} signal=${String(signal)}`)
       );
-      this.buffer = "";
       if (this.child === child) {
         this.child = undefined;
       }
@@ -189,8 +183,13 @@ export class WorkerSupervisor {
         });
       }
 
-      if (crashed && this.restartCount < (this.options.maxRestarts ?? 1)) {
-        this.restartCount += 1;
+      const nextRestartCount = computeNextRestartCount({
+        crashed,
+        restartCount: this.restartCount,
+        maxRestarts: this.options.maxRestarts ?? 1,
+      });
+      if (nextRestartCount !== null) {
+        this.restartCount = nextRestartCount;
         setTimeout(() => this.spawnChild(), this.options.restartDelayMs ?? 25);
       }
     });
@@ -199,10 +198,8 @@ export class WorkerSupervisor {
     void this.runHealthcheck(child);
   }
 
-  private waitForSpawnReady(): Promise<void> {
-    return new Promise((resolve) => {
-      setTimeout(resolve, 30);
-    });
+  private async waitForSpawnReady(): Promise<void> {
+    await sleep(30);
   }
 
   private handleEnvelope(line: string): void {

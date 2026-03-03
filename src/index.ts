@@ -5,6 +5,8 @@ import { fileURLToPath } from "node:url";
 import { createServer as createViteServer, type ViteDevServer } from "vite";
 
 import { createMarkdownSummaryBatchService } from "./assistant/markdown-summary-batch.js";
+import { loadCollectorSlackConfig } from "./collector-slack/config.js";
+import type { CollectorIngestRequest } from "./contracts/process-rpc/method-types.js";
 import type { ClientNotification } from "./contracts/acp/rpc-types.js";
 import { PermissionGateway } from "./control-plane/acp/permission-gateway.js";
 import { resolveOrCreateSession } from "./control-plane/acp/session-recovery-resolver.js";
@@ -33,6 +35,12 @@ import { SessionThreadCoordinator } from "./control-plane/http/session-thread-co
 import { SseHub } from "./control-plane/http/sse-hub.js";
 import { ThreadRepository } from "./control-plane/http/thread-repository.js";
 import { writeStructuredLog } from "./control-plane/logging/structured-log.js";
+import { CollectorSupervisor } from "./control-plane/process-rpc/collector-supervisor.js";
+import { CollectorIngestHandler } from "./control-plane/process-rpc/ingest-handler.js";
+import { IngestInboxStore } from "./control-plane/process-rpc/ingest-inbox-store.js";
+import type { IngestProjection } from "./control-plane/process-rpc/ingest-projection.js";
+import { ProcessRpcServer } from "./control-plane/process-rpc/server.js";
+import type { Cursor } from "./runtime/journal-store.js";
 import { initializeSandboxRuntime } from "./sandbox/runtime.js";
 import { buildSnapshotResponse } from "./control-plane/http/snapshot-builder.js";
 import { renderMinimalUiPage } from "./ui/minimal-page.js";
@@ -144,6 +152,18 @@ function toCommandRequestHash(message: string): string {
   return JSON.stringify({ message });
 }
 
+type SubmitPromptInput = {
+  sessionKey: string;
+  message: string;
+  idempotencyKey?: string;
+};
+
+type SubmitPromptResult = {
+  accepted: AcceptedResponse;
+  sessionId: string;
+  idempotency: "miss" | "duplicate";
+};
+
 export async function main(): Promise<void> {
   const cwd = resolveProjectRoot();
   const logControlPlane = (input: {
@@ -171,6 +191,7 @@ export async function main(): Promise<void> {
     stateDirEnv !== undefined && stateDirEnv.length > 0
       ? resolve(stateDirEnv)
       : resolve(homedir(), ".adjutant");
+  const collectorConfig = loadCollectorSlackConfig({ env: process.env, cwd, stateDir });
   const recoveryStore = SessionRecoveryStore.fromStateDir(stateDir, {
     onWarn: (message, meta) => {
       logControlPlane({
@@ -266,6 +287,8 @@ export async function main(): Promise<void> {
   const runEventBuffer = new RunEventBuffer({ retentionMs: 60_000 });
   const chatHistoryStore = ChatHistoryStore.fromStateDir(stateDir);
   await chatHistoryStore.initialize();
+  const ingestInboxStore = IngestInboxStore.fromStateDir(stateDir);
+  await ingestInboxStore.initialize();
   const sessionThreadCoordinator = new SessionThreadCoordinator({
     threadRepository,
     recoveryStore,
@@ -547,7 +570,120 @@ export async function main(): Promise<void> {
       }
     }
   );
+  let submitPromptForCollector:
+    | ((input: SubmitPromptInput) => Promise<SubmitPromptResult>)
+    | undefined;
+  const ingestCursorByRunId = new Map<string, Cursor>();
 
+  const commitIngestCursorForRun = async (
+    runId: string,
+    terminalStatus: "completed" | "failed" | "cancelled"
+  ): Promise<void> => {
+    const cursor = ingestCursorByRunId.get(runId);
+    if (cursor === undefined) {
+      return;
+    }
+    try {
+      await ingestInboxStore.commitThrough(cursor);
+      logControlPlane({
+        event: "collector.ingest.cursor.committed",
+        runId,
+        sessionKey: null,
+        toolCallId: null,
+        terminalStatus,
+        cursorSegment: cursor.segment,
+        cursorOffset: cursor.offset,
+      });
+    } catch (error) {
+      const summary = toErrorSummary(error);
+      logControlPlane({
+        level: "warn",
+        event: "collector.ingest.cursor.commit_failed",
+        runId,
+        sessionKey: null,
+        toolCallId: null,
+        terminalStatus,
+        errorCode: summary.errorCode,
+        message: summary.errorMessage,
+      });
+    } finally {
+      ingestCursorByRunId.delete(runId);
+    }
+  };
+
+  const submitCollectorIngestProjection = async (input: {
+    request: CollectorIngestRequest;
+    projection: IngestProjection;
+    cursor: Cursor;
+    replayed: boolean;
+  }): Promise<void> => {
+    if (submitPromptForCollector === undefined) {
+      throw new Error("INGEST_PIPELINE_NOT_READY");
+    }
+    const result = await submitPromptForCollector({
+      sessionKey: input.projection.sessionKey,
+      message: input.projection.message,
+      idempotencyKey: input.projection.dedupeKey,
+    });
+    const run = runLifecycle.runs().get(result.accepted.runId);
+    if (run?.status === "completed" || run?.status === "failed") {
+      await ingestInboxStore.commitThrough(input.cursor);
+    } else {
+      ingestCursorByRunId.set(result.accepted.runId, input.cursor);
+    }
+    logControlPlane({
+      event: "collector.ingest.run.accepted",
+      runId: result.accepted.runId,
+      sessionKey: input.projection.sessionKey,
+      toolCallId: null,
+      collectorMessageId: input.request.messageId,
+      collectorDedupeKey: input.request.dedupeKey,
+      collectorEventKind: input.projection.rawEvent.kind,
+      source: input.request.source,
+      replayed: input.replayed,
+      idempotency: result.idempotency,
+    });
+  };
+
+  const processRpcServer = new ProcessRpcServer({
+    ingestHandler: new CollectorIngestHandler({
+      onAccept: async (projection, request) => {
+        const cursor = await ingestInboxStore.append({
+          request,
+          projection,
+        });
+        await submitCollectorIngestProjection({
+          request,
+          projection,
+          cursor,
+          replayed: false,
+        });
+      },
+    }),
+  });
+  const collectorSupervisor = collectorConfig.collectorEnabled
+    ? new CollectorSupervisor({
+        command: process.execPath,
+        args: ["--import", "tsx", collectorConfig.collectorEntry],
+        cwd,
+        env: process.env,
+        processRpcServer,
+        maxRestarts: 3,
+        restartDelayMs: 100,
+        requestTimeoutMs: 5000,
+        onLog: (entry) => {
+          logControlPlane({
+            level: entry.level === "error" ? "error" : entry.level === "warn" ? "warn" : "info",
+            event: "collector_supervisor.log",
+            message: typeof entry.message === "string" ? entry.message : undefined,
+            runId: null,
+            sessionKey: null,
+            toolCallId: null,
+            details: entry,
+          });
+        },
+      })
+    : undefined;
   await supervisor.start();
   const initialized = await supervisor.request(
     "initialize",
@@ -609,11 +745,7 @@ export async function main(): Promise<void> {
     }
   };
 
-  const submitPrompt = async (input: {
-    sessionKey: string;
-    message: string;
-    idempotencyKey?: string;
-  }) => {
+  const submitPrompt = async (input: SubmitPromptInput): Promise<SubmitPromptResult> => {
     await sessionThreadCoordinator.ensureThreadForSession(input.sessionKey);
 
     const requestHash = toCommandRequestHash(input.message);
@@ -753,6 +885,7 @@ export async function main(): Promise<void> {
           toolCallId: null,
           stopReason: done.stopReason,
         });
+        await commitIngestCursorForRun(accepted.runId, "completed");
         await maybeRunSummaryBatch({
           runId: accepted.runId,
           sessionKey: input.sessionKey,
@@ -798,7 +931,12 @@ export async function main(): Promise<void> {
           errorCode: summary.errorCode,
           message: summary.errorMessage,
         });
+        await commitIngestCursorForRun(accepted.runId, "failed");
       } finally {
+        const finalRun = runLifecycle.runs().get(accepted.runId);
+        if (finalRun?.status === "cancelled") {
+          await commitIngestCursorForRun(accepted.runId, "cancelled");
+        }
         clearRunAccumulators(accepted.runId);
         clearPermissionRequestRun(accepted.runId);
         runLifecycle.clearActiveSessionRun(session.sessionId);
@@ -817,6 +955,21 @@ export async function main(): Promise<void> {
       idempotency: "miss" as const,
     };
   };
+  submitPromptForCollector = submitPrompt;
+
+  const replayRecords = await ingestInboxStore.replayPending();
+  for (const replay of replayRecords) {
+    await submitCollectorIngestProjection({
+      request: replay.value.request,
+      projection: replay.value.projection,
+      cursor: replay.cursor,
+      replayed: true,
+    });
+  }
+
+  if (collectorSupervisor !== undefined) {
+    await collectorSupervisor.start();
+  }
 
   const buildThreadSnapshot = (threadId: string): ThreadSnapshotResponse | undefined => {
     const thread = threadRepository.getOrVirtual(threadId);
@@ -964,6 +1117,9 @@ export async function main(): Promise<void> {
     await new Promise<void>((resolveClose) => {
       server.close(() => resolveClose());
     });
+    if (collectorSupervisor !== undefined) {
+      await collectorSupervisor.stop();
+    }
     await supervisor.stop();
     if (viteDevServer !== undefined) {
       await viteDevServer.close();

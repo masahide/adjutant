@@ -144,7 +144,7 @@ test("ControlPlaneConsole smoke: send, tool history, pending permissions", async
   });
 });
 
-test("ToolFallback smoke: collapsible shows args/result on open and hides on close", async (t) => {
+test("ToolFallback smoke: collapsible shows args/result and closes with state transition", async (t) => {
   const restoreDom = installDom();
   t.after(() => {
     restoreDom();
@@ -161,22 +161,26 @@ test("ToolFallback smoke: collapsible shows args/result on open and hides on clo
       status: { type: "complete" },
     })
   );
-
-  assert.equal(view.queryByText("Result:"), null);
-  assert.equal(view.queryByText('{"cmd":"echo hi"}'), null);
-
-  fireEvent.click(view.getByText("Used tool:", { exact: false }));
+  const trigger = view.getByText("Used tool:", { exact: false }).closest("button");
+  const content = view.container.querySelector('[data-slot="tool-fallback-content"]');
+  if (!trigger || !content) {
+    throw new Error("ToolFallback の trigger/content が見つかりません");
+  }
 
   await waitFor(() => {
     assert.notEqual(view.queryByText("Result:"), null);
   });
   assert.notEqual(view.queryByText('{"cmd":"echo hi"}'), null);
   assert.notEqual(view.queryByText(/"stdout"\s*:\s*"hi"/), null);
+  assert.equal(trigger.getAttribute("data-state"), "open");
+  assert.equal(content.getAttribute("data-state"), "open");
 
-  fireEvent.click(view.getByText("Used tool:", { exact: false }));
+  fireEvent.click(trigger);
 
   await waitFor(() => {
-    assert.equal(view.queryByText("Result:"), null);
+    assert.equal(trigger.getAttribute("data-state"), "closed");
+    assert.equal(content.getAttribute("data-state"), "closed");
   });
-  assert.equal(view.queryByText('{"cmd":"echo hi"}'), null);
+  assert.notEqual(view.queryByText("Result:"), null);
+  assert.notEqual(view.queryByText('{"cmd":"echo hi"}'), null);
 });

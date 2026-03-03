@@ -66,7 +66,11 @@ pnpm check               # format -> typecheck -> test
 | `CDP_HOST`                                     | `127.0.0.1`                                          | CDP 接続先ホスト                                                        |
 | `CDP_PORT`                                     | `9222`                                               | CDP 接続先ポート                                                        |
 | `CDP_ENDPOINT_FILE`                            | `.adjutant/cdp-endpoint.json`                        | 接続先上書き JSON (`host`, `port`)                                      |
+| `ADJUTANT_COLLECTOR_SLACK_ENABLED`             | `0`                                                  | `collector-slack` 子プロセス起動フラグ（Phase C 準備）                  |
+| `ADJUTANT_COLLECTOR_SLACK_ENTRY`               | `src/collector-slack/main.ts`                        | `collector-slack` エントリポイント（Phase C 準備）                      |
 | `DATA_DIR`                                     | `./data`                                             | JSONL 保存ルート                                                        |
+| `ADJUTANT_DATA_DIR`                            | `<stateDir>/data`                                    | collector 保存ルート（`DATA_DIR` より優先）                             |
+| `ADJUTANT_SLACK_ACCOUNT_ID`                    | `default`                                            | Slack 保存先 account_id                                                 |
 | `ADJUTANT_TZ`                                  | `Asia/Tokyo`                                         | 正規化イベントのタイムゾーン                                            |
 | `ADJUTANT_DEBUG`                               | -                                                    | Slack アダプタ詳細ログ (`slack:verbose` など)                           |
 | `ADJUTANT_DISABLE_DOM_CAPTURE`                 | `0`                                                  | リアクション時 DOM キャプチャ無効化                                     |

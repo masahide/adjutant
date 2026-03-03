@@ -16,12 +16,70 @@ test("validateProcessRpcRequest accepts collector/ingest envelope", () => {
       messageId: "msg_01",
       dedupeKey: "slack:C123:1740738800.123",
       source: "slack",
-      payload: { text: "hello" },
+      payload: {
+        schema: "adjutant.event.v1.1",
+        uid: "slack:C123@1740738800.123",
+        source: "slack",
+        kind: "post",
+        ts: "2026-02-28T12:00:00.000Z",
+        detail: {
+          slack: {
+            channel_id: "C123",
+            message_ts: "1740738800.123",
+            text: "hello",
+          },
+        },
+      },
       occurredAt: "2026-02-28T12:00:00.000Z",
     },
   };
 
   assert.equal(validateProcessRpcRequest(request), true);
+});
+
+test("validateProcessRpcRequest rejects collector/ingest when source is not slack", () => {
+  const request = {
+    jsonrpc: "2.0",
+    id: "ing_02",
+    method: "collector/ingest",
+    params: {
+      messageId: "msg_02",
+      dedupeKey: "slack:C123:1740738800.124",
+      source: "github",
+      payload: {
+        schema: "adjutant.event.v1.1",
+        uid: "slack:C123@1740738800.124",
+        source: "slack",
+        kind: "post",
+        ts: "2026-02-28T12:00:01.000Z",
+      },
+      occurredAt: "2026-02-28T12:00:01.000Z",
+    },
+  };
+
+  assert.equal(validateProcessRpcRequest(request), false);
+});
+
+test("validateProcessRpcRequest rejects collector/ingest with malformed payload", () => {
+  const request = {
+    jsonrpc: "2.0",
+    id: "ing_03",
+    method: "collector/ingest",
+    params: {
+      messageId: "msg_03",
+      dedupeKey: "slack:C123:1740738800.125",
+      source: "slack",
+      payload: {
+        uid: "slack:C123@1740738800.125",
+        source: "slack",
+        kind: "post",
+        ts: "2026-02-28T12:00:02.000Z",
+      },
+      occurredAt: "2026-02-28T12:00:02.000Z",
+    },
+  };
+
+  assert.equal(validateProcessRpcRequest(request), false);
 });
 
 test("validateProcessRpcRequest rejects malformed deliver/enqueue envelope", () => {

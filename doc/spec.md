@@ -165,6 +165,7 @@ flowchart LR
 
 - 現実装の `detail.slack` には `type` フィールドを付与していない。
 - `kind` でイベント種別を判別する。
+- 本文フィールド契約は `post -> detail.slack.text`、`reaction|notification -> detail.slack.message_text` を正とする。
 
 ### 4.3 UID 方針
 
@@ -538,6 +539,9 @@ flowchart LR
 - `web-ui`: `control-plane` 同一プロセス内で配信される UI（HTTP/SSE 経由で API を利用）
 - `cli`: control-plane API（HTTP）に接続する外部クライアント
 - 開発時は Vite dev server を別プロセスで起動してもよいが、本番/標準起動は同居を正とする
+- 実装補足（Phase C）
+  - collector 側 supervision は `CollectorSupervisor`（`src/control-plane/process-rpc/collector-supervisor.ts`）で実装し、spawn/monitor/restart/request-timeout を担う。
+  - worker 側 supervision（`WorkerSupervisor`）と collector 側 supervision は `src/control-plane/supervisor/stdio-supervisor-utils.ts` を共有し、stdio 行分割と再起動判定ロジックを共通化する。
 
 ### 14.3 プロセス接続連携図
 
@@ -699,8 +703,13 @@ data: {"runId":"session:sess_xxx:run:1","update":{"sessionUpdate":"agent_message
 
 - 各プロセスは自プロセス所有 inbox の cursor のみ commit する。
 - cursor commit は `completed|failed` など最終状態確定後に行い、`accepted` 時点では進めない。
+- `collector/ingest` の受理レコードは `state/journal/control-plane/inbox.jsonl` に append し、対応 cursor は `state/cursor/control-plane.inbox.json` を使用する。
+- control-plane は起動時に `control-plane.inbox` cursor 以降の未処理 `collector/ingest` レコードを replay し、run 実行導線へ再投入する。
+- `collector/ingest` 起点の cursor commit は run の terminal（`completed|failed|cancelled`）でのみ進め、`accepted` 時点では進めない。
+- `collector/ingest` の `payload` は `NormalizedEvent`（`source=slack`）を正本とする。
 - `deliver/completed` の冪等更新は `messageId` を主キーとする。
 - `completed` と `failed` が競合した場合、`completed` を最終状態として優先する。
+- backlog 運用指標は `ingest_backlog_count` と `oldest_ingest_age_seconds` を使用し、しきい値・一次対応は `doc/runbook/collector-backlog-monitoring.md` を正本とする。
 
 ### 14.7 Capability Gate 方針
 
@@ -716,6 +725,7 @@ data: {"runId":"session:sess_xxx:run:1","update":{"sessionUpdate":"agent_message
 - 代表エラー: `UNSUPPORTED_CAPABILITY`, `ACP_PROTOCOL_ERROR`, `JOURNAL_APPEND_FAILED`, `WORKER_TIMEOUT`, `WORKER_CRASHED`, `DOWNSTREAM_ERROR`, `INVALID_RECORD`, `SESSION_BUSY`
 - worker 異常終了時は supervisor が再起動を試行し、構造化ログへ理由を記録する。
 - process 再起動時は journal + cursor から未処理のみ再開する。
+- collector 側障害（CDP 切断、ingest timeout、backlog 増加）は `doc/runbook/collector-backlog-monitoring.md` の一次対応に従う。
 - 運用ロールバック手順は `doc/runbook/phase-b-rollback.md` を正本とする。
 
 ### 14.9 v1 制約

@@ -1,3 +1,5 @@
+import type { NormalizedEvent } from "../../core/events.js";
+
 export const PROCESS_RPC_METHODS = {
   COLLECTOR_INGEST: "collector/ingest",
   DELIVER_ENQUEUE: "deliver/enqueue",
@@ -24,8 +26,8 @@ export interface CompletionEvent {
 export interface CollectorIngestRequest {
   messageId: string;
   dedupeKey: string;
-  source: string;
-  payload: unknown;
+  source: "slack";
+  payload: NormalizedEvent;
   occurredAt: string;
 }
 

@@ -17,6 +17,8 @@ export default [
       "dist",
       "build",
       "coverage",
+      "legacy",
+      "legacy/**",
       "vendor",
       "vendor/**",
       "**/.svelte-kit/**",

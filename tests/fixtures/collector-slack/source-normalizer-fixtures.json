@@ -1,0 +1,48 @@
+{
+  "events": {
+    "post": {
+      "schema": "adjutant.event.v1.1",
+      "uid": "slack:C123@1730000000.123",
+      "source": "slack",
+      "kind": "post",
+      "ts": "2026-03-01T10:00:00.000Z",
+      "detail": {
+        "slack": {
+          "channel_id": "C123",
+          "message_ts": "1730000000.123",
+          "text": "hello"
+        }
+      }
+    },
+    "reaction": {
+      "schema": "adjutant.event.v1.1",
+      "uid": "slack:C123@1730000000.123:thumbsup:added:U123",
+      "source": "slack",
+      "kind": "reaction",
+      "action": "added",
+      "ts": "2026-03-01T10:00:01.000Z",
+      "detail": {
+        "slack": {
+          "channel_id": "C123",
+          "message_ts": "1730000000.123",
+          "emoji": "thumbsup",
+          "message_text": "hello"
+        }
+      }
+    },
+    "notification": {
+      "schema": "adjutant.event.v1.1",
+      "uid": "slack:C123@1730000000.456:message:U999",
+      "source": "slack",
+      "kind": "notification",
+      "ts": "2026-03-01T10:00:02.000Z",
+      "detail": {
+        "slack": {
+          "channel_id": "C123",
+          "notification_type": "message",
+          "message_text": "notice"
+        }
+      }
+    }
+  }
+}

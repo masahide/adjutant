@@ -436,70 +436,70 @@ sequenceDiagram
 
 ### Stage 1 設計と準備
 
-- [ ] `Task-C-000` legacy 移植マッピング作成（`doc/plan/artifacts/260301-s01-legacy-mapping-phase-c.md`）
-- [ ] `Task-C-001` Process RPC 契約確定（`collector/ingest` payload を `NormalizedEvent` に固定）
-- [ ] `Task-C-002` `doc/spec.md` の 4.2/14.2/14.5/14.6 と Phase C 計画の整合チェック（4.2 へ `text`/`message_text` 契約を明示、14.6 へ collector ingest 運用と inbox/cursor 命名を追記）
-- [ ] `Task-C-003` テスト雛形追加（`tests/unit/collector-slack`, `tests/integration/collector-slack`, `tests/contract/process-rpc`）
-- [ ] `Task-C-004` collector 環境変数/起動設定の整理（dev/serve スクリプト含む）
-- [ ] `Task-C-005` `NormalizedEvent` 共通型を legacy から移植（`src/core/events.ts`）
-- [ ] `Task-C-006` `sessionKey` 解決規則を確定し contract test を追加（channel/thread/dm/group）
-- [ ] `Task-C-007` ingest payload から run prompt への投影テンプレートを確定し test fixture を固定
+- [x] `Task-C-000` legacy 移植マッピング作成（`doc/plan/artifacts/260301-s01-legacy-mapping-phase-c.md`）
+- [x] `Task-C-001` Process RPC 契約確定（`collector/ingest` payload を `NormalizedEvent` に固定）
+- [x] `Task-C-002` `doc/spec.md` の 4.2/14.2/14.5/14.6 と Phase C 計画の整合チェック（4.2 へ `text`/`message_text` 契約を明示、14.6 へ collector ingest 運用と inbox/cursor 命名を追記）
+- [x] `Task-C-003` テスト雛形追加（`tests/unit/collector-slack`, `tests/integration/collector-slack`, `tests/contract/process-rpc`）
+- [x] `Task-C-004` collector 環境変数/起動設定の整理（dev/serve スクリプト含む）
+- [x] `Task-C-005` `NormalizedEvent` 共通型を legacy から移植（`src/core/events.ts`）
+- [x] `Task-C-006` `sessionKey` 解決規則を確定し contract test を追加（channel/thread/dm/group）
+- [x] `Task-C-007` ingest payload から run prompt への投影テンプレートを確定し test fixture を固定
 
 ### Stage 2 機能Aの実装（collector-slack 本体）
 
-- [ ] `Task-CA-RED-001` Test: CDP endpoint 解決優先順位の失敗テスト作成
-- [ ] `Task-CA-RED-002` Test: Fetch/WebSocket/Response の正規化 + UID 去重の失敗テスト作成
-- [ ] `Task-CA-RED-003` Test: DOM capture 補完（成功/失敗）の失敗テスト作成
-- [ ] `Task-CA-RED-004` Test: 名称キャッシュ load/persist の失敗テスト作成
-- [ ] `Task-CA-RED-005` Test: JSONL 追記（account/date/source パス、checksum）の失敗テスト作成
-- [ ] `Task-CA-RED-006` Test: Debug UI SSE 配信の失敗テスト作成
-- [ ] `Task-CA-GREEN-001` Impl: `src/collector-slack/main.ts` 起動・再接続ループ実装
-- [ ] `Task-CA-GREEN-002` Impl: `SlackAdapter` / `SlackIngestor` / `connectToSlackPage` の移植
-- [ ] `Task-CA-GREEN-003` Impl: `JsonlWriter` / `SlackNameCacheRepository` / DOM capture の移植
-- [ ] `Task-CA-GREEN-004` Impl: Debug UI と raw event log の移植
-- [ ] `Task-CA-REFACTOR-001` Refactor: collector の設定/ログ/例外処理を責務分離
-- [ ] `Task-CA-INTEG-001` Integration: mock CDP 入力で normalized event 生成と JSONL 保存を検証
+- [x] `Task-CA-RED-001` Test: CDP endpoint 解決優先順位の失敗テスト作成
+- [x] `Task-CA-RED-002` Test: Fetch/WebSocket/Response の正規化 + UID 去重の失敗テスト作成
+- [x] `Task-CA-RED-003` Test: DOM capture 補完（成功/失敗）の失敗テスト作成
+- [x] `Task-CA-RED-004` Test: 名称キャッシュ load/persist の失敗テスト作成
+- [x] `Task-CA-RED-005` Test: JSONL 追記（account/date/source パス、checksum）の失敗テスト作成
+- [x] `Task-CA-RED-006` Test: Debug UI SSE 配信の失敗テスト作成
+- [x] `Task-CA-GREEN-001` Impl: `src/collector-slack/main.ts` 起動・再接続ループ実装
+- [x] `Task-CA-GREEN-002` Impl: `SlackAdapter` / `SlackIngestor` / `connectToSlackPage` の移植
+- [x] `Task-CA-GREEN-003` Impl: `JsonlWriter` / `SlackNameCacheRepository` / DOM capture の移植
+- [x] `Task-CA-GREEN-004` Impl: Debug UI と raw event log の移植
+- [x] `Task-CA-REFACTOR-001` Refactor: collector の設定/ログ/例外処理を責務分離
+- [x] `Task-CA-INTEG-001` Integration: mock CDP 入力で normalized event 生成と JSONL 保存を検証
 
 ### Stage 3 機能Bの実装（collector/ingest と control-plane 連携）
 
-- [ ] `Task-CB-RED-001` Test: `collector/ingest` request validation（正常/異常）の失敗テスト作成
-- [ ] `Task-CB-RED-002` Test: 同一 dedupeKey 重複時の run 非重複化テスト作成
-- [ ] `Task-CB-RED-005` Test: 同一 dedupeKey + 異なる payload の `INVALID_REQUEST` を固定する失敗テスト作成
-- [ ] `Task-CB-RED-003` Test: ingest 受理後に run が `accepted -> completed|failed` へ遷移する失敗テスト作成
-- [ ] `Task-CB-RED-004` Test: collector 子プロセスクラッシュ時の supervisor 再起動テスト作成
-- [ ] `Task-CB-GREEN-001` Impl: control-plane Process RPC server（collector handler）追加
-- [ ] `Task-CB-GREEN-002` Impl: collector supervisor 追加（spawn/monitor/timeout）
-- [ ] `Task-CB-GREEN-003` Impl: ingest journal/cursor ストア追加と append/replay 実装
-- [ ] `Task-CB-GREEN-004` Impl: ingest payload -> sessionKey/prompt 投影ロジック実装
-- [ ] `Task-CB-GREEN-005` Impl: run lifecycle / SSE / audit 連携実装
-- [ ] `Task-CB-GREEN-006` Impl: terminal 後 cursor commit（accepted 時 commit 禁止）を実装
-- [ ] `Task-CB-REFACTOR-001` Refactor: Process RPC 共通ユーティリティ化（worker supervisor との重複排除）
-- [ ] `Task-CB-INTEG-001` Integration: collector -> control-plane -> worker の縦切り E2E
-- [ ] `Task-CB-CONTRACT-001` Contract: `collector/ingest` request/response schema 固定テスト
-- [ ] `Task-CB-DOCS-001` Docs: `doc/spec.md` に collector 子プロセス実装済み項目を反映
+- [x] `Task-CB-RED-001` Test: `collector/ingest` request validation（正常/異常）の失敗テスト作成
+- [x] `Task-CB-RED-002` Test: 同一 dedupeKey 重複時の run 非重複化テスト作成
+- [x] `Task-CB-RED-005` Test: 同一 dedupeKey + 異なる payload の `INVALID_REQUEST` を固定する失敗テスト作成
+- [x] `Task-CB-RED-003` Test: ingest 受理後に run が `accepted -> completed|failed` へ遷移する失敗テスト作成
+- [x] `Task-CB-RED-004` Test: collector 子プロセスクラッシュ時の supervisor 再起動テスト作成
+- [x] `Task-CB-GREEN-001` Impl: control-plane Process RPC server（collector handler）追加
+- [x] `Task-CB-GREEN-002` Impl: collector supervisor 追加（spawn/monitor/timeout）
+- [x] `Task-CB-GREEN-003` Impl: ingest journal/cursor ストア追加と append/replay 実装
+- [x] `Task-CB-GREEN-004` Impl: ingest payload -> sessionKey/prompt 投影ロジック実装
+- [x] `Task-CB-GREEN-005` Impl: run lifecycle / SSE / audit 連携実装
+- [x] `Task-CB-GREEN-006` Impl: terminal 後 cursor commit（accepted 時 commit 禁止）を実装
+- [x] `Task-CB-REFACTOR-001` Refactor: Process RPC 共通ユーティリティ化（worker supervisor との重複排除）
+- [x] `Task-CB-INTEG-001` Integration: collector -> control-plane -> worker の縦切り E2E
+- [x] `Task-CB-CONTRACT-001` Contract: `collector/ingest` request/response schema 固定テスト
+- [x] `Task-CB-DOCS-001` Docs: `doc/spec.md` に collector 子プロセス実装済み項目を反映
 
 ### Stage 4 統合と検証
 
-- [ ] `Task-C-VERIFY-001` `pnpm check` 実行
+- [x] `Task-C-VERIFY-001` `pnpm check` 実行
 - [ ] `Task-C-VERIFY-002` 手動検証（Slack 実機イベントで ingest -> run 完了）
-- [ ] `Task-C-VERIFY-003` 障害検証（CDP 切断、collector 再起動、malformed ingest）
-- [ ] `Task-C-VERIFY-004` ドキュメント更新（仕様・契約・図・運用手順）
-- [ ] `Task-C-VERIFY-005` Runbook 更新（backlog しきい値/アラート/一次対応手順を反映）
+- [x] `Task-C-VERIFY-003` 障害検証（CDP 切断、collector 再起動、malformed ingest）
+- [x] `Task-C-VERIFY-004` ドキュメント更新（仕様・契約・図・運用手順）
+- [x] `Task-C-VERIFY-005` Runbook 更新（backlog しきい値/アラート/一次対応手順を反映）
 
 ## 8. 完了の定義 Definition of Done
 
 ### 8.1 機能DoD Functional DoD
 
 - [ ] 受け入れ条件がすべて満たされていること
-- [ ] Slack イベントが `collector/ingest` を経由して run 連携できること
-- [ ] 既知の制約が明文化され、運用上許容可能であること
+- [x] Slack イベントが `collector/ingest` を経由して run 連携できること
+- [x] 既知の制約が明文化され、運用上許容可能であること
 
 ### 8.2 品質DoD Quality DoD
 
-- [ ] 全てのテストがパスしていること
-- [ ] Linter/Formatter エラーがないこと
-- [ ] collector/process-rpc の契約テストがグリーンであること
-- [ ] `doc/spec.md` と実装の境界契約が一致していること
+- [x] 全てのテストがパスしていること
+- [x] Linter/Formatter エラーがないこと
+- [x] collector/process-rpc の契約テストがグリーンであること
+- [x] `doc/spec.md` と実装の境界契約が一致していること
 
 ## 9. 懸念事項と未確定事項 Concerns and Questions
 

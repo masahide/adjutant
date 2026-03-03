@@ -1,4 +1,14 @@
-import { memo, useCallback, useRef, useState, type FC, type PropsWithChildren } from "react";
+import {
+  memo,
+  useCallback,
+  useRef,
+  useState,
+  type ComponentProps,
+  type CSSProperties,
+  type ElementType,
+  type FC,
+  type PropsWithChildren,
+} from "react";
 import {
   AlertCircleIcon,
   CheckIcon,
@@ -19,7 +29,7 @@ import { cn } from "@/lib/utils";
 const ANIMATION_DURATION = 200;
 
 export type ToolFallbackRootProps = Omit<
-  React.ComponentProps<typeof Collapsible>,
+  ComponentProps<typeof Collapsible>,
   "open" | "onOpenChange"
 > & {
   open?: boolean;
@@ -68,7 +78,7 @@ function ToolFallbackRoot({
       style={
         {
           "--animation-duration": `${ANIMATION_DURATION}ms`,
-        } as React.CSSProperties
+        } as CSSProperties
       }
       {...props}
     >
@@ -79,7 +89,7 @@ function ToolFallbackRoot({
 
 type ToolStatus = ToolCallMessagePartStatus["type"];
 
-const statusIconMap: Record<ToolStatus, React.ElementType> = {
+const statusIconMap: Record<ToolStatus, ElementType> = {
   running: LoaderIcon,
   complete: CheckIcon,
   incomplete: XCircleIcon,
@@ -91,7 +101,7 @@ function ToolFallbackTrigger({
   status,
   className,
   ...props
-}: React.ComponentProps<typeof CollapsibleTrigger> & {
+}: ComponentProps<typeof CollapsibleTrigger> & {
   toolName: string;
   status?: ToolCallMessagePartStatus;
 }) {
@@ -156,7 +166,7 @@ function ToolFallbackContent({
   className,
   children,
   ...props
-}: React.ComponentProps<typeof CollapsibleContent>) {
+}: ComponentProps<typeof CollapsibleContent>) {
   return (
     <CollapsibleContent
       data-slot="tool-fallback-content"
@@ -182,7 +192,7 @@ function ToolFallbackArgs({
   argsText,
   className,
   ...props
-}: React.ComponentProps<"div"> & {
+}: ComponentProps<"div"> & {
   argsText?: string;
 }) {
   if (!argsText) return null;
@@ -202,7 +212,7 @@ function ToolFallbackResult({
   result,
   className,
   ...props
-}: React.ComponentProps<"div"> & {
+}: ComponentProps<"div"> & {
   result?: unknown;
 }) {
   if (result === undefined) return null;
@@ -227,7 +237,7 @@ function ToolFallbackError({
   result,
   className,
   ...props
-}: React.ComponentProps<"div"> & {
+}: ComponentProps<"div"> & {
   status?: ToolCallMessagePartStatus;
   isError?: boolean;
   result?: unknown;
@@ -320,7 +330,7 @@ function ToolGroupRoot({
   defaultOpen = false,
   children,
   ...props
-}: Omit<React.ComponentProps<typeof Collapsible>, "open" | "onOpenChange"> & {
+}: Omit<ComponentProps<typeof Collapsible>, "open" | "onOpenChange"> & {
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   defaultOpen?: boolean;
@@ -358,7 +368,7 @@ function ToolGroupRoot({
       style={
         {
           "--animation-duration": `${ANIMATION_DURATION}ms`,
-        } as React.CSSProperties
+        } as CSSProperties
       }
       {...props}
     >
@@ -372,7 +382,7 @@ function ToolGroupTrigger({
   toolCount,
   className,
   ...props
-}: React.ComponentProps<typeof CollapsibleTrigger> & {
+}: ComponentProps<typeof CollapsibleTrigger> & {
   active?: boolean;
   toolCount: number;
 }) {
@@ -423,7 +433,7 @@ function ToolGroupContent({
   className,
   children,
   ...props
-}: React.ComponentProps<typeof CollapsibleContent>) {
+}: ComponentProps<typeof CollapsibleContent>) {
   return (
     <CollapsibleContent
       data-slot="tool-group-content"

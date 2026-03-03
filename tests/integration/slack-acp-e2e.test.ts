@@ -49,7 +49,20 @@ test("slack acp e2e: collector accepted -> worker prompt -> deliver accepted -> 
     messageId: "msg_e2e_1",
     dedupeKey: "slack:C01:1700000000.001",
     source: "slack",
-    payload: { text: "hello from slack" },
+    payload: {
+      schema: "adjutant.event.v1.1",
+      uid: "slack:C01@1700000000.001",
+      source: "slack",
+      kind: "post",
+      ts: "2026-02-28T12:00:00.000Z",
+      detail: {
+        slack: {
+          channel_id: "C01",
+          message_ts: "1700000000.001",
+          text: "hello from slack",
+        },
+      },
+    },
     occurredAt: "2026-02-28T12:00:00.000Z",
   };
 
@@ -65,7 +78,9 @@ test("slack acp e2e: collector accepted -> worker prompt -> deliver accepted -> 
 
   const prompt = await supervisor.request("session/prompt", {
     sessionId,
-    prompt: String((ingestRequest.payload as { text: string }).text),
+    prompt: String(
+      (ingestRequest.payload.detail as { slack?: { text?: string } }).slack?.text ?? ""
+    ),
   });
 
   const enqueueRequest: DeliverEnqueueRequest = {

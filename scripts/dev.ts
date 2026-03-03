@@ -3,6 +3,7 @@ import { createWriteStream, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { ChildProcess } from "node:child_process";
 import { ensureSlackWithCdp } from "./lib/slackCdp.js";
+import { applyCollectorRuntimeDefaults } from "./lib/collectorRuntime.js";
 
 type ProcessConfig = {
   name: string;
@@ -99,8 +100,14 @@ await main().catch((error) => {
 });
 
 async function main() {
-  const cdpHost = process.env.CDP_HOST ?? "127.0.0.1";
-  const cdpPort = Number(process.env.CDP_PORT ?? "9222");
+  const collector = applyCollectorRuntimeDefaults(process.env);
+
+  const cdpHost = collector.cdpHost;
+  const cdpPort = collector.cdpPort;
+
+  process.stdout.write(
+    `[INFO] collector-slack enabled=${collector.enabled} entry=${collector.entry} cdp=${cdpHost}:${cdpPort}\n`
+  );
 
   await ensureSlackWithCdp({ host: cdpHost, port: cdpPort });
 

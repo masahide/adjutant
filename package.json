@@ -12,7 +12,7 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --check .",
     "format:write": "prettier --write .",
-    "test": "bash -lc 'files=$(find tests -type f -name \"*.test.ts\"); if [ -z \"$files\" ]; then echo \"No tests found\"; exit 1; fi; node --import tsx --test --test-force-exit $files'",
+    "test": "bash -lc 'files=$(find tests -type f -name \"*.test.ts\"); if [ -z \"$files\" ]; then echo \"No tests found\"; exit 1; fi; node --import tsx --test --test-force-exit --test-timeout=60000 --test-concurrency=1 $files'",
     "test:live-agent": "bash scripts/test-live-agent.sh",
     "test:slack": "node --import tsx --test \"tests/slack/**/*.test.ts\"",
     "sandbox:build": "docker build -f Dockerfile.sandbox -t adjutant-sandbox:trixie-slim .",

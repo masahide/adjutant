@@ -1,4 +1,11 @@
-import { memo, useCallback, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useRef,
+  useState,
+  type ComponentProps,
+  type CSSProperties,
+} from "react";
 import { cva, type VariantProps } from "class-variance-authority";
 import { BrainIcon, ChevronDownIcon } from "lucide-react";
 import {
@@ -26,10 +33,7 @@ const reasoningVariants = cva("aui-reasoning-root mb-4 w-full", {
   },
 });
 
-export type ReasoningRootProps = Omit<
-  React.ComponentProps<typeof Collapsible>,
-  "open" | "onOpenChange"
-> &
+export type ReasoningRootProps = Omit<ComponentProps<typeof Collapsible>, "open" | "onOpenChange"> &
   VariantProps<typeof reasoningVariants> & {
     open?: boolean;
     onOpenChange?: (open: boolean) => void;
@@ -76,7 +80,7 @@ function ReasoningRoot({
       style={
         {
           "--animation-duration": `${ANIMATION_DURATION}ms`,
-        } as React.CSSProperties
+        } as CSSProperties
       }
       {...props}
     >
@@ -85,7 +89,7 @@ function ReasoningRoot({
   );
 }
 
-function ReasoningFade({ className, ...props }: React.ComponentProps<"div">) {
+function ReasoningFade({ className, ...props }: ComponentProps<"div">) {
   return (
     <div
       data-slot="reasoning-fade"
@@ -112,7 +116,7 @@ function ReasoningTrigger({
   duration,
   className,
   ...props
-}: React.ComponentProps<typeof CollapsibleTrigger> & {
+}: ComponentProps<typeof CollapsibleTrigger> & {
   active?: boolean;
   duration?: number;
 }) {
@@ -163,7 +167,7 @@ function ReasoningContent({
   className,
   children,
   ...props
-}: React.ComponentProps<typeof CollapsibleContent>) {
+}: ComponentProps<typeof CollapsibleContent>) {
   return (
     <CollapsibleContent
       data-slot="reasoning-content"
@@ -186,7 +190,7 @@ function ReasoningContent({
   );
 }
 
-function ReasoningText({ className, ...props }: React.ComponentProps<"div">) {
+function ReasoningText({ className, ...props }: ComponentProps<"div">) {
   return (
     <div
       data-slot="reasoning-text"
