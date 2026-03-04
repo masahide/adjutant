@@ -9,12 +9,14 @@ import type {
   JsonRpcSuccess,
 } from "../../contracts/process-rpc/rpc-types.js";
 import { validateProcessRpcRequest } from "../../contracts/process-rpc/rpc-types.js";
+import { DeliverEnqueueHandler, DeliverValidationError } from "./deliver-handler.js";
 import { CollectorIngestHandler, IngestValidationError } from "./ingest-handler.js";
 
 type JsonRpcId = string | number;
 
 export type ProcessRpcServerOptions = {
   ingestHandler: CollectorIngestHandler;
+  deliverHandler?: DeliverEnqueueHandler;
 };
 
 function success<TResult>(id: JsonRpcId, result: TResult): JsonRpcSuccess<TResult> {
@@ -65,7 +67,18 @@ export class ProcessRpcServer {
     }
 
     if (raw.method === PROCESS_RPC_METHODS.DELIVER_ENQUEUE) {
-      return failure(raw.id, -32601, "METHOD_NOT_SUPPORTED");
+      if (this.options.deliverHandler === undefined) {
+        return failure(raw.id, -32601, "METHOD_NOT_SUPPORTED");
+      }
+      try {
+        const accepted = await this.options.deliverHandler.accept(raw.params);
+        return success(raw.id, accepted);
+      } catch (error) {
+        if (error instanceof DeliverValidationError) {
+          return failure(raw.id, -32600, "INVALID_REQUEST", { message: error.message });
+        }
+        return failure(raw.id, -32000, "DOWNSTREAM_ERROR");
+      }
     }
 
     return failure(raw.id, -32601, "METHOD_NOT_FOUND");

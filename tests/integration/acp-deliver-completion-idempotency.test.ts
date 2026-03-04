@@ -63,3 +63,30 @@ test("deliver completion store promotes failed -> completed when completion arri
   assert.equal(recovery.final.status, "completed");
   assert.equal(store.get("msg_3")?.status, "completed");
 });
+
+test("deliver completion store keeps completed terminal even if failed is retried after promotion", () => {
+  const store = new DeliverCompletionStore();
+
+  store.apply({
+    messageId: "msg_4",
+    status: "failed",
+    finishedAt: "2026-02-28T12:00:01.000Z",
+    error: "timeout",
+  });
+  store.apply({
+    messageId: "msg_4",
+    status: "completed",
+    finishedAt: "2026-02-28T12:00:03.000Z",
+  });
+
+  const failedRetry = store.apply({
+    messageId: "msg_4",
+    status: "failed",
+    finishedAt: "2026-02-28T12:00:04.000Z",
+    error: "timeout",
+  });
+
+  assert.equal(failedRetry.applied, false);
+  assert.equal(failedRetry.final.status, "completed");
+  assert.equal(store.get("msg_4")?.status, "completed");
+});

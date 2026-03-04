@@ -6,7 +6,11 @@ import { createServer as createViteServer, type ViteDevServer } from "vite";
 
 import { createMarkdownSummaryBatchService } from "./assistant/markdown-summary-batch.js";
 import { loadCollectorSlackConfig } from "./collector-slack/config.js";
-import type { CollectorIngestRequest } from "./contracts/process-rpc/method-types.js";
+import { loadDeliverSlackConfig } from "./deliver-slack/config.js";
+import type {
+  CollectorIngestRequest,
+  DeliverCompletedNotification,
+} from "./contracts/process-rpc/method-types.js";
 import type { ClientNotification } from "./contracts/acp/rpc-types.js";
 import { PermissionGateway } from "./control-plane/acp/permission-gateway.js";
 import { resolveOrCreateSession } from "./control-plane/acp/session-recovery-resolver.js";
@@ -14,6 +18,7 @@ import { SessionRecoveryStore } from "./control-plane/acp/session-recovery-store
 import { WorkerSupervisor } from "./control-plane/acp/worker-supervisor.js";
 import { AgentAuditLog } from "./control-plane/audit/agent-audit-log.js";
 import { readRunAudit } from "./control-plane/audit/audit-reader.js";
+import { DeliverCompletionStore } from "./control-plane/deliver-completion-store.js";
 import {
   toPermissionSummary,
   type AcceptedResponse,
@@ -36,6 +41,9 @@ import { SseHub } from "./control-plane/http/sse-hub.js";
 import { ThreadRepository } from "./control-plane/http/thread-repository.js";
 import { writeStructuredLog } from "./control-plane/logging/structured-log.js";
 import { CollectorSupervisor } from "./control-plane/process-rpc/collector-supervisor.js";
+import { DeliverEnqueueHandler } from "./control-plane/process-rpc/deliver-handler.js";
+import { DeliverQueueStore } from "./control-plane/process-rpc/deliver-queue-store.js";
+import { DeliverSupervisor } from "./control-plane/process-rpc/deliver-supervisor.js";
 import { CollectorIngestHandler } from "./control-plane/process-rpc/ingest-handler.js";
 import { IngestInboxStore } from "./control-plane/process-rpc/ingest-inbox-store.js";
 import type { IngestProjection } from "./control-plane/process-rpc/ingest-projection.js";
@@ -192,6 +200,7 @@ export async function main(): Promise<void> {
       ? resolve(stateDirEnv)
       : resolve(homedir(), ".adjutant");
   const collectorConfig = loadCollectorSlackConfig({ env: process.env, cwd, stateDir });
+  const deliverConfig = loadDeliverSlackConfig({ env: process.env });
   const recoveryStore = SessionRecoveryStore.fromStateDir(stateDir, {
     onWarn: (message, meta) => {
       logControlPlane({
@@ -289,6 +298,10 @@ export async function main(): Promise<void> {
   await chatHistoryStore.initialize();
   const ingestInboxStore = IngestInboxStore.fromStateDir(stateDir);
   await ingestInboxStore.initialize();
+  const deliverQueueStore = DeliverQueueStore.fromStateDir(stateDir);
+  await deliverQueueStore.initialize();
+  const deliverCompletionStore = new DeliverCompletionStore();
+  const deliverCursorByMessageId = new Map<string, Cursor>();
   const sessionThreadCoordinator = new SessionThreadCoordinator({
     threadRepository,
     recoveryStore,
@@ -660,7 +673,100 @@ export async function main(): Promise<void> {
         });
       },
     }),
+    deliverHandler: new DeliverEnqueueHandler({
+      onAccept: async (request) => {
+        const cursor = await deliverQueueStore.append({
+          request,
+        });
+        deliverCursorByMessageId.set(request.messageId, cursor);
+        let dispatchStatus: "skipped" | "accepted" | "failed" = "skipped";
+        let dispatchMessage: string | undefined;
+        if (deliverSupervisor !== undefined) {
+          try {
+            await deliverSupervisor.enqueue(request, { timeoutMs: 5_000 });
+            dispatchStatus = "accepted";
+          } catch (error) {
+            dispatchStatus = "failed";
+            dispatchMessage = error instanceof Error ? error.message : String(error);
+          }
+        }
+        logControlPlane({
+          event: "deliver.enqueue.accepted",
+          runId: null,
+          sessionKey: null,
+          toolCallId: null,
+          deliverMessageId: request.messageId,
+          deliverDedupeKey: request.dedupeKey,
+          deliverTarget: request.target,
+          attempt: request.attempt,
+          maxAttempts: request.maxAttempts,
+          cursorSegment: cursor.segment,
+          cursorOffset: cursor.offset,
+          dispatchStatus,
+          dispatchMessage,
+        });
+      },
+    }),
   });
+
+  const handleDeliverCompleted = async (
+    notification: DeliverCompletedNotification
+  ): Promise<void> => {
+    const applied = deliverCompletionStore.apply(notification);
+    const cursor = deliverCursorByMessageId.get(notification.messageId);
+    if (cursor !== undefined) {
+      await deliverQueueStore.commitThrough(cursor);
+      deliverCursorByMessageId.delete(notification.messageId);
+    }
+    logControlPlane({
+      event: "deliver.completed.received",
+      runId: null,
+      sessionKey: null,
+      toolCallId: null,
+      deliverMessageId: notification.messageId,
+      status: notification.status,
+      applied: applied.applied,
+      duplicate: applied.duplicate,
+      cursorCommitted: cursor !== undefined,
+    });
+  };
+
+  const deliverSupervisor = deliverConfig.deliverEnabled
+    ? new DeliverSupervisor({
+        command: process.execPath,
+        args: ["--import", "tsx", deliverConfig.deliverEntry],
+        cwd,
+        env: process.env,
+        maxRestarts: 3,
+        restartDelayMs: 100,
+        requestTimeoutMs: 5_000,
+        onCompleted: (notification) => {
+          void handleDeliverCompleted(notification).catch((error) => {
+            const summary = toErrorSummary(error);
+            logControlPlane({
+              level: "warn",
+              event: "deliver.completed.apply_failed",
+              runId: null,
+              sessionKey: null,
+              toolCallId: null,
+              errorCode: summary.errorCode,
+              message: summary.errorMessage,
+            });
+          });
+        },
+        onLog: (entry) => {
+          logControlPlane({
+            level: entry.level === "error" ? "error" : entry.level === "warn" ? "warn" : "info",
+            event: "deliver_supervisor.log",
+            message: typeof entry.message === "string" ? entry.message : undefined,
+            runId: null,
+            sessionKey: null,
+            toolCallId: null,
+            details: entry,
+          });
+        },
+      })
+    : undefined;
   const collectorSupervisor = collectorConfig.collectorEnabled
     ? new CollectorSupervisor({
         command: process.execPath,
@@ -970,6 +1076,9 @@ export async function main(): Promise<void> {
   if (collectorSupervisor !== undefined) {
     await collectorSupervisor.start();
   }
+  if (deliverSupervisor !== undefined) {
+    await deliverSupervisor.start();
+  }
 
   const buildThreadSnapshot = (threadId: string): ThreadSnapshotResponse | undefined => {
     const thread = threadRepository.getOrVirtual(threadId);
@@ -1119,6 +1228,9 @@ export async function main(): Promise<void> {
     });
     if (collectorSupervisor !== undefined) {
       await collectorSupervisor.stop();
+    }
+    if (deliverSupervisor !== undefined) {
+      await deliverSupervisor.stop();
     }
     await supervisor.stop();
     if (viteDevServer !== undefined) {

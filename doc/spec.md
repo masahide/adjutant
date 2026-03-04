@@ -569,6 +569,11 @@ flowchart LR
   DJ[(state/journal/deliver-slack/inbox.jsonl)]
   CPCUR[(state/cursor/control-plane.inbox.json)]
   DCUR[(state/cursor/deliver-slack.inbox.json)]
+  CPDQ[(state/journal/control-plane/deliver-queue.jsonl)]
+  CPDQC[(state/cursor/control-plane.deliver-queue.json)]
+  CPIDC[(state/journal/control-plane/idempotency.jsonl)]
+  CPIDS[(state/cursor/control-plane.idempotency.snapshot.json)]
+  CPDCS[(state/cursor/control-plane.deliver-completion.snapshot.json)]
   SVC[Slack / External APIs]
 
   CP -->|spawn/monitor/signal| C
@@ -585,6 +590,11 @@ flowchart LR
   D <--> DJ
   CP <--> CPCUR
   D <--> DCUR
+  CP <--> CPDQ
+  CP <--> CPDQC
+  CP <--> CPIDC
+  CP <--> CPIDS
+  CP <--> CPDCS
 
   C -->|ingest| SVC
   D -->|post| SVC
@@ -656,6 +666,16 @@ classDiagram
 - Process RPC（control-plane <-> collector/deliver）
   - request/response: `collector/ingest`, `deliver/enqueue`（同期 `accepted`）
   - notification: `deliver/completed`（非同期、at-least-once）
+  - `deliver/enqueue` request（`DeliverEnqueueRequest`）
+    - 必須: `messageId`, `dedupeKey`, `target`, `payload`, `attempt`, `maxAttempts`
+    - 任意: `notBefore`
+  - `deliver/enqueue` response（`DeliverEnqueueResponse`）
+    - `messageId`, `status=accepted`, `acceptedAt`
+  - `deliver/completed` notification（`DeliverCompletedNotification`）
+    - 必須: `messageId`, `status(completed|failed)`, `finishedAt`
+    - 任意: `error`（失敗時の概要）
+  - 型定義の正本: `src/contracts/process-rpc/method-types.ts`, `src/contracts/process-rpc/rpc-types.ts`
+  - 契約テストの正本: `tests/contract/process-rpc/process-rpc-validation.test.ts`
 - HTTP API（control-plane）
   - `POST /api/commands`
   - `GET /api/snapshot`
@@ -707,8 +727,19 @@ data: {"runId":"session:sess_xxx:run:1","update":{"sessionUpdate":"agent_message
 - control-plane は起動時に `control-plane.inbox` cursor 以降の未処理 `collector/ingest` レコードを replay し、run 実行導線へ再投入する。
 - `collector/ingest` 起点の cursor commit は run の terminal（`completed|failed|cancelled`）でのみ進め、`accepted` 時点では進めない。
 - `collector/ingest` の `payload` は `NormalizedEvent`（`source=slack`）を正本とする。
+- deliver queue 永続化の正本:
+  - journal: `state/journal/control-plane/deliver-queue.jsonl`
+  - cursor: `state/cursor/control-plane.deliver-queue.json`
+  - レコードは enqueue request を含む append-only JSONL とし、terminal 確定で cursor を commit する。
 - `deliver/completed` の冪等更新は `messageId` を主キーとする。
 - `completed` と `failed` が競合した場合、`completed` を最終状態として優先する。
+- deliver completion 永続化の正本:
+  - snapshot: `state/cursor/control-plane.deliver-completion.snapshot.json`
+  - `messageId -> terminal state` の写像を保持し、再起動後の duplicate/out-of-order completion を吸収する。
+- command/ingest idempotency 永続化の正本:
+  - journal: `state/journal/control-plane/idempotency.jsonl`
+  - snapshot: `state/cursor/control-plane.idempotency.snapshot.json`
+  - キーは `scope + logicalKey`（例: `command:sessionKey:idempotencyKey`, `ingest:dedupeKey`）で管理する。
 - backlog 運用指標は `ingest_backlog_count` と `oldest_ingest_age_seconds` を使用し、しきい値・一次対応は `doc/runbook/collector-backlog-monitoring.md` を正本とする。
 
 ### 14.7 Capability Gate 方針
@@ -722,9 +753,12 @@ data: {"runId":"session:sess_xxx:run:1","update":{"sessionUpdate":"agent_message
 
 ### 14.8 エラー分類と回復
 
-- 代表エラー: `UNSUPPORTED_CAPABILITY`, `ACP_PROTOCOL_ERROR`, `JOURNAL_APPEND_FAILED`, `WORKER_TIMEOUT`, `WORKER_CRASHED`, `DOWNSTREAM_ERROR`, `INVALID_RECORD`, `SESSION_BUSY`
+- 代表エラー: `UNSUPPORTED_CAPABILITY`, `ACP_PROTOCOL_ERROR`, `JOURNAL_APPEND_FAILED`, `WORKER_TIMEOUT`, `WORKER_CRASHED`, `DOWNSTREAM_ERROR`, `INVALID_RECORD`, `SESSION_BUSY`, `DELIVER_TIMEOUT`, `DELIVER_RETRY_EXHAUSTED`
 - worker 異常終了時は supervisor が再起動を試行し、構造化ログへ理由を記録する。
 - process 再起動時は journal + cursor から未処理のみ再開する。
+- deliver プロセス異常終了時は control-plane supervisor が再起動を試行し、`control-plane.deliver-queue` cursor 未満の未完了 enqueue を replay する。
+- restart 後の `/api/commands` duplicate/conflict 判定は idempotency journal/snapshot を復元して継続する。
+- restart 後の `collector/ingest` dedupe 判定は ingest dedupe store を復元し、canonical `messageId` の再利用を継続する。
 - collector 側障害（CDP 切断、ingest timeout、backlog 増加）は `doc/runbook/collector-backlog-monitoring.md` の一次対応に従う。
 - 運用ロールバック手順は `doc/runbook/phase-b-rollback.md` を正本とする。
 
