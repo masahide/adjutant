@@ -121,4 +121,5 @@
 Phase A-E は完了済み。次は Phase F（仕上げと安定化）へ進む。
 
 - 優先タスク: 設定整理、運用 runbook の磨き込み、CI 安定化、移植監査
+- 詳細計画: `doc/plan/260305-s03-phase-f-finish-and-stabilization.md`
 - 検証参照: `doc/plan/artifacts/260305-s02-phase-e-verification-report.md`

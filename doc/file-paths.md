@@ -81,12 +81,14 @@
 
 ### ハートビートランナーでの直接参照
 
-| パス                                   | R/W | 定義箇所                                |
-| -------------------------------------- | --- | --------------------------------------- |
-| `{cwd}/assistant/prompts/HEARTBEAT.md` | R   | `src/assistant/heartbeat-runner.ts:635` |
-| `{cwd}/assistant/prompts/SOUL.md`      | R   | `src/assistant/heartbeat-runner.ts:664` |
-| `{cwd}/assistant/prompts/USER.md`      | R   | `src/assistant/heartbeat-runner.ts:665` |
-| `{cwd}/assistant/prompts/AGENTS.md`    | R   | `src/assistant/heartbeat-runner.ts:668` |
+| パス                                   | R/W | 定義箇所                                             |
+| -------------------------------------- | --- | ---------------------------------------------------- |
+| `{cwd}/HEARTBEAT.md` (既定)            | R   | `src/index.ts:1507`                                  |
+| (任意パス)                             | R   | `src/index.ts:1507` (`ADJUTANT_HEARTBEAT_FILE_PATH`) |
+| `{cwd}/assistant/prompts/HEARTBEAT.md` | R   | `src/assistant/heartbeat-runner.ts:635`              |
+| `{cwd}/assistant/prompts/SOUL.md`      | R   | `src/assistant/heartbeat-runner.ts:664`              |
+| `{cwd}/assistant/prompts/USER.md`      | R   | `src/assistant/heartbeat-runner.ts:665`              |
+| `{cwd}/assistant/prompts/AGENTS.md`    | R   | `src/assistant/heartbeat-runner.ts:668`              |
 
 ## 7. セッション管理
 

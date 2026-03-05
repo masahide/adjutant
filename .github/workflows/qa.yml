@@ -23,6 +23,8 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Run QA suite
         run: pnpm run check
+      - name: Verify config/doc sync
+        run: pnpm run verify:config-doc-sync
 
   live-agent:
     runs-on: ubuntu-latest

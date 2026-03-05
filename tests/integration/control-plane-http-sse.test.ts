@@ -151,6 +151,14 @@ function parseRunId(runId: string): { sessionId: string; runSequence: number } {
   };
 }
 
+function parseBooleanFlag(value: string | undefined): boolean {
+  if (typeof value !== "string") {
+    return false;
+  }
+  const normalized = value.trim().toLowerCase();
+  return normalized === "1" || normalized === "true";
+}
+
 async function allocatePort(): Promise<number> {
   return await new Promise((resolve, reject) => {
     const server = createServer();
@@ -173,17 +181,40 @@ async function allocatePort(): Promise<number> {
   });
 }
 
-async function waitForHttpReady(baseUrl: string, timeoutMs = 30000): Promise<void> {
+async function waitForHttpReady(params: {
+  baseUrl: string;
+  child: ChildProcessWithoutNullStreams;
+  getSpawnError: () => Error | undefined;
+  timeoutMs?: number;
+}): Promise<void> {
+  const { baseUrl, child, getSpawnError, timeoutMs = 30000 } = params;
   const startedAt = Date.now();
 
   while (true) {
+    const spawnError = getSpawnError();
+    if (spawnError !== undefined) {
+      throw new Error(`control-plane spawn error: ${spawnError.message}`);
+    }
+    if (child.exitCode !== null || child.signalCode !== null) {
+      throw new Error(
+        `control-plane exited before bootstrap (exitCode=${child.exitCode ?? "null"}, signal=${child.signalCode ?? "null"})`
+      );
+    }
+
+    let requestTimeout: ReturnType<typeof setTimeout> | undefined;
     try {
-      const response = await fetch(`${baseUrl}/api/snapshot`);
+      const controller = new AbortController();
+      requestTimeout = setTimeout(() => controller.abort(), 800);
+      const response = await fetch(`${baseUrl}/api/snapshot`, { signal: controller.signal });
       if (response.ok) {
         return;
       }
     } catch {
       // retry until timeout
+    } finally {
+      if (requestTimeout !== undefined) {
+        clearTimeout(requestTimeout);
+      }
     }
     if (Date.now() - startedAt >= timeoutMs) {
       throw new Error("control-plane bootstrap timeout");
@@ -204,23 +235,40 @@ async function startControlPlane(options?: { env?: Record<string, string | undef
       ? requestedStateDir
       : await mkdtemp(join(tmpdir(), "adjutant-control-plane-http-sse-"));
 
+  const childEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    ...(options?.env ?? {}),
+    ADJUTANT_CONTROL_PLANE_HOST: "127.0.0.1",
+    ADJUTANT_CONTROL_PLANE_PORT: String(port),
+    ADJUTANT_UI_VITE_MIDDLEWARE: "0",
+    ADJUTANT_MARKDOWN_SUMMARY_BATCH_ENABLED: "0",
+    ADJUTANT_STATE_DIR: stateDir,
+  };
+  const noDockerTestMode = parseBooleanFlag(process.env.ADJUTANT_TEST_NO_DOCKER);
+  const explicitSandboxMode = options?.env?.ADJUTANT_SANDBOX_MODE?.trim();
+  if (noDockerTestMode && (explicitSandboxMode === undefined || explicitSandboxMode.length === 0)) {
+    childEnv.ADJUTANT_SANDBOX_MODE = "off";
+  }
+  const mockRunnerEnabled = parseBooleanFlag(childEnv.ADJUTANT_TEST_MOCK_RUNNER);
+  const explicitMockDelay = options?.env?.ADJUTANT_TEST_MOCK_DELAY_MS?.trim();
+  if (mockRunnerEnabled && (explicitMockDelay === undefined || explicitMockDelay.length === 0)) {
+    childEnv.ADJUTANT_TEST_MOCK_DELAY_MS = "0";
+  }
+
   const child = spawn(process.execPath, ["--import", "tsx", "src/index.ts"], {
     cwd: process.cwd(),
     stdio: ["pipe", "pipe", "pipe"],
-    env: {
-      ...process.env,
-      ...(options?.env ?? {}),
-      ADJUTANT_CONTROL_PLANE_HOST: "127.0.0.1",
-      ADJUTANT_CONTROL_PLANE_PORT: String(port),
-      ADJUTANT_UI_VITE_MIDDLEWARE: "0",
-      ADJUTANT_MARKDOWN_SUMMARY_BATCH_ENABLED: "0",
-      ADJUTANT_STATE_DIR: stateDir,
-    },
+    env: childEnv,
   });
 
   let logs = "";
+  let spawnError: Error | undefined;
   child.stdout.setEncoding("utf8");
   child.stderr.setEncoding("utf8");
+  child.once("error", (error) => {
+    spawnError = error instanceof Error ? error : new Error(String(error));
+    logs += `[control-plane-child-error] ${spawnError.message}\n`;
+  });
   child.stdout.on("data", (chunk) => {
     logs += chunk;
   });
@@ -229,13 +277,23 @@ async function startControlPlane(options?: { env?: Record<string, string | undef
   });
 
   try {
-    await waitForHttpReady(baseUrl);
+    await waitForHttpReady({
+      baseUrl,
+      child,
+      getSpawnError: () => spawnError,
+    });
   } catch (error) {
-    if (!child.killed) {
+    if (!child.killed && child.exitCode === null && child.signalCode === null) {
       child.kill("SIGTERM");
     }
+    const noDockerHint =
+      logs.includes("sandbox unavailable:") && !noDockerTestMode
+        ? "\nHint: Docker なし環境では ADJUTANT_TEST_NO_DOCKER=1 で integration test の sandbox を無効化できます。"
+        : "";
     throw new Error(
-      `failed to start control-plane: ${error instanceof Error ? error.message : String(error)}\n${logs}`
+      `failed to start control-plane: ${
+        error instanceof Error ? error.message : String(error)
+      }\n${logs}${noDockerHint}`
     );
   }
 
@@ -259,6 +317,97 @@ async function stopControlPlane(child: ChildProcessWithoutNullStreams): Promise<
       resolve();
     });
   });
+}
+
+type ControlPlaneRuntime = {
+  baseUrl: string;
+  child: ChildProcessWithoutNullStreams;
+};
+
+const sharedRuntimeByKey = new Map<string, ControlPlaneRuntime>();
+const sharedRuntimePromiseByKey = new Map<string, Promise<ControlPlaneRuntime>>();
+let sharedRuntimeTeardownRegistered = false;
+
+async function getOrStartSharedControlPlane(input: {
+  key: string;
+  env?: Record<string, string>;
+}): Promise<ControlPlaneRuntime> {
+  const active = sharedRuntimeByKey.get(input.key);
+  if (active !== undefined) {
+    return active;
+  }
+
+  const pending = sharedRuntimePromiseByKey.get(input.key);
+  if (pending !== undefined) {
+    return await pending;
+  }
+
+  const promise = (async () => {
+    const runtime = await startControlPlane({ env: input.env });
+    sharedRuntimeByKey.set(input.key, runtime);
+    if (!sharedRuntimeTeardownRegistered) {
+      sharedRuntimeTeardownRegistered = true;
+      nodeTest.after(async () => {
+        const stopPromises = [...sharedRuntimeByKey.values()].map(async (value) => {
+          await stopControlPlane(value.child);
+        });
+        await Promise.all(stopPromises);
+        sharedRuntimeByKey.clear();
+        sharedRuntimePromiseByKey.clear();
+      });
+    }
+    return runtime;
+  })();
+  sharedRuntimePromiseByKey.set(input.key, promise);
+
+  try {
+    return await promise;
+  } catch (error) {
+    sharedRuntimePromiseByKey.delete(input.key);
+    throw error;
+  }
+}
+
+async function getSharedDefaultControlPlane(): Promise<ControlPlaneRuntime> {
+  return await getOrStartSharedControlPlane({ key: "default" });
+}
+
+async function getSharedMockRunnerControlPlane(): Promise<ControlPlaneRuntime> {
+  return await getOrStartSharedControlPlane({
+    key: "mock-runner",
+    env: {
+      ADJUTANT_TEST_MOCK_RUNNER: "1",
+    },
+  });
+}
+
+async function getSharedFakeToolControlPlane(): Promise<ControlPlaneRuntime> {
+  return await getOrStartSharedControlPlane({
+    key: "fake-tool",
+    env: {
+      ADJUTANT_TEST_FAKE_TOOL_CALLS: "1",
+    },
+  });
+}
+
+async function waitForRunCompleted(
+  baseUrl: string,
+  runId: string,
+  timeoutMs = 8000
+): Promise<void> {
+  const startedAt = Date.now();
+  while (true) {
+    const snapshotRes = await fetch(`${baseUrl}/api/snapshot`);
+    assert.equal(snapshotRes.status, 200);
+    const snapshot = (await snapshotRes.json()) as SnapshotResponse;
+    if (snapshot.runs.some((entry) => entry.runId === runId && entry.status === "completed")) {
+      return;
+    }
+    if (Date.now() - startedAt > timeoutMs) {
+      throw new Error(`run completion timeout: ${runId}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
 }
 
 async function openSsePath(baseUrl: string, path: string): Promise<SseConnection> {
@@ -330,11 +479,8 @@ async function openSse(baseUrl: string): Promise<SseConnection> {
 test(
   "control-plane startup launches HTTP listen and worker path",
   DEFAULT_TEST_TIMEOUT_SECONDS,
-  async (t) => {
-    const runtime = await startControlPlane();
-    t.after(async () => {
-      await stopControlPlane(runtime.child);
-    });
+  async () => {
+    const runtime = await getSharedDefaultControlPlane();
 
     const rootRes = await fetch(`${runtime.baseUrl}/`);
     assert.equal(rootRes.status, 200);
@@ -362,6 +508,7 @@ test(
     assert.equal(accepted.status, "accepted");
     assert.equal(typeof accepted.runId, "string");
     assert.ok(accepted.runId.length > 0);
+    await waitForRunCompleted(runtime.baseUrl, accepted.runId);
   }
 );
 
@@ -369,11 +516,7 @@ test(
   "POST /api/commands emits accepted -> update -> completed over SSE",
   DEFAULT_TEST_TIMEOUT_SECONDS,
   async (t) => {
-    const runtime = await startControlPlane();
-    t.after(async () => {
-      await stopControlPlane(runtime.child);
-    });
-
+    const runtime = await getSharedDefaultControlPlane();
     const sse = await openSse(runtime.baseUrl);
     t.after(() => {
       sse.close();
@@ -499,7 +642,7 @@ test(
       await rm(stateDir, { recursive: true, force: true });
     });
 
-    const env = {
+    const baseEnv = {
       ADJUTANT_STATE_DIR: stateDir,
       ADJUTANT_COLLECTOR_SLACK_ENABLED: "1",
       ADJUTANT_COLLECTOR_SLACK_ENTRY:
@@ -507,41 +650,84 @@ test(
       ADJUTANT_TEST_COLLECTOR_DELAY_MS: "1200",
       ADJUTANT_TEST_MOCK_RUNNER: "1",
       ADJUTANT_TEST_MOCK_TEXT: "collector-dedupe-restart",
-      ADJUTANT_TEST_MOCK_DELAY_MS: "800",
     };
 
-    const runtime1 = await startControlPlane({ env });
-    const sse1 = await openSse(runtime1.baseUrl);
-    const acceptedEvent = await sse1.waitFor(
-      (event) =>
-        event.event === "run/accepted" &&
-        typeof event.data.runId === "string" &&
-        event.data.runId.startsWith("session:")
-    );
-    const firstRunId = String(acceptedEvent.data.runId);
-    await sse1.waitFor(
-      (event) => event.event === "run/completed" && event.data.runId === firstRunId
-    );
-    sse1.close();
+    const runtime1AckPath = join(stateDir, "runtime1.collector-ingest-ack.json");
+    const runtime1 = await startControlPlane({
+      env: {
+        ...baseEnv,
+        ADJUTANT_TEST_COLLECTOR_RESPONSE_ACK_PATH: runtime1AckPath,
+      },
+    });
+
+    const runtime1StartedAt = Date.now();
+    let firstRunId: string | undefined;
+    while (true) {
+      const snapshotRes = await fetch(`${runtime1.baseUrl}/api/snapshot`);
+      assert.equal(snapshotRes.status, 200);
+      const snapshot = (await snapshotRes.json()) as SnapshotResponse;
+      const completed = snapshot.runs.find(
+        (run) => run.status === "completed" && typeof run.runId === "string"
+      );
+      if (completed !== undefined) {
+        firstRunId = completed.runId;
+        break;
+      }
+      if (Date.now() - runtime1StartedAt >= 10_000) {
+        throw new Error("collector ingest first run completion timeout");
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+
+    if (firstRunId === undefined) {
+      throw new Error("missing first runId");
+    }
+
     await stopControlPlane(runtime1.child);
 
-    const runtime2 = await startControlPlane({ env });
+    const runtime2AckPath = join(stateDir, "runtime2.collector-ingest-ack.json");
+    const runtime2 = await startControlPlane({
+      env: {
+        ...baseEnv,
+        ADJUTANT_TEST_COLLECTOR_RESPONSE_ACK_PATH: runtime2AckPath,
+      },
+    });
     t.after(async () => {
       await stopControlPlane(runtime2.child);
     });
-    const sse2 = await openSse(runtime2.baseUrl);
-    t.after(() => {
-      sse2.close();
-    });
 
-    await new Promise((resolve) => setTimeout(resolve, 3500));
+    const runtime2StartedAt = Date.now();
+    while (true) {
+      try {
+        const rawAck = await readFile(runtime2AckPath, "utf8");
+        const ack = JSON.parse(rawAck) as {
+          id?: string;
+          status?: string;
+          hasError?: boolean;
+          messageId?: string;
+        };
+        assert.equal(ack.id, "ing_fixture_1");
+        assert.equal(ack.hasError, false);
+        assert.equal(ack.status, "accepted");
+        assert.equal(ack.messageId, "msg_collector_fixture_1");
+        break;
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code !== "ENOENT") {
+          throw error;
+        }
+      }
+      if (Date.now() - runtime2StartedAt >= 8_000) {
+        throw new Error("collector ingest restart ack timeout");
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
 
-    const acceptedAfterRestart = sse2.events.filter((event) => {
-      return (
-        event.event === "run/accepted" &&
-        typeof event.data.runId === "string" &&
-        event.data.runId !== firstRunId
-      );
+    const snapshotAfterRestartRes = await fetch(`${runtime2.baseUrl}/api/snapshot`);
+    assert.equal(snapshotAfterRestartRes.status, 200);
+    const snapshotAfterRestart = (await snapshotAfterRestartRes.json()) as SnapshotResponse;
+    const acceptedAfterRestart = snapshotAfterRestart.runs.filter((run) => {
+      return typeof run.runId === "string" && run.runId !== firstRunId;
     });
     assert.equal(acceptedAfterRestart.length, 0);
 
@@ -745,38 +931,44 @@ test(
     });
 
     const startedAt = Date.now();
+    let lastHasCompleted = false;
+    let lastCursorOffset: number | undefined;
 
     while (true) {
       const snapshotRes = await fetch(`${runtime.baseUrl}/api/snapshot`);
       assert.equal(snapshotRes.status, 200);
       const snapshot = (await snapshotRes.json()) as SnapshotResponse;
       const hasCompleted = snapshot.runs.some((run) => run.status === "completed");
-      if (hasCompleted) {
+
+      const cursor = JSON.parse(
+        await readFile(join(cursorDir, "control-plane.inbox.json"), "utf8")
+      ) as {
+        offset?: number;
+      };
+      const cursorOffset = cursor.offset;
+
+      lastHasCompleted = hasCompleted;
+      lastCursorOffset = cursorOffset;
+      if (hasCompleted && cursorOffset === 1) {
         break;
       }
       if (Date.now() - startedAt >= 10_000) {
-        throw new Error("ingest replay completion timeout");
+        throw new Error(
+          `ingest replay completion timeout (hasCompleted=${lastHasCompleted}, cursorOffset=${
+            lastCursorOffset ?? "undefined"
+          })`
+        );
       }
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
-
-    const cursor = JSON.parse(
-      await readFile(join(cursorDir, "control-plane.inbox.json"), "utf8")
-    ) as {
-      offset?: number;
-    };
-    assert.equal(cursor.offset, 1);
   }
 );
 
 test(
   "POST /api/commands dedupes same idempotencyKey and rejects conflicting payload",
   DEFAULT_TEST_TIMEOUT_SECONDS,
-  async (t) => {
-    const runtime = await startControlPlane();
-    t.after(async () => {
-      await stopControlPlane(runtime.child);
-    });
+  async () => {
+    const runtime = await getSharedDefaultControlPlane();
 
     const firstRes = await fetch(`${runtime.baseUrl}/api/commands`, {
       method: "POST",
@@ -903,11 +1095,8 @@ test(
 test(
   "POST /api/chat/messages validates request and returns accepted subset",
   DEFAULT_TEST_TIMEOUT_SECONDS,
-  async (t) => {
-    const runtime = await startControlPlane();
-    t.after(async () => {
-      await stopControlPlane(runtime.child);
-    });
+  async () => {
+    const runtime = await getSharedDefaultControlPlane();
 
     const invalidRes = await fetch(`${runtime.baseUrl}/api/chat/messages`, {
       method: "POST",
@@ -930,6 +1119,7 @@ test(
     assert.equal(accepted.status, "accepted");
     assert.equal(typeof accepted.runId, "string");
     assert.equal("messageId" in accepted, false);
+    await waitForRunCompleted(runtime.baseUrl, String(accepted.runId));
   }
 );
 
@@ -1023,11 +1213,8 @@ test(
 test(
   "POST /api/chat/messages supports idempotency dedupe and conflict",
   DEFAULT_TEST_TIMEOUT_SECONDS,
-  async (t) => {
-    const runtime = await startControlPlane();
-    t.after(async () => {
-      await stopControlPlane(runtime.child);
-    });
+  async () => {
+    const runtime = await getSharedDefaultControlPlane();
 
     const firstRes = await fetch(`${runtime.baseUrl}/api/chat/messages`, {
       method: "POST",
@@ -1066,6 +1253,7 @@ test(
     assert.equal(conflictRes.status, 409);
     const conflict = (await conflictRes.json()) as { code?: string };
     assert.equal(conflict.code, "INVALID_REQUEST");
+    await waitForRunCompleted(runtime.baseUrl, first.runId);
   }
 );
 
@@ -1073,17 +1261,7 @@ test(
   "GET /api/chat/runs/{runId}/stream provides chat SSE and seq replay",
   DEFAULT_TEST_TIMEOUT_SECONDS,
   async (t) => {
-    const runtime = await startControlPlane({
-      env: {
-        ADJUTANT_TEST_MOCK_RUNNER: "1",
-        ADJUTANT_TEST_MOCK_DELTA: "stream-delta",
-        ADJUTANT_TEST_MOCK_TEXT: "stream-final",
-        ADJUTANT_TEST_MOCK_STOP_REASON: "end_turn",
-      },
-    });
-    t.after(async () => {
-      await stopControlPlane(runtime.child);
-    });
+    const runtime = await getSharedMockRunnerControlPlane();
 
     const commandRes = await fetch(`${runtime.baseUrl}/api/chat/messages`, {
       method: "POST",
@@ -1154,16 +1332,7 @@ test(
   "GET /api/chat/history validates sessionKey and returns messages",
   DEFAULT_TEST_TIMEOUT_SECONDS,
   async (t) => {
-    const runtime = await startControlPlane({
-      env: {
-        ADJUTANT_TEST_MOCK_RUNNER: "1",
-        ADJUTANT_TEST_MOCK_DELTA: "h-delta",
-        ADJUTANT_TEST_MOCK_TEXT: "h-final",
-      },
-    });
-    t.after(async () => {
-      await stopControlPlane(runtime.child);
-    });
+    const runtime = await getSharedMockRunnerControlPlane();
 
     const commandRes = await fetch(`${runtime.baseUrl}/api/chat/messages`, {
       method: "POST",
@@ -1266,11 +1435,8 @@ test(
 test(
   "POST/GET/PATCH/DELETE /api/threads works and PATCH rejects forbidden fields",
   DEFAULT_TEST_TIMEOUT_SECONDS,
-  async (t) => {
-    const runtime = await startControlPlane();
-    t.after(async () => {
-      await stopControlPlane(runtime.child);
-    });
+  async () => {
+    const runtime = await getSharedDefaultControlPlane();
 
     const createRes = await fetch(`${runtime.baseUrl}/api/threads`, {
       method: "POST",
@@ -1346,16 +1512,7 @@ test(
   "thread 切替時に chat history が thread 単位で分離される",
   DEFAULT_TEST_TIMEOUT_SECONDS,
   async (t) => {
-    const runtime = await startControlPlane({
-      env: {
-        ADJUTANT_TEST_MOCK_RUNNER: "1",
-        ADJUTANT_TEST_MOCK_DELTA: "switch-delta",
-        ADJUTANT_TEST_MOCK_TEXT: "switch-final",
-      },
-    });
-    t.after(async () => {
-      await stopControlPlane(runtime.child);
-    });
+    const runtime = await getSharedMockRunnerControlPlane();
 
     const createRes = await fetch(`${runtime.baseUrl}/api/threads`, {
       method: "POST",
@@ -1436,16 +1593,7 @@ test(
 );
 
 test("マルチスレッド E2E: A/B 分離と再読込後の復元", DEFAULT_TEST_TIMEOUT_SECONDS, async (t) => {
-  const runtime = await startControlPlane({
-    env: {
-      ADJUTANT_TEST_MOCK_RUNNER: "1",
-      ADJUTANT_TEST_MOCK_DELTA: "multi-delta",
-      ADJUTANT_TEST_MOCK_TEXT: "multi-final",
-    },
-  });
-  t.after(async () => {
-    await stopControlPlane(runtime.child);
-  });
+  const runtime = await getSharedMockRunnerControlPlane();
 
   const createARes = await fetch(`${runtime.baseUrl}/api/threads`, {
     method: "POST",
@@ -1585,14 +1733,7 @@ test(
   "GET /api/threads/:threadId/snapshot returns run/tool history scoped by thread",
   DEFAULT_TEST_TIMEOUT_SECONDS,
   async (t) => {
-    const runtime = await startControlPlane({
-      env: {
-        ADJUTANT_TEST_FAKE_TOOL_CALLS: "1",
-      },
-    });
-    t.after(async () => {
-      await stopControlPlane(runtime.child);
-    });
+    const runtime = await getSharedFakeToolControlPlane();
 
     const createRes = await fetch(`${runtime.baseUrl}/api/threads`, {
       method: "POST",
@@ -1688,12 +1829,8 @@ test(
 test(
   "POST /api/chat/abort returns 404 for unknown active run",
   DEFAULT_TEST_TIMEOUT_SECONDS,
-  async (t) => {
-    const runtime = await startControlPlane();
-    t.after(async () => {
-      await stopControlPlane(runtime.child);
-    });
-
+  async () => {
+    const runtime = await getSharedDefaultControlPlane();
     const res = await fetch(`${runtime.baseUrl}/api/chat/abort`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -1788,14 +1925,7 @@ test(
   "tool_call updates are reflected in SSE and snapshot history",
   DEFAULT_TEST_TIMEOUT_SECONDS,
   async (t) => {
-    const runtime = await startControlPlane({
-      env: {
-        ADJUTANT_TEST_FAKE_TOOL_CALLS: "1",
-      },
-    });
-    t.after(async () => {
-      await stopControlPlane(runtime.child);
-    });
+    const runtime = await getSharedFakeToolControlPlane();
 
     const sse = await openSse(runtime.baseUrl);
     t.after(() => {
@@ -2102,7 +2232,7 @@ test(
         audit = candidate;
         break;
       }
-      if (Date.now() - startedAt >= 8_000) {
+      if (Date.now() - startedAt >= 2_000) {
         audit = candidate;
         break;
       }
@@ -2137,11 +2267,7 @@ test(
   "existing API endpoints remain compatible after tool I/O extension",
   DEFAULT_TEST_TIMEOUT_SECONDS,
   async (t) => {
-    const runtime = await startControlPlane();
-    t.after(async () => {
-      await stopControlPlane(runtime.child);
-    });
-
+    const runtime = await getSharedDefaultControlPlane();
     const sse = await openSse(runtime.baseUrl);
     t.after(() => {
       sse.close();

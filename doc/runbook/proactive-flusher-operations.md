@@ -4,6 +4,15 @@
 
 `pending flusher` が stale session を再回収できない、または過剰に回収する障害を検知し、`timeline/watermarks` の整合を保ったまま復旧する。
 
+## 1.1 仕様参照
+
+- `doc/spec.md` 13.2（control-plane 責務: proactive）
+- `doc/spec.md` 14.6（Journal / Cursor / 冪等規約）
+- `doc/spec.md` 14.8（エラー分類と回復）
+- 主対象永続化:
+  - `state/timeline.jsonl`
+  - `state/watermarks.json`
+
 ## 2. 監視指標
 
 - `flusher_tick_duration_ms`

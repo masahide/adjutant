@@ -4,6 +4,14 @@
 
 定期 heartbeat と手動 heartbeat（`POST /api/heartbeat/run`）の失敗検知、復旧、通知品質の維持を行う。
 
+## 1.1 仕様参照
+
+- `doc/spec.md` 13.3（control-plane 責務: heartbeat）
+- `doc/spec.md` 14.5（ACP / Process RPC 境界契約）
+- `doc/spec.md` 14.8（エラー分類と回復）
+- 主対象永続化:
+  - `state/heartbeat-runs.jsonl`
+
 ## 2. 監視対象
 
 - `heartbeat_runs_total{status}`

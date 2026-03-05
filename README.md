@@ -54,6 +54,8 @@ pnpm run typecheck
 pnpm run lint
 pnpm run format
 pnpm run test
+pnpm run test:no-docker     # Docker なし環境向け（integration の sandbox を無効化）
+pnpm run verify:config-doc-sync
 pnpm check               # format -> typecheck -> test
 ```
 
@@ -82,9 +84,14 @@ pnpm check               # format -> typecheck -> test
 | `ADJUTANT_RAW_FETCH_LOG`                       | `0`                                                  | `raw_fetch` デバッグイベントを JSONL へ保存（内部 fetch hook も有効化） |
 | `ADJUTANT_RAW_FETCH_LOG_PATH`                  | `<dataDir>/_debug/raw-fetch.jsonl`                   | `raw_fetch` イベントの出力先                                            |
 | `ADJUTANT_RAW_FETCH_LOG_MAX_PAYLOAD_CHARS`     | `0`                                                  | payload を文字列化して上限超過時に切り詰め (`0` は無制限)               |
-| `ADJUTANT_API_PORT`                            | `3100`                                               | AI アシスタント API サーバーのポート                                    |
-| `ADJUTANT_API_HOST`                            | `127.0.0.1`                                          | AI アシスタント API サーバーのバインドアドレス                          |
+| `ADJUTANT_CONTROL_PLANE_PORT`                  | `3100`                                               | control-plane API サーバーのポート                                      |
+| `ADJUTANT_CONTROL_PLANE_HOST`                  | `127.0.0.1`                                          | control-plane API サーバーのバインドアドレス                            |
 | `ADJUTANT_VITE_PORT`                           | `5173`                                               | AI アシスタント Web UI（Vite）のポート                                  |
+| `ADJUTANT_DELIVER_SLACK_ENABLED`               | `0`                                                  | `deliver-slack` 子プロセス起動フラグ                                    |
+| `ADJUTANT_DELIVER_SLACK_ENTRY`                 | `src/deliver-slack/stdio-server.ts`                  | `deliver-slack` エントリポイント                                        |
+| `ADJUTANT_DELIVER_SLACK_AUTO_COMPLETE`         | `1`                                                  | `deliver/enqueue` 受理後に `deliver/completed` を自動通知する           |
+| `ADJUTANT_DELIVER_SLACK_COMPLETION_DELAY_MS`   | `5`                                                  | 自動 completion 通知までの遅延（ミリ秒）                                |
+| `ADJUTANT_DELIVER_SLACK_SIMULATE_FAILURE`      | `0`                                                  | 自動 completion を `failed` 扱いで通知する（テスト/障害注入用）         |
 | `ADJUTANT_WORKSPACE_DIR`                       | `<stateDir>/workspace`                               | アシスタントのワークスペースディレクトリ                                |
 | `ADJUTANT_STATE_DIR`                           | `~/.adjutant`                                        | アシスタント state ルート（session transcript / watermark など）        |
 | `ADJUTANT_SESSION_AGENT_ID`                    | `main`                                               | session 保存先を切る agent ID                                           |
@@ -94,6 +101,14 @@ pnpm check               # format -> typecheck -> test
 | `ADJUTANT_MARKDOWN_SUMMARY_BATCH_INTERVAL_MS`  | `3600000`                                            | 要約バッチ実行間隔（ミリ秒）                                            |
 | `ADJUTANT_MARKDOWN_SUMMARY_BATCH_MESSAGES`     | `15`                                                 | 1セッションから採用する末尾メッセージ数                                 |
 | `ADJUTANT_MARKDOWN_SUMMARY_BATCH_MAX_SESSIONS` | `200`                                                | 1 tick あたり最大処理セッション数                                       |
+| `ADJUTANT_MARKDOWN_SUMMARY_BATCH_TIMEZONE`     | `UTC`                                                | summary batch の集計タイムゾーン                                        |
+| `ADJUTANT_FLUSHER_ENABLED`                     | `1`                                                  | pending flusher の有効化                                                |
+| `ADJUTANT_FLUSHER_INTERVAL_MS`                 | `60000`                                              | pending flusher 実行間隔（ミリ秒）                                      |
+| `ADJUTANT_FLUSHER_STALE_MS`                    | `900000`                                             | stale open post 判定閾値（ミリ秒）                                      |
+| `ADJUTANT_HEARTBEAT_ENABLED`                   | `1`                                                  | heartbeat 定期実行の有効化                                              |
+| `ADJUTANT_HEARTBEAT_INTERVAL_MS`               | `1800000`                                            | heartbeat 実行間隔（ミリ秒）                                            |
+| `ADJUTANT_HEARTBEAT_TIMEOUT_MS`                | `30000`                                              | heartbeat run のタイムアウト（ミリ秒）                                  |
+| `ADJUTANT_HEARTBEAT_FILE_PATH`                 | `<cwd>/HEARTBEAT.md`                                 | heartbeat prompt の読み込みパス                                         |
 | `ADJUTANT_ROUTE_LLM_ENABLED`                   | `0`                                                  | Slack通知の一次判定に OpenAI route LLM を使うかどうか                   |
 | `ADJUTANT_ROUTE_LLM_MODEL`                     | `gpt-5-mini`                                         | route LLM に使用する OpenAI モデル名                                    |
 | `ADJUTANT_ROUTE_LLM_TIMEOUT_MS`                | `1000`                                               | route LLM 判定のタイムアウト（ミリ秒）                                  |

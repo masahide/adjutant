@@ -4,6 +4,15 @@
 
 `deliver/enqueue` 受理後に `deliver/completed` が返らない、または deliver 子プロセスが異常終了した場合に、queue/cursor の整合性を保ったまま復旧する。
 
+## 1.1 仕様参照
+
+- `doc/spec.md` 14.6（Journal / Cursor / 冪等規約）
+- `doc/spec.md` 14.8（エラー分類と回復）
+- 主対象永続化:
+  - `state/journal/control-plane/deliver-queue.jsonl`
+  - `state/cursor/control-plane.deliver-queue.json`
+  - `state/cursor/control-plane.deliver-completion.snapshot.json`
+
 ## 2. 監視対象
 
 - プロセスログ

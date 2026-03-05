@@ -330,8 +330,21 @@ flowchart LR
 | `ADJUTANT_GLOBAL_DM_BURST_SLOT`               | `1`                                   | DM burst slot                                   |
 | `ADJUTANT_GLOBAL_MAX_RUNNING_DM`              | `3`                                   | DM 同時実行上限                                 |
 | `ADJUTANT_GLOBAL_STARVATION_MS`               | `120000`                              | starvation 昇格閾値                             |
-| `ADJUTANT_FLUSHER_INTERVAL_MS`                | `300000`                              | Pending Flusher 周期                            |
+| `ADJUTANT_MARKDOWN_SUMMARY_BATCH_TIMEZONE`    | `UTC`                                 | summary batch の集計タイムゾーン                |
+| `ADJUTANT_CONTROL_PLANE_HOST`                 | `127.0.0.1`                           | control-plane API bind host                     |
+| `ADJUTANT_CONTROL_PLANE_PORT`                 | `3100`                                | control-plane API bind port                     |
+| `ADJUTANT_DELIVER_SLACK_ENABLED`              | `false`                               | deliver-slack child process を起動するか        |
+| `ADJUTANT_DELIVER_SLACK_ENTRY`                | `src/deliver-slack/stdio-server.ts`   | deliver-slack entrypoint                        |
+| `ADJUTANT_DELIVER_SLACK_AUTO_COMPLETE`        | `true`                                | enqueue 後に completion 通知を自動送信するか    |
+| `ADJUTANT_DELIVER_SLACK_COMPLETION_DELAY_MS`  | `5`                                   | 自動 completion 通知までの遅延（ms）            |
+| `ADJUTANT_DELIVER_SLACK_SIMULATE_FAILURE`     | `false`                               | 自動 completion を failed 扱いにするか          |
+| `ADJUTANT_FLUSHER_ENABLED`                    | `true`                                | Pending Flusher を有効化するか                  |
+| `ADJUTANT_FLUSHER_INTERVAL_MS`                | `60000`                               | Pending Flusher 周期                            |
 | `ADJUTANT_FLUSHER_STALE_MS`                   | `900000`                              | stale open post 判定閾値                        |
+| `ADJUTANT_HEARTBEAT_ENABLED`                  | `true`                                | heartbeat periodic tick を有効化するか          |
+| `ADJUTANT_HEARTBEAT_INTERVAL_MS`              | `1800000`                             | heartbeat periodic tick 間隔（ms）              |
+| `ADJUTANT_HEARTBEAT_TIMEOUT_MS`               | `30000`                               | heartbeat run timeout（ms）                     |
+| `ADJUTANT_HEARTBEAT_FILE_PATH`                | `<cwd>/HEARTBEAT.md`                  | heartbeat prompt 読み込み先                     |
 | `ADJUTANT_COMPACTION_ENABLED`                 | `true`                                | overflow 時 compaction 優先                     |
 | `ADJUTANT_MEMORY_FLUSH_ENABLED`               | `true`                                | pre-compaction flush 有効化                     |
 | `ADJUTANT_COMPACTION_RESERVE_TOKENS_FLOOR`    | `20000`                               | flush 閾値計算の reserve                        |
