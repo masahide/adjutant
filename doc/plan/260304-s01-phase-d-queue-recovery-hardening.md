@@ -328,43 +328,44 @@ sequenceDiagram
 - [x] `Task-DA-GREEN-001` Impl: `ProcessRpcServer` の `deliver/enqueue` 実装（`METHOD_NOT_SUPPORTED` 解除）
 - [x] `Task-DA-GREEN-002` Impl: `deliver-slack` 子プロセス + `DeliverSupervisor` 実装
 - [x] `Task-DA-GREEN-003` Impl: `DeliverQueueStore`（journal/cursor）実装
-- [ ] `Task-DA-REFACTOR-001` Refactor: supervisor/queue/completion の責務分離
-- [ ] `Task-DA-INTEG-001` Integration: enqueue -> completed の縦切り E2E
-- [ ] `Task-DA-DOCS-001` Docs: deliver 経路と運用手順を `spec` / runbook へ反映
+- [x] `Task-DA-REFACTOR-001` Refactor: supervisor/queue/completion の責務分離
+- [x] `Task-DA-INTEG-001` Integration: enqueue -> completed の縦切り E2E
+- [x] `Task-DA-DOCS-001` Docs: deliver 経路と運用手順を `spec` / runbook へ反映
 
 ### Phase 3 機能Bの実装（idempotency/recovery hardening）
 
-- [ ] `Task-DB-RED-001` Test: `/api/commands` idempotency の restart 跨ぎ duplicate/conflict テスト作成
-- [ ] `Task-DB-RED-002` Test: `collector/ingest` dedupeKey の restart 跨ぎ canonical 維持テスト作成
-- [ ] `Task-DB-RED-003` Test: restart 時 queue replay で未完了のみ再処理される失敗テスト作成
-- [ ] `Task-DB-GREEN-001` Impl: `IdempotencyStore` 永続化（command scope + ingest scope）
-- [ ] `Task-DB-GREEN-002` Impl: startup replay 統合（deliver queue / idempotency / completion）
-- [ ] `Task-DB-REFACTOR-001` Refactor: replay 初期化フローの共通化
-- [ ] `Task-DB-INTEG-001` Integration: crash/restart シナリオ統合テスト
-- [ ] `Task-DB-CONTRACT-001` Contract: エラー契約（409 conflict など）の固定化
+- [x] `Task-DB-RED-001` Test: `/api/commands` idempotency の restart 跨ぎ duplicate/conflict テスト作成
+- [x] `Task-DB-RED-002` Test: `collector/ingest` dedupeKey の restart 跨ぎ canonical 維持テスト作成
+- [x] `Task-DB-RED-003` Test: restart 時 queue replay で未完了のみ再処理される失敗テスト作成
+- [x] `Task-DB-GREEN-001` Impl: `IdempotencyStore` 永続化（command scope + ingest scope）
+- [x] `Task-DB-GREEN-002` Impl: startup replay 統合（deliver queue / idempotency / completion）
+- [x] `Task-DB-REFACTOR-001` Refactor: replay 初期化フローの共通化
+- [x] `Task-DB-INTEG-001` Integration: crash/restart シナリオ統合テスト
+- [x] `Task-DB-CONTRACT-001` Contract: エラー契約（409 conflict など）の固定化
 
 ### Phase 4 統合と検証
 
-- [ ] `Task-D-VERIFY-001` `pnpm check` 実行
-- [ ] `Task-D-VERIFY-002` 再起動復旧シナリオ（worker crash / deliver crash / timeout）検証
-- [ ] `Task-D-VERIFY-003` 重複通知・順序逆転・再送のエッジケース検証
-- [ ] `Task-D-VERIFY-004` ログ/例外監査（PII混入、エラーコード、タイムアウト記録）
-- [ ] `Task-D-VERIFY-005` ドキュメント更新（仕様・契約・図・runbook）
+- [x] `Task-D-VERIFY-001` `pnpm check` 実行
+- [x] `Task-D-VERIFY-002` 再起動復旧シナリオ（worker crash / deliver crash / timeout）検証
+- [x] `Task-D-VERIFY-003` 重複通知・順序逆転・再送のエッジケース検証
+- [x] `Task-D-VERIFY-004` ログ/例外監査（PII混入、エラーコード、タイムアウト記録）
+- [x] `Task-D-VERIFY-005` ドキュメント更新（仕様・契約・図・runbook）
+- [x] Verification artifact: `doc/plan/artifacts/260305-s01-phase-d-verification-report.md`
 
 ## 8. 完了の定義 Definition of Done
 
 ### 8.1 機能DoD Functional DoD
 
-- [ ] 受け入れ条件がすべて満たされていること
-- [ ] deliver queue/recovery が再起動を跨いで一貫動作すること
-- [ ] idempotency と completion の冪等契約が restart 前後で維持されること
+- [x] 受け入れ条件がすべて満たされていること
+- [x] deliver queue/recovery が再起動を跨いで一貫動作すること
+- [x] idempotency と completion の冪等契約が restart 前後で維持されること
 
 ### 8.2 品質DoD Quality DoD
 
-- [ ] 全てのテストがパスしていること
-- [ ] Linter Formatter のエラーがないこと
-- [ ] 不要なデバッグコードが削除されていること
-- [ ] 主要な変更点がドキュメントに反映されていること
+- [x] 全てのテストがパスしていること
+- [x] Linter Formatter のエラーがないこと
+- [x] 不要なデバッグコードが削除されていること
+- [x] 主要な変更点がドキュメントに反映されていること
 
 ## 9. 懸念事項と未確定事項 Concerns and Questions
 

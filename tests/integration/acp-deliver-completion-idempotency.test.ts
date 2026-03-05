@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import { DeliverCompletionStore } from "../../src/control-plane/deliver-completion-store.js";
@@ -89,4 +92,24 @@ test("deliver completion store keeps completed terminal even if failed is retrie
   assert.equal(failedRetry.applied, false);
   assert.equal(failedRetry.final.status, "completed");
   assert.equal(store.get("msg_4")?.status, "completed");
+});
+
+test("deliver completion store restores snapshot after restart", async (t) => {
+  const stateDir = await mkdtemp(join(tmpdir(), "adjutant-deliver-completion-"));
+  t.after(async () => {
+    await rm(stateDir, { recursive: true, force: true });
+  });
+
+  const store1 = DeliverCompletionStore.fromStateDir(stateDir);
+  await store1.initialize();
+  store1.apply({
+    messageId: "msg_snapshot_1",
+    status: "completed",
+    finishedAt: "2026-03-04T01:00:00.000Z",
+  });
+  await store1.persist();
+
+  const store2 = DeliverCompletionStore.fromStateDir(stateDir);
+  await store2.initialize();
+  assert.equal(store2.get("msg_snapshot_1")?.status, "completed");
 });

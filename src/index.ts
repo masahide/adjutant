@@ -42,12 +42,15 @@ import { ThreadRepository } from "./control-plane/http/thread-repository.js";
 import { writeStructuredLog } from "./control-plane/logging/structured-log.js";
 import { CollectorSupervisor } from "./control-plane/process-rpc/collector-supervisor.js";
 import { DeliverEnqueueHandler } from "./control-plane/process-rpc/deliver-handler.js";
+import { DeliverQueueCoordinator } from "./control-plane/process-rpc/deliver-queue-coordinator.js";
 import { DeliverQueueStore } from "./control-plane/process-rpc/deliver-queue-store.js";
 import { DeliverSupervisor } from "./control-plane/process-rpc/deliver-supervisor.js";
 import { CollectorIngestHandler } from "./control-plane/process-rpc/ingest-handler.js";
 import { IngestInboxStore } from "./control-plane/process-rpc/ingest-inbox-store.js";
 import type { IngestProjection } from "./control-plane/process-rpc/ingest-projection.js";
+import { replayPendingRecords } from "./control-plane/process-rpc/replay-runner.js";
 import { ProcessRpcServer } from "./control-plane/process-rpc/server.js";
+import { IdempotencyStore } from "./control-plane/idempotency-store.js";
 import type { Cursor } from "./runtime/journal-store.js";
 import { initializeSandboxRuntime } from "./sandbox/runtime.js";
 import { buildSnapshotResponse } from "./control-plane/http/snapshot-builder.js";
@@ -296,12 +299,33 @@ export async function main(): Promise<void> {
   const runEventBuffer = new RunEventBuffer({ retentionMs: 60_000 });
   const chatHistoryStore = ChatHistoryStore.fromStateDir(stateDir);
   await chatHistoryStore.initialize();
+  const idempotencyStore = IdempotencyStore.fromStateDir(stateDir, {
+    onWarn: (message, meta) => {
+      logControlPlane({
+        level: "warn",
+        event: "idempotency.warn",
+        message,
+        runId: null,
+        sessionKey: null,
+        toolCallId: null,
+        details: meta,
+      });
+    },
+  });
+  await idempotencyStore.initialize();
   const ingestInboxStore = IngestInboxStore.fromStateDir(stateDir);
   await ingestInboxStore.initialize();
   const deliverQueueStore = DeliverQueueStore.fromStateDir(stateDir);
   await deliverQueueStore.initialize();
-  const deliverCompletionStore = new DeliverCompletionStore();
-  const deliverCursorByMessageId = new Map<string, Cursor>();
+  const deliverCompletionStore = DeliverCompletionStore.fromStateDir(stateDir);
+  await deliverCompletionStore.initialize();
+  let deliverSupervisor: DeliverSupervisor | undefined;
+  const deliverQueueCoordinator = new DeliverQueueCoordinator({
+    queueStore: deliverQueueStore,
+    completionStore: deliverCompletionStore,
+    resolveDispatcher: () => deliverSupervisor,
+    dispatchTimeoutMs: 5_000,
+  });
   const sessionThreadCoordinator = new SessionThreadCoordinator({
     threadRepository,
     recoveryStore,
@@ -660,6 +684,7 @@ export async function main(): Promise<void> {
 
   const processRpcServer = new ProcessRpcServer({
     ingestHandler: new CollectorIngestHandler({
+      idempotencyStore,
       onAccept: async (projection, request) => {
         const cursor = await ingestInboxStore.append({
           request,
@@ -675,21 +700,7 @@ export async function main(): Promise<void> {
     }),
     deliverHandler: new DeliverEnqueueHandler({
       onAccept: async (request) => {
-        const cursor = await deliverQueueStore.append({
-          request,
-        });
-        deliverCursorByMessageId.set(request.messageId, cursor);
-        let dispatchStatus: "skipped" | "accepted" | "failed" = "skipped";
-        let dispatchMessage: string | undefined;
-        if (deliverSupervisor !== undefined) {
-          try {
-            await deliverSupervisor.enqueue(request, { timeoutMs: 5_000 });
-            dispatchStatus = "accepted";
-          } catch (error) {
-            dispatchStatus = "failed";
-            dispatchMessage = error instanceof Error ? error.message : String(error);
-          }
-        }
+        const dispatch = await deliverQueueCoordinator.accept(request);
         logControlPlane({
           event: "deliver.enqueue.accepted",
           runId: null,
@@ -700,10 +711,10 @@ export async function main(): Promise<void> {
           deliverTarget: request.target,
           attempt: request.attempt,
           maxAttempts: request.maxAttempts,
-          cursorSegment: cursor.segment,
-          cursorOffset: cursor.offset,
-          dispatchStatus,
-          dispatchMessage,
+          cursorSegment: dispatch.cursor.segment,
+          cursorOffset: dispatch.cursor.offset,
+          dispatchStatus: dispatch.dispatchStatus,
+          dispatchMessage: dispatch.dispatchMessage,
         });
       },
     }),
@@ -712,12 +723,8 @@ export async function main(): Promise<void> {
   const handleDeliverCompleted = async (
     notification: DeliverCompletedNotification
   ): Promise<void> => {
-    const applied = deliverCompletionStore.apply(notification);
-    const cursor = deliverCursorByMessageId.get(notification.messageId);
-    if (cursor !== undefined) {
-      await deliverQueueStore.commitThrough(cursor);
-      deliverCursorByMessageId.delete(notification.messageId);
-    }
+    const completion = await deliverQueueCoordinator.applyCompletion(notification);
+    await deliverCompletionStore.persist();
     logControlPlane({
       event: "deliver.completed.received",
       runId: null,
@@ -725,13 +732,64 @@ export async function main(): Promise<void> {
       toolCallId: null,
       deliverMessageId: notification.messageId,
       status: notification.status,
-      applied: applied.applied,
-      duplicate: applied.duplicate,
-      cursorCommitted: cursor !== undefined,
+      applied: completion.applied.applied,
+      duplicate: completion.applied.duplicate,
+      cursorCommitted: completion.cursorCommitted,
     });
   };
 
-  const deliverSupervisor = deliverConfig.deliverEnabled
+  const replayPendingDeliverQueue = async (): Promise<void> => {
+    await replayPendingRecords({
+      source: deliverQueueStore,
+      apply: async (replay) => {
+        const completed = deliverCompletionStore.get(replay.value.request.messageId);
+        if (completed !== undefined) {
+          await deliverQueueStore.commitThrough(replay.cursor);
+          logControlPlane({
+            event: "deliver.enqueue.replayed",
+            runId: null,
+            sessionKey: null,
+            toolCallId: null,
+            deliverMessageId: replay.value.request.messageId,
+            deliverDedupeKey: replay.value.request.dedupeKey,
+            deliverTarget: replay.value.request.target,
+            cursorSegment: replay.cursor.segment,
+            cursorOffset: replay.cursor.offset,
+            replaySkipped: "already_completed",
+          });
+          return;
+        }
+
+        deliverQueueCoordinator.trackCursor(replay.value.request.messageId, replay.cursor);
+        let dispatchStatus: "skipped" | "accepted" | "failed" = "skipped";
+        let dispatchMessage: string | undefined;
+        if (deliverSupervisor !== undefined) {
+          try {
+            await deliverSupervisor.enqueue(replay.value.request, { timeoutMs: 5_000 });
+            dispatchStatus = "accepted";
+          } catch (error) {
+            dispatchStatus = "failed";
+            dispatchMessage = error instanceof Error ? error.message : String(error);
+          }
+        }
+        logControlPlane({
+          event: "deliver.enqueue.replayed",
+          runId: null,
+          sessionKey: null,
+          toolCallId: null,
+          deliverMessageId: replay.value.request.messageId,
+          deliverDedupeKey: replay.value.request.dedupeKey,
+          deliverTarget: replay.value.request.target,
+          cursorSegment: replay.cursor.segment,
+          cursorOffset: replay.cursor.offset,
+          dispatchStatus,
+          dispatchMessage,
+        });
+      },
+    });
+  };
+
+  deliverSupervisor = deliverConfig.deliverEnabled
     ? new DeliverSupervisor({
         command: process.execPath,
         args: ["--import", "tsx", deliverConfig.deliverEntry],
@@ -855,21 +913,46 @@ export async function main(): Promise<void> {
     await sessionThreadCoordinator.ensureThreadForSession(input.sessionKey);
 
     const requestHash = toCommandRequestHash(input.message);
-    const idempotency = runLifecycle.resolveIdempotency(
-      input.sessionKey,
-      input.idempotencyKey,
-      requestHash
-    );
-    if (idempotency.kind === "duplicate") {
-      const sessionId = runLifecycle.runs().get(idempotency.accepted.runId)?.sessionId;
-      return {
-        accepted: idempotency.accepted,
-        sessionId: sessionId ?? "",
-        idempotency: "duplicate" as const,
-      };
-    }
-    if (idempotency.kind === "conflict") {
-      throw new Error(`IDEMPOTENCY_CONFLICT: ${idempotency.message}`);
+    if (input.idempotencyKey !== undefined) {
+      const idempotency = runLifecycle.resolveIdempotency(
+        input.sessionKey,
+        input.idempotencyKey,
+        requestHash
+      );
+      if (idempotency.kind === "duplicate") {
+        const sessionId = runLifecycle.runs().get(idempotency.accepted.runId)?.sessionId;
+        return {
+          accepted: idempotency.accepted,
+          sessionId: sessionId ?? "",
+          idempotency: "duplicate" as const,
+        };
+      }
+      if (idempotency.kind === "conflict") {
+        throw new Error(`IDEMPOTENCY_CONFLICT: ${idempotency.message}`);
+      }
+
+      const persisted = idempotencyStore.resolveCommand(
+        input.sessionKey,
+        input.idempotencyKey,
+        requestHash
+      );
+      if (persisted.kind === "duplicate") {
+        runLifecycle.bindIdempotency(
+          input.sessionKey,
+          input.idempotencyKey,
+          requestHash,
+          persisted.accepted
+        );
+        const sessionId = runLifecycle.runs().get(persisted.accepted.runId)?.sessionId;
+        return {
+          accepted: persisted.accepted,
+          sessionId: sessionId ?? "",
+          idempotency: "duplicate" as const,
+        };
+      }
+      if (persisted.kind === "conflict") {
+        throw new Error(`IDEMPOTENCY_CONFLICT: ${persisted.message}`);
+      }
     }
 
     const session = await resolveOrCreateSession(input.sessionKey, {
@@ -887,6 +970,14 @@ export async function main(): Promise<void> {
       sessionRecoveryReason: session.fallbackReason,
     });
     runLifecycle.bindIdempotency(input.sessionKey, input.idempotencyKey, requestHash, accepted);
+    if (input.idempotencyKey !== undefined) {
+      await idempotencyStore.bindCommand({
+        sessionKey: input.sessionKey,
+        idempotencyKey: input.idempotencyKey,
+        requestHash,
+        accepted,
+      });
+    }
     // Ensure per-run buffer exists before worker notifications arrive (POST->SSE race).
     runEventBuffer.ensureRun(accepted.runId, input.sessionKey);
     chatHistoryStore.appendUserMessage({
@@ -1063,15 +1154,17 @@ export async function main(): Promise<void> {
   };
   submitPromptForCollector = submitPrompt;
 
-  const replayRecords = await ingestInboxStore.replayPending();
-  for (const replay of replayRecords) {
-    await submitCollectorIngestProjection({
-      request: replay.value.request,
-      projection: replay.value.projection,
-      cursor: replay.cursor,
-      replayed: true,
-    });
-  }
+  await replayPendingRecords({
+    source: ingestInboxStore,
+    apply: async (replay) => {
+      await submitCollectorIngestProjection({
+        request: replay.value.request,
+        projection: replay.value.projection,
+        cursor: replay.cursor,
+        replayed: true,
+      });
+    },
+  });
 
   if (collectorSupervisor !== undefined) {
     await collectorSupervisor.start();
@@ -1079,6 +1172,7 @@ export async function main(): Promise<void> {
   if (deliverSupervisor !== undefined) {
     await deliverSupervisor.start();
   }
+  await replayPendingDeliverQueue();
 
   const buildThreadSnapshot = (threadId: string): ThreadSnapshotResponse | undefined => {
     const thread = threadRepository.getOrVirtual(threadId);

@@ -760,6 +760,7 @@ data: {"runId":"session:sess_xxx:run:1","update":{"sessionUpdate":"agent_message
 - restart 後の `/api/commands` duplicate/conflict 判定は idempotency journal/snapshot を復元して継続する。
 - restart 後の `collector/ingest` dedupe 判定は ingest dedupe store を復元し、canonical `messageId` の再利用を継続する。
 - collector 側障害（CDP 切断、ingest timeout、backlog 増加）は `doc/runbook/collector-backlog-monitoring.md` の一次対応に従う。
+- deliver 側障害（timeout, crash, completion 遅延）は `doc/runbook/deliver-queue-recovery.md` の一次対応に従う。
 - 運用ロールバック手順は `doc/runbook/phase-b-rollback.md` を正本とする。
 
 ### 14.9 v1 制約

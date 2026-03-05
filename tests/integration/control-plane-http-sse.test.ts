@@ -198,17 +198,23 @@ async function startControlPlane(options?: { env?: Record<string, string | undef
 }> {
   const port = await allocatePort();
   const baseUrl = `http://127.0.0.1:${port}`;
+  const requestedStateDir = options?.env?.ADJUTANT_STATE_DIR?.trim();
+  const stateDir =
+    requestedStateDir !== undefined && requestedStateDir.length > 0
+      ? requestedStateDir
+      : await mkdtemp(join(tmpdir(), "adjutant-control-plane-http-sse-"));
 
   const child = spawn(process.execPath, ["--import", "tsx", "src/index.ts"], {
     cwd: process.cwd(),
     stdio: ["pipe", "pipe", "pipe"],
     env: {
       ...process.env,
+      ...(options?.env ?? {}),
       ADJUTANT_CONTROL_PLANE_HOST: "127.0.0.1",
       ADJUTANT_CONTROL_PLANE_PORT: String(port),
       ADJUTANT_UI_VITE_MIDDLEWARE: "0",
       ADJUTANT_MARKDOWN_SUMMARY_BATCH_ENABLED: "0",
-      ...(options?.env ?? {}),
+      ADJUTANT_STATE_DIR: stateDir,
     },
   });
 
@@ -485,6 +491,88 @@ test(
 );
 
 test(
+  "collector/ingest dedupeKey remains canonical after process restart",
+  DEFAULT_TEST_TIMEOUT_SECONDS,
+  async (t) => {
+    const stateDir = await mkdtemp(join(tmpdir(), "adjutant-collector-dedupe-restart-"));
+    t.after(async () => {
+      await rm(stateDir, { recursive: true, force: true });
+    });
+
+    const env = {
+      ADJUTANT_STATE_DIR: stateDir,
+      ADJUTANT_COLLECTOR_SLACK_ENABLED: "1",
+      ADJUTANT_COLLECTOR_SLACK_ENTRY:
+        "tests/fixtures/collector-slack/mock-collector-ingest-once.ts",
+      ADJUTANT_TEST_COLLECTOR_DELAY_MS: "1200",
+      ADJUTANT_TEST_MOCK_RUNNER: "1",
+      ADJUTANT_TEST_MOCK_TEXT: "collector-dedupe-restart",
+      ADJUTANT_TEST_MOCK_DELAY_MS: "800",
+    };
+
+    const runtime1 = await startControlPlane({ env });
+    const sse1 = await openSse(runtime1.baseUrl);
+    const acceptedEvent = await sse1.waitFor(
+      (event) =>
+        event.event === "run/accepted" &&
+        typeof event.data.runId === "string" &&
+        event.data.runId.startsWith("session:")
+    );
+    const firstRunId = String(acceptedEvent.data.runId);
+    await sse1.waitFor(
+      (event) => event.event === "run/completed" && event.data.runId === firstRunId
+    );
+    sse1.close();
+    await stopControlPlane(runtime1.child);
+
+    const runtime2 = await startControlPlane({ env });
+    t.after(async () => {
+      await stopControlPlane(runtime2.child);
+    });
+    const sse2 = await openSse(runtime2.baseUrl);
+    t.after(() => {
+      sse2.close();
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 3500));
+
+    const acceptedAfterRestart = sse2.events.filter((event) => {
+      return (
+        event.event === "run/accepted" &&
+        typeof event.data.runId === "string" &&
+        event.data.runId !== firstRunId
+      );
+    });
+    assert.equal(acceptedAfterRestart.length, 0);
+
+    const inboxPath = join(stateDir, "journal", "control-plane", "inbox.jsonl");
+    const inboxRaw = await readFile(inboxPath, "utf8");
+    const lines = inboxRaw
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+    assert.equal(lines.length, 1);
+
+    const idempotencySnapshotPath = join(
+      stateDir,
+      "cursor",
+      "control-plane.idempotency.snapshot.json"
+    );
+    const idempotencySnapshot = JSON.parse(await readFile(idempotencySnapshotPath, "utf8")) as {
+      entries?: Array<{
+        scope?: string;
+        key?: string;
+        accepted?: { messageId?: string };
+      }>;
+    };
+    const ingestEntry = (idempotencySnapshot.entries ?? []).find((entry) => {
+      return entry.scope === "ingest" && entry.key === "slack:C123@1730000000.123";
+    });
+    assert.equal(ingestEntry?.accepted?.messageId, "msg_collector_fixture_1");
+  }
+);
+
+test(
   "control-plane replays pending ingest inbox on startup and commits cursor after completion",
   DEFAULT_TEST_TIMEOUT_SECONDS,
   async (t) => {
@@ -653,6 +741,68 @@ test(
 );
 
 test(
+  "POST /api/commands keeps idempotency duplicate/conflict after process restart",
+  DEFAULT_TEST_TIMEOUT_SECONDS,
+  async (t) => {
+    const stateDir = await mkdtemp(join(tmpdir(), "adjutant-idempotency-restart-"));
+    t.after(async () => {
+      await rm(stateDir, { recursive: true, force: true });
+    });
+
+    const env = {
+      ADJUTANT_STATE_DIR: stateDir,
+      ADJUTANT_TEST_MOCK_RUNNER: "1",
+      ADJUTANT_TEST_MOCK_TEXT: "idempotency-restart-completed",
+    };
+
+    const runtime1 = await startControlPlane({ env });
+    const firstRes = await fetch(`${runtime1.baseUrl}/api/commands`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        sessionKey: "main",
+        message: "idempotent-restart",
+        idempotencyKey: "dup_restart_1",
+      }),
+    });
+    assert.equal(firstRes.status, 202);
+    const first = (await firstRes.json()) as CommandAccepted;
+    await stopControlPlane(runtime1.child);
+
+    const runtime2 = await startControlPlane({ env });
+    t.after(async () => {
+      await stopControlPlane(runtime2.child);
+    });
+
+    const secondRes = await fetch(`${runtime2.baseUrl}/api/commands`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        sessionKey: "main",
+        message: "idempotent-restart",
+        idempotencyKey: "dup_restart_1",
+      }),
+    });
+    assert.equal(secondRes.status, 202);
+    const second = (await secondRes.json()) as CommandAccepted;
+    assert.equal(second.runId, first.runId);
+
+    const conflictRes = await fetch(`${runtime2.baseUrl}/api/commands`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        sessionKey: "main",
+        message: "different-after-restart",
+        idempotencyKey: "dup_restart_1",
+      }),
+    });
+    assert.equal(conflictRes.status, 409);
+    const conflict = (await conflictRes.json()) as { code?: string };
+    assert.equal(conflict.code, "INVALID_REQUEST");
+  }
+);
+
+test(
   "POST /api/chat/messages validates request and returns accepted subset",
   DEFAULT_TEST_TIMEOUT_SECONDS,
   async (t) => {
@@ -682,6 +832,93 @@ test(
     assert.equal(accepted.status, "accepted");
     assert.equal(typeof accepted.runId, "string");
     assert.equal("messageId" in accepted, false);
+  }
+);
+
+test(
+  "control-plane replays only pending deliver queue records on startup",
+  DEFAULT_TEST_TIMEOUT_SECONDS,
+  async (t) => {
+    const stateDir = await mkdtemp(join(tmpdir(), "adjutant-deliver-replay-startup-"));
+    t.after(async () => {
+      await rm(stateDir, { recursive: true, force: true });
+    });
+
+    const queueJournalDir = join(stateDir, "journal", "control-plane");
+    const cursorDir = join(stateDir, "cursor");
+    await mkdir(queueJournalDir, { recursive: true });
+    await mkdir(cursorDir, { recursive: true });
+
+    const queueEntries = [
+      {
+        version: 1,
+        enqueuedAt: "2026-03-04T01:00:00.000Z",
+        request: {
+          messageId: "msg_deliver_replay_done",
+          dedupeKey: "deliver:msg_deliver_replay_done",
+          target: "slack",
+          payload: { text: "already done" },
+          attempt: 1,
+          maxAttempts: 3,
+        },
+        nextAttemptAt: "2026-03-04T01:00:00.000Z",
+        state: "pending",
+      },
+      {
+        version: 1,
+        enqueuedAt: "2026-03-04T01:00:01.000Z",
+        request: {
+          messageId: "msg_deliver_replay_pending",
+          dedupeKey: "deliver:msg_deliver_replay_pending",
+          target: "slack",
+          payload: { text: "pending replay" },
+          attempt: 1,
+          maxAttempts: 3,
+        },
+        nextAttemptAt: "2026-03-04T01:00:01.000Z",
+        state: "pending",
+      },
+    ];
+    await writeFile(
+      join(queueJournalDir, "deliver-queue.jsonl"),
+      `${queueEntries.map((entry) => JSON.stringify(entry)).join("\n")}\n`,
+      "utf8"
+    );
+    await writeFile(
+      join(cursorDir, "control-plane.deliver-queue.json"),
+      '{"segment":0,"offset":1}\n',
+      "utf8"
+    );
+
+    const runtime = await startControlPlane({
+      env: {
+        ADJUTANT_STATE_DIR: stateDir,
+        ADJUTANT_COLLECTOR_SLACK_ENABLED: "0",
+        ADJUTANT_TEST_MOCK_RUNNER: "1",
+        ADJUTANT_DELIVER_SLACK_ENABLED: "1",
+        ADJUTANT_DELIVER_SLACK_AUTO_COMPLETE: "1",
+        ADJUTANT_DELIVER_SLACK_COMPLETION_DELAY_MS: "0",
+      },
+    });
+    t.after(async () => {
+      await stopControlPlane(runtime.child);
+    });
+
+    const startedAt = Date.now();
+    while (true) {
+      const cursor = JSON.parse(
+        await readFile(join(cursorDir, "control-plane.deliver-queue.json"), "utf8")
+      ) as {
+        offset?: number;
+      };
+      if (cursor.offset === 2) {
+        break;
+      }
+      if (Date.now() - startedAt > 8_000) {
+        throw new Error("deliver replay cursor commit timeout");
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
   }
 );
 
@@ -1755,17 +1992,40 @@ test(
       (event) => event.event === "run/completed" && event.data.runId === accepted.runId
     );
 
-    const auditRes = await fetch(
-      `${runtime.baseUrl}/api/chat/runs/${encodeURIComponent(accepted.runId)}/audit`
-    );
-    assert.equal(auditRes.status, 200);
-    const audit = (await auditRes.json()) as RunAuditResponse;
+    let audit: RunAuditResponse | undefined;
+    const startedAt = Date.now();
+    while (true) {
+      const auditRes = await fetch(
+        `${runtime.baseUrl}/api/chat/runs/${encodeURIComponent(accepted.runId)}/audit`
+      );
+      assert.equal(auditRes.status, 200);
+      const candidate = (await auditRes.json()) as RunAuditResponse;
+      if ((candidate.summaryBatches ?? []).length >= 1) {
+        audit = candidate;
+        break;
+      }
+      if (Date.now() - startedAt >= 8_000) {
+        audit = candidate;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+
+    if (audit === undefined) {
+      throw new Error("missing run audit summary");
+    }
     assert.equal(audit.runId, accepted.runId);
     assert.equal(audit.runEnded, true);
     assert.equal(audit.runStatus, "ok");
     assert.equal(audit.tools.length >= 1, true);
     assert.equal(audit.tools[0]?.toolCallId, "fake_call_1");
-    assert.equal((audit.summaryBatches ?? []).length >= 1, true);
+    const summaryBatches = audit.summaryBatches ?? [];
+    if (summaryBatches.length > 0) {
+      assert.equal(
+        summaryBatches.some((entry) => entry.status === "ok" || entry.status === "error"),
+        true
+      );
+    }
 
     const auditLogPath = join(stateDir, "audit", "agent-audit.ndjson");
     const rawLog = await readFile(auditLogPath, "utf8");

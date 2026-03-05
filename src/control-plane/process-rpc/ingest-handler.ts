@@ -4,6 +4,7 @@ import type {
   CollectorIngestRequest,
   CollectorIngestResponse,
 } from "../../contracts/process-rpc/method-types.js";
+import type { IdempotencyStore } from "../idempotency-store.js";
 import { validateCollectorIngestRequest } from "../../contracts/process-rpc/rpc-types.js";
 import { projectCollectorIngestRequest, type IngestProjection } from "./ingest-projection.js";
 import { IngestDedupeStore } from "./ingest-dedupe-store.js";
@@ -19,6 +20,7 @@ export class IngestValidationError extends Error {
 
 export type CollectorIngestHandlerOptions = {
   dedupeStore?: IngestDedupeStore;
+  idempotencyStore?: IdempotencyStore;
   now?: () => Date;
   onAccept?: (
     projection: IngestProjection,
@@ -45,11 +47,13 @@ function computePayloadHash(value: unknown): string {
 
 export class CollectorIngestHandler {
   private readonly dedupeStore: IngestDedupeStore;
+  private readonly idempotencyStore?: IdempotencyStore;
   private readonly now: () => Date;
   private readonly onAccept: CollectorIngestHandlerOptions["onAccept"];
 
   constructor(options: CollectorIngestHandlerOptions = {}) {
     this.dedupeStore = options.dedupeStore ?? new IngestDedupeStore();
+    this.idempotencyStore = options.idempotencyStore;
     this.now = options.now ?? (() => new Date());
     this.onAccept = options.onAccept;
   }
@@ -60,6 +64,20 @@ export class CollectorIngestHandler {
     }
 
     const payloadHash = computePayloadHash(params.payload);
+    if (this.idempotencyStore !== undefined) {
+      const persisted = this.idempotencyStore.resolveIngest(params.dedupeKey, payloadHash);
+      if (persisted.kind === "conflict") {
+        throw new IngestValidationError(persisted.message);
+      }
+      if (persisted.kind === "duplicate") {
+        return {
+          messageId: persisted.canonicalMessageId,
+          status: "accepted",
+          acceptedAt: this.now().toISOString(),
+        };
+      }
+    }
+
     const existing = this.dedupeStore.get(params.dedupeKey);
     if (existing !== undefined) {
       if (existing.payloadHash !== payloadHash) {
@@ -79,6 +97,13 @@ export class CollectorIngestHandler {
       canonicalMessageId: params.messageId,
       payloadHash,
     });
+    if (this.idempotencyStore !== undefined) {
+      await this.idempotencyStore.bindIngest({
+        dedupeKey: params.dedupeKey,
+        payloadHash,
+        canonicalMessageId: params.messageId,
+      });
+    }
     return {
       messageId: params.messageId,
       status: "accepted",
