@@ -14,6 +14,10 @@ import type { MemoryScope } from "./memory/types.js";
 import { appendDailyMemory, updateLongTermMemory } from "./memory/writer.js";
 import { createDockerBashOperations, shouldSandbox } from "../sandbox/docker-bash-operations.js";
 import type { ActiveSandboxConfig } from "../sandbox/types.js";
+import {
+  HEARTBEAT_TOOL_NAME,
+  validateReportHeartbeatStatusPayload,
+} from "../control-plane/heartbeat/schema.js";
 
 export interface PiAgentSessionLike {
   prompt: (text: string) => Promise<void>;
@@ -34,6 +38,7 @@ export interface CreatePiAgentSessionOptions {
   memoryWriteEnabled?: boolean;
   stateDir?: string;
   phaseBRolloutScope?: "main" | "all";
+  isHeartbeat?: boolean;
 }
 
 let activeSandbox: ActiveSandboxConfig | null = null;
@@ -141,8 +146,44 @@ export function buildCustomToolDefinitions(options: CreatePiAgentSessionOptions)
     });
     customTools.push(sandboxBashTool as unknown as ToolDefinition);
   }
+  if (options.isHeartbeat === true) {
+    customTools.push(createReportHeartbeatStatusToolDefinition());
+  }
 
   return customTools;
+}
+
+function createReportHeartbeatStatusToolDefinition(): ToolDefinition {
+  return {
+    name: HEARTBEAT_TOOL_NAME,
+    label: HEARTBEAT_TOOL_NAME,
+    description: "Return a structured status for heartbeat execution.",
+    parameters: {
+      type: "object",
+      properties: {
+        status: {
+          enum: ["no_action_needed", "needs_attention", "task_completed"],
+        },
+        notify: {
+          type: "boolean",
+        },
+        reason: {
+          type: "string",
+        },
+      },
+      required: ["status"],
+      additionalProperties: false,
+    } as never,
+    execute: async (_toolCallId, rawParams) => {
+      if (!validateReportHeartbeatStatusPayload(rawParams)) {
+        throw new Error("invalid report_heartbeat_status payload");
+      }
+      return {
+        content: [{ type: "text", text: "heartbeat status accepted" }],
+        details: rawParams,
+      };
+    },
+  };
 }
 
 function createMemoryWriteToolDefinition(workspaceDir: string): ToolDefinition {

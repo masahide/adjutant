@@ -100,12 +100,12 @@
 
 ## 8. タイムライン・ウォーターマーク (プロアクティブ機能)
 
-| パス                         | R/W | 環境変数での上書き       | 定義箇所                                                    |
-| ---------------------------- | --- | ------------------------ | ----------------------------------------------------------- |
-| `{stateDir}/timeline.jsonl`  | R/W | `ADJUTANT_TIMELINE_PATH` | `src/runtime/runtime-config-loader.ts`                      |
-| `{stateDir}/watermarks.json` | R/W | — ※1                     | `src/assistant/main.ts`, `src/proactive/watermark-store.ts` |
+| パス                         | R/W | 環境変数での上書き | 定義箇所                                                                                                           |
+| ---------------------------- | --- | ------------------ | ------------------------------------------------------------------------------------------------------------------ |
+| `{stateDir}/timeline.jsonl`  | R/W | —                  | `src/control-plane/proactive/timeline-store.ts`, `src/index.ts`                                                    |
+| `{stateDir}/watermarks.json` | R/W | —                  | `src/control-plane/proactive/watermark-store.ts`, `src/control-plane/proactive/pending-flusher.ts`, `src/index.ts` |
 
-※1 `resolveWatermarksPath` は `ADJUTANT_WATERMARKS_PATH` をサポートするが、現行ランタイム (`src/assistant/main.ts:286`) が常にパスを直接渡すため実質上書き不可。
+ACP ランタイムでは timeline / watermarks ともに `stateDir` 直下固定で、環境変数によるパス上書きはサポートしない。
 
 ## 9. 冪等性ストア
 
@@ -123,9 +123,9 @@
 
 ## 11. ハートビート実行記録
 
-| パス                              | R/W | 定義箇所                            |
-| --------------------------------- | --- | ----------------------------------- |
-| `{stateDir}/heartbeat-runs.jsonl` | W   | `src/assistant/heartbeat-runner.ts` |
+| パス                              | R/W | 定義箇所                                                                                                        |
+| --------------------------------- | --- | --------------------------------------------------------------------------------------------------------------- |
+| `{stateDir}/heartbeat-runs.jsonl` | R/W | `src/control-plane/heartbeat/result-store.ts`, `src/index.ts`, `src/control-plane/http/control-plane-router.ts` |
 
 ## 12. メモリーサーチ (SQLite DB)
 
@@ -224,7 +224,7 @@
     ├── timeline.jsonl                       [R/W] タイムライン
     ├── watermarks.json                      [R/W] ウォーターマーク
     ├── idempotency.jsonl                    [R/W] 冪等性ストア
-    ├── heartbeat-runs.jsonl                 [W]   HB実行記録
+    ├── heartbeat-runs.jsonl                 [R/W] HB実行記録
     ├── audit/
     │   └── agent-audit.ndjson               [W]   エージェント監査ログ
     ├── journal/

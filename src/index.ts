@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,6 +23,7 @@ import { DeliverCompletionStore } from "./control-plane/deliver-completion-store
 import {
   toPermissionSummary,
   type AcceptedResponse,
+  type GetHeartbeatHistoryResponse,
   type StreamEventType,
   type ThreadSnapshotResponse,
 } from "./control-plane/contracts/http-api.js";
@@ -53,6 +55,14 @@ import { ProcessRpcServer } from "./control-plane/process-rpc/server.js";
 import { IdempotencyStore } from "./control-plane/idempotency-store.js";
 import type { Cursor } from "./runtime/journal-store.js";
 import { initializeSandboxRuntime } from "./sandbox/runtime.js";
+import { buildCollectorDispatchPayload } from "./control-plane/proactive/dispatch-payload.js";
+import { createGlobalConcurrencyQueue } from "./control-plane/proactive/global-concurrency-queue.js";
+import { createProactiveIngressService } from "./control-plane/proactive/ingress-service.js";
+import { createPendingFlusher } from "./control-plane/proactive/pending-flusher.js";
+import { TimelineStore } from "./control-plane/proactive/timeline-store.js";
+import { WatermarkStore } from "./control-plane/proactive/watermark-store.js";
+import { createHeartbeatRunner } from "./control-plane/heartbeat/heartbeat-runner.js";
+import { HeartbeatResultStore } from "./control-plane/heartbeat/result-store.js";
 import { buildSnapshotResponse } from "./control-plane/http/snapshot-builder.js";
 import { renderMinimalUiPage } from "./ui/minimal-page.js";
 import { UiRuntime } from "./ui/runtime.js";
@@ -142,6 +152,17 @@ function parseBoolean(value: string | undefined, fallback: boolean): boolean {
   return fallback;
 }
 
+function parsePositiveInt(value: string | undefined, fallback: number): number {
+  if (value === undefined) {
+    return fallback;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.max(1, Math.floor(parsed));
+}
+
 type PhaseBRolloutScope = "main" | "all";
 
 function resolvePhaseBRolloutScope(value: string | undefined): PhaseBRolloutScope {
@@ -167,6 +188,10 @@ type SubmitPromptInput = {
   sessionKey: string;
   message: string;
   idempotencyKey?: string;
+  origin?: "user" | "system";
+  isHeartbeat?: boolean;
+  memoryScope?: "main" | "spoke";
+  recordHistory?: boolean;
 };
 
 type SubmitPromptResult = {
@@ -319,6 +344,41 @@ export async function main(): Promise<void> {
   await deliverQueueStore.initialize();
   const deliverCompletionStore = DeliverCompletionStore.fromStateDir(stateDir);
   await deliverCompletionStore.initialize();
+  const timelineStore = TimelineStore.fromStateDir(stateDir);
+  const watermarkStore = WatermarkStore.fromStateDir(stateDir, {
+    onWarn: (message, meta) => {
+      logControlPlane({
+        level: "warn",
+        event: "watermark.warn",
+        message,
+        runId: null,
+        sessionKey: typeof meta?.sessionKey === "string" ? meta.sessionKey : null,
+        toolCallId: null,
+        details: meta,
+      });
+    },
+  });
+  await watermarkStore.initialize();
+  const heartbeatResultStore = HeartbeatResultStore.fromStateDir(stateDir, {
+    onWarn: (message, meta) => {
+      logControlPlane({
+        level: "warn",
+        event: "heartbeat.result.warn",
+        message,
+        runId: null,
+        sessionKey: null,
+        toolCallId: null,
+        details: meta,
+      });
+    },
+  });
+  await heartbeatResultStore.initialize();
+  const globalQueue = createGlobalConcurrencyQueue({
+    maxConcurrent: parsePositiveInt(process.env.ADJUTANT_GLOBAL_MAX_CONCURRENT, 3),
+    dmBurstSlot: parsePositiveInt(process.env.ADJUTANT_GLOBAL_DM_BURST_SLOT, 1),
+    maxRunningDm: parsePositiveInt(process.env.ADJUTANT_GLOBAL_MAX_RUNNING_DM, 3),
+    starvationMs: parsePositiveInt(process.env.ADJUTANT_GLOBAL_STARVATION_MS, 120_000),
+  });
   let deliverSupervisor: DeliverSupervisor | undefined;
   const deliverQueueCoordinator = new DeliverQueueCoordinator({
     queueStore: deliverQueueStore,
@@ -364,6 +424,29 @@ export async function main(): Promise<void> {
   const clearRunAccumulators = (runId: string) => {
     runThinkingAccum.delete(runId);
     runToolCallAccum.delete(runId);
+  };
+  type SessionUpdateListener = (update: Record<string, unknown>) => void;
+  const sessionUpdateListenerBySessionId = new Map<string, Set<SessionUpdateListener>>();
+  const subscribeSessionUpdates = (
+    sessionId: string,
+    listener: SessionUpdateListener
+  ): (() => void) => {
+    const listeners = sessionUpdateListenerBySessionId.get(sessionId);
+    if (listeners !== undefined) {
+      listeners.add(listener);
+    } else {
+      sessionUpdateListenerBySessionId.set(sessionId, new Set([listener]));
+    }
+    return () => {
+      const current = sessionUpdateListenerBySessionId.get(sessionId);
+      if (current === undefined) {
+        return;
+      }
+      current.delete(listener);
+      if (current.size === 0) {
+        sessionUpdateListenerBySessionId.delete(sessionId);
+      }
+    };
   };
   const safeStringify = (value: unknown): string => {
     if (typeof value === "string") return value;
@@ -451,16 +534,23 @@ export async function main(): Promise<void> {
       if (typeof sessionId !== "string" || typeof update !== "object" || update === null) {
         return;
       }
+      const updateRecord = update as Record<string, unknown>;
 
       const clientNotification: ClientNotification = {
         jsonrpc: "2.0",
         method: "session/update",
         params: {
           sessionId,
-          update: update as Record<string, unknown>,
+          update: updateRecord,
         },
       };
       uiRuntime.onAcpSessionUpdate(clientNotification);
+      const listeners = sessionUpdateListenerBySessionId.get(sessionId);
+      if (listeners !== undefined) {
+        for (const listener of listeners) {
+          listener(updateRecord);
+        }
+      }
 
       const runId = runLifecycle.resolveRunId(sessionId);
       if (runId === undefined) {
@@ -476,11 +566,11 @@ export async function main(): Promise<void> {
         return;
       }
 
-      const sessionUpdate = (update as Record<string, unknown>).sessionUpdate;
+      const sessionUpdate = updateRecord.sessionUpdate;
 
       // Accumulate thinking chunks for structured history content.
       if (sessionUpdate === "agent_thinking_chunk") {
-        const content = (update as Record<string, unknown>).content;
+        const content = updateRecord.content;
         const text =
           typeof content === "object" && content !== null
             ? (content as Record<string, unknown>).text
@@ -492,10 +582,10 @@ export async function main(): Promise<void> {
       }
 
       if (sessionUpdate === "tool_call") {
-        const title = (update as Record<string, unknown>).title;
-        const kind = (update as Record<string, unknown>).kind;
-        const toolCallId = (update as Record<string, unknown>).toolCallId;
-        const rawInput = (update as Record<string, unknown>).rawInput;
+        const title = updateRecord.title;
+        const kind = updateRecord.kind;
+        const toolCallId = updateRecord.toolCallId;
+        const rawInput = updateRecord.rawInput;
         const toolName =
           typeof title === "string" && title.trim().length > 0
             ? title.trim()
@@ -531,11 +621,11 @@ export async function main(): Promise<void> {
           toolName,
         });
       } else if (sessionUpdate === "tool_call_update") {
-        const toolCallId = (update as Record<string, unknown>).toolCallId;
-        const status = (update as Record<string, unknown>).status;
-        const updateTitle = (update as Record<string, unknown>).title;
-        const updateKind = (update as Record<string, unknown>).kind;
-        const rawOutput = (update as Record<string, unknown>).rawOutput;
+        const toolCallId = updateRecord.toolCallId;
+        const status = updateRecord.status;
+        const updateTitle = updateRecord.title;
+        const updateKind = updateRecord.kind;
+        const rawOutput = updateRecord.rawOutput;
         const updateToolName =
           typeof updateTitle === "string" && updateTitle.trim().length > 0
             ? updateTitle.trim()
@@ -580,8 +670,8 @@ export async function main(): Promise<void> {
             status: status === "completed" ? "ok" : "error",
             resultSummary: rawOutput,
             error:
-              status === "failed" && typeof (update as Record<string, unknown>).error === "string"
-                ? ((update as Record<string, unknown>).error as string)
+              status === "failed" && typeof updateRecord.error === "string"
+                ? updateRecord.error
                 : undefined,
           });
           logControlPlane({
@@ -595,12 +685,12 @@ export async function main(): Promise<void> {
         }
       }
 
-      emitSse("run/update", { runId, sessionId, update: update as Record<string, unknown> });
+      emitSse("run/update", { runId, sessionId, update: updateRecord });
 
       const mapped = mapSessionUpdateToChatStreamEvent({
         runId,
         sessionKey: run.sessionKey,
-        update: update as Record<string, unknown>,
+        update: updateRecord,
       });
       if (mapped !== undefined) {
         runEventBuffer.append(runId, mapped);
@@ -611,6 +701,12 @@ export async function main(): Promise<void> {
     | ((input: SubmitPromptInput) => Promise<SubmitPromptResult>)
     | undefined;
   const ingestCursorByRunId = new Map<string, Cursor>();
+  type CollectorIngestPending = {
+    request: CollectorIngestRequest;
+    projection: IngestProjection;
+    cursor: Cursor;
+    replayed: boolean;
+  };
 
   const commitIngestCursorForRun = async (
     runId: string,
@@ -648,39 +744,136 @@ export async function main(): Promise<void> {
     }
   };
 
-  const submitCollectorIngestProjection = async (input: {
-    request: CollectorIngestRequest;
-    projection: IngestProjection;
-    cursor: Cursor;
-    replayed: boolean;
+  const appendTerminalActionRecord = async (input: {
+    runId: string;
+    sessionKey: string;
+    actionType: "assistant_final" | "assistant_aborted" | "assistant_error";
+    ts: string;
+  }): Promise<void> => {
+    try {
+      const record = await timelineStore.appendAction({
+        sessionKey: input.sessionKey,
+        uid: `${input.runId}:${input.actionType}`,
+        ts: input.ts,
+        loggedAt: input.ts,
+        actionType: input.actionType,
+        runId: input.runId,
+      });
+      if (typeof record.timelineOffset === "number") {
+        try {
+          await watermarkStore.applyTerminalRecord({
+            sessionKey: input.sessionKey,
+            actionType: input.actionType,
+            offset: record.timelineOffset,
+          });
+        } catch (error) {
+          const summary = toErrorSummary(error);
+          logControlPlane({
+            level: "warn",
+            event: "watermark.apply.failed",
+            runId: input.runId,
+            sessionKey: input.sessionKey,
+            toolCallId: null,
+            errorCode: summary.errorCode,
+            message: summary.errorMessage,
+          });
+        }
+      }
+    } catch (error) {
+      const summary = toErrorSummary(error);
+      logControlPlane({
+        level: "warn",
+        event: "timeline.append.failed",
+        runId: input.runId,
+        sessionKey: input.sessionKey,
+        toolCallId: null,
+        errorCode: summary.errorCode,
+        message: summary.errorMessage,
+      });
+    }
+  };
+
+  const selectLatestCursor = (items: CollectorIngestPending[]): Cursor => {
+    if (items.length === 0) {
+      throw new Error("collector batch requires at least one cursor");
+    }
+    return items.reduce((latest, current) => {
+      if (current.cursor.segment > latest.segment) {
+        return current.cursor;
+      }
+      if (current.cursor.segment === latest.segment && current.cursor.offset > latest.offset) {
+        return current.cursor;
+      }
+      return latest;
+    }, items[0].cursor);
+  };
+
+  const submitCollectorIngestBatch = async (input: {
+    source: "dm" | "group" | "channel" | "flusher" | "heartbeat";
+    items: CollectorIngestPending[];
   }): Promise<void> => {
     if (submitPromptForCollector === undefined) {
       throw new Error("INGEST_PIPELINE_NOT_READY");
     }
+    const payload = buildCollectorDispatchPayload(input.items.map((entry) => entry.projection));
+    const latestCursor = selectLatestCursor(input.items);
+    const replayed = input.items.every((entry) => entry.replayed);
     const result = await submitPromptForCollector({
-      sessionKey: input.projection.sessionKey,
-      message: input.projection.message,
-      idempotencyKey: input.projection.dedupeKey,
+      sessionKey: payload.sessionKey,
+      message: payload.message,
+      idempotencyKey: payload.idempotencyKey,
     });
     const run = runLifecycle.runs().get(result.accepted.runId);
     if (run?.status === "completed" || run?.status === "failed") {
-      await ingestInboxStore.commitThrough(input.cursor);
+      await ingestInboxStore.commitThrough(latestCursor);
     } else {
-      ingestCursorByRunId.set(result.accepted.runId, input.cursor);
+      ingestCursorByRunId.set(result.accepted.runId, latestCursor);
     }
     logControlPlane({
       event: "collector.ingest.run.accepted",
       runId: result.accepted.runId,
-      sessionKey: input.projection.sessionKey,
+      sessionKey: payload.sessionKey,
       toolCallId: null,
-      collectorMessageId: input.request.messageId,
-      collectorDedupeKey: input.request.dedupeKey,
-      collectorEventKind: input.projection.rawEvent.kind,
-      source: input.request.source,
-      replayed: input.replayed,
+      collectorMessageId: input.items[0]?.request.messageId,
+      collectorDedupeKey: payload.dedupeSummary,
+      collectorEventKind: payload.eventKind,
+      source: input.source,
+      replayed,
+      batchItemCount: payload.itemCount,
       idempotency: result.idempotency,
     });
   };
+
+  const proactiveIngress = createProactiveIngressService<CollectorIngestPending>({
+    globalQueue,
+    onWarn: (message, meta) => {
+      logControlPlane({
+        level: "warn",
+        event: "proactive.warn",
+        message,
+        runId: null,
+        sessionKey: typeof meta?.sessionKey === "string" ? meta.sessionKey : null,
+        toolCallId: null,
+        details: meta,
+      });
+    },
+    onSystemEvent: (event) => {
+      logControlPlane({
+        event: "collector.ingest.note",
+        runId: null,
+        sessionKey: event.sessionKey,
+        toolCallId: null,
+        reason: event.reason,
+        itemCount: event.itemCount,
+      });
+    },
+    dispatch: async (dispatch) => {
+      await submitCollectorIngestBatch({
+        source: dispatch.source,
+        items: dispatch.items.map((entry) => entry.payload),
+      });
+    },
+  });
 
   const processRpcServer = new ProcessRpcServer({
     ingestHandler: new CollectorIngestHandler({
@@ -690,11 +883,35 @@ export async function main(): Promise<void> {
           request,
           projection,
         });
-        await submitCollectorIngestProjection({
-          request,
-          projection,
-          cursor,
-          replayed: false,
+        try {
+          await timelineStore.appendEvent({
+            sessionKey: projection.sessionKey,
+            uid: projection.rawEvent.uid,
+            ts: projection.rawEvent.ts,
+            loggedAt: new Date().toISOString(),
+            event: projection.rawEvent,
+          });
+        } catch (error) {
+          const summary = toErrorSummary(error);
+          logControlPlane({
+            level: "warn",
+            event: "timeline.append.failed",
+            runId: null,
+            sessionKey: projection.sessionKey,
+            toolCallId: null,
+            errorCode: summary.errorCode,
+            message: summary.errorMessage,
+          });
+        }
+        await proactiveIngress.ingest({
+          sessionKey: projection.sessionKey,
+          event: projection.rawEvent,
+          payload: {
+            request,
+            projection,
+            cursor,
+            replayed: false,
+          },
         });
       },
     }),
@@ -911,6 +1128,10 @@ export async function main(): Promise<void> {
 
   const submitPrompt = async (input: SubmitPromptInput): Promise<SubmitPromptResult> => {
     await sessionThreadCoordinator.ensureThreadForSession(input.sessionKey);
+    const origin = input.origin ?? "user";
+    const isHeartbeat = input.isHeartbeat === true;
+    const memoryScope = input.memoryScope ?? threadRepository.resolveMemoryScope(input.sessionKey);
+    const recordHistory = input.recordHistory ?? true;
 
     const requestHash = toCommandRequestHash(input.message);
     if (input.idempotencyKey !== undefined) {
@@ -980,12 +1201,14 @@ export async function main(): Promise<void> {
     }
     // Ensure per-run buffer exists before worker notifications arrive (POST->SSE race).
     runEventBuffer.ensureRun(accepted.runId, input.sessionKey);
-    chatHistoryStore.appendUserMessage({
-      sessionKey: input.sessionKey,
-      runId: accepted.runId,
-      message: input.message,
-      timestamp: accepted.acceptedAt,
-    });
+    if (recordHistory) {
+      chatHistoryStore.appendUserMessage({
+        sessionKey: input.sessionKey,
+        runId: accepted.runId,
+        message: input.message,
+        timestamp: accepted.acceptedAt,
+      });
+    }
     agentAuditLog.appendRunStart({
       runId: accepted.runId,
       sessionKey: input.sessionKey,
@@ -1024,10 +1247,10 @@ export async function main(): Promise<void> {
             prompt: input.message,
             meta: {
               sessionKey: input.sessionKey,
-              memoryScope: threadRepository.resolveMemoryScope(input.sessionKey),
+              memoryScope,
               memoryWriteEnabled: false,
-              origin: "user",
-              isHeartbeat: false,
+              origin,
+              isHeartbeat,
             },
           },
           { timeoutMs: 5 * 60 * 1000 }
@@ -1054,14 +1277,16 @@ export async function main(): Promise<void> {
         );
         const accumulatedThinking = runThinkingAccum.get(accepted.runId);
         const accumulatedToolCalls = runToolCallAccum.get(accepted.runId);
-        chatHistoryStore.appendAssistantMessage({
-          sessionKey: input.sessionKey,
-          runId: accepted.runId,
-          message: text,
-          thinking: accumulatedThinking,
-          toolCalls: accumulatedToolCalls ? [...accumulatedToolCalls.values()] : undefined,
-          timestamp: done.finishedAt ?? new Date().toISOString(),
-        });
+        if (recordHistory) {
+          chatHistoryStore.appendAssistantMessage({
+            sessionKey: input.sessionKey,
+            runId: accepted.runId,
+            message: text,
+            thinking: accumulatedThinking,
+            toolCalls: accumulatedToolCalls ? [...accumulatedToolCalls.values()] : undefined,
+            timestamp: done.finishedAt ?? new Date().toISOString(),
+          });
+        }
         clearRunAccumulators(accepted.runId);
         emitSse("run/completed", {
           runId: accepted.runId,
@@ -1082,11 +1307,19 @@ export async function main(): Promise<void> {
           toolCallId: null,
           stopReason: done.stopReason,
         });
-        await commitIngestCursorForRun(accepted.runId, "completed");
-        await maybeRunSummaryBatch({
+        await appendTerminalActionRecord({
           runId: accepted.runId,
           sessionKey: input.sessionKey,
+          actionType: "assistant_final",
+          ts: done.finishedAt ?? new Date().toISOString(),
         });
+        await commitIngestCursorForRun(accepted.runId, "completed");
+        if (origin === "user" && !isHeartbeat) {
+          await maybeRunSummaryBatch({
+            runId: accepted.runId,
+            sessionKey: input.sessionKey,
+          });
+        }
       } catch (error) {
         const runBeforeFailure = runLifecycle.runs().get(accepted.runId);
         if (runBeforeFailure?.status === "cancelled") {
@@ -1128,10 +1361,22 @@ export async function main(): Promise<void> {
           errorCode: summary.errorCode,
           message: summary.errorMessage,
         });
+        await appendTerminalActionRecord({
+          runId: accepted.runId,
+          sessionKey: input.sessionKey,
+          actionType: "assistant_error",
+          ts: failed.finishedAt ?? new Date().toISOString(),
+        });
         await commitIngestCursorForRun(accepted.runId, "failed");
       } finally {
         const finalRun = runLifecycle.runs().get(accepted.runId);
         if (finalRun?.status === "cancelled") {
+          await appendTerminalActionRecord({
+            runId: accepted.runId,
+            sessionKey: input.sessionKey,
+            actionType: "assistant_aborted",
+            ts: finalRun.finishedAt ?? new Date().toISOString(),
+          });
           await commitIngestCursorForRun(accepted.runId, "cancelled");
         }
         clearRunAccumulators(accepted.runId);
@@ -1154,14 +1399,236 @@ export async function main(): Promise<void> {
   };
   submitPromptForCollector = submitPrompt;
 
+  const flusherEnabled = parseBoolean(process.env.ADJUTANT_FLUSHER_ENABLED, true);
+  const flusherIntervalMs = parsePositiveInt(process.env.ADJUTANT_FLUSHER_INTERVAL_MS, 60_000);
+  const flusherStaleMs = parsePositiveInt(process.env.ADJUTANT_FLUSHER_STALE_MS, 900_000);
+  const pendingFlusher = createPendingFlusher({
+    timelinePath: timelineStore.pathForDebug(),
+    watermarkStore,
+    staleMs: flusherStaleMs,
+    enqueueSession: async ({ sessionKey, reason, openPostCount }) => {
+      const lease = await globalQueue.acquire("flusher");
+      try {
+        const idempotencyWindow = Math.floor(Date.now() / flusherStaleMs);
+        try {
+          const result = await submitPrompt({
+            sessionKey,
+            origin: "system",
+            isHeartbeat: false,
+            recordHistory: false,
+            idempotencyKey: `flusher:${sessionKey}:${idempotencyWindow}`,
+            message: `[Flusher] reason=${reason} openPostCount=${openPostCount}. Please inspect stale pending posts and decide if user follow-up is needed.`,
+          });
+          logControlPlane({
+            event: "flusher.enqueue.accepted",
+            runId: result.accepted.runId,
+            sessionKey,
+            toolCallId: null,
+            reason,
+            openPostCount,
+          });
+        } catch (error) {
+          const summary = toErrorSummary(error);
+          logControlPlane({
+            level: "warn",
+            event: "flusher.enqueue.failed",
+            runId: null,
+            sessionKey,
+            toolCallId: null,
+            reason,
+            openPostCount,
+            errorCode: summary.errorCode,
+            message: summary.errorMessage,
+          });
+        }
+      } finally {
+        lease.release();
+      }
+    },
+  });
+  let flusherTickInFlight = false;
+  let flusherTimer: ReturnType<typeof setInterval> | undefined;
+  const runFlusherTick = async (trigger: "startup" | "periodic"): Promise<void> => {
+    if (!flusherEnabled || flusherTickInFlight) {
+      return;
+    }
+    flusherTickInFlight = true;
+    try {
+      const result = await pendingFlusher.tick();
+      logControlPlane({
+        event: "flusher.tick.completed",
+        runId: null,
+        sessionKey: null,
+        toolCallId: null,
+        trigger,
+        firedSessionKeys: result.firedSessionKeys,
+        suppressedSessionKeys: result.suppressedSessionKeys,
+        scannedRecords: result.scannedRecords,
+      });
+    } catch (error) {
+      const summary = toErrorSummary(error);
+      logControlPlane({
+        level: "warn",
+        event: "flusher.tick.failed",
+        runId: null,
+        sessionKey: null,
+        toolCallId: null,
+        trigger,
+        errorCode: summary.errorCode,
+        message: summary.errorMessage,
+      });
+    } finally {
+      flusherTickInFlight = false;
+    }
+  };
+  const startPendingFlusher = (): void => {
+    if (!flusherEnabled || flusherTimer !== undefined) {
+      return;
+    }
+    flusherTimer = setInterval(() => {
+      void runFlusherTick("periodic");
+    }, flusherIntervalMs);
+  };
+  const stopPendingFlusher = (): void => {
+    if (flusherTimer === undefined) {
+      return;
+    }
+    clearInterval(flusherTimer);
+    flusherTimer = undefined;
+  };
+
+  const heartbeatEnabled = parseBoolean(process.env.ADJUTANT_HEARTBEAT_ENABLED, true);
+  const heartbeatIntervalMs = parsePositiveInt(
+    process.env.ADJUTANT_HEARTBEAT_INTERVAL_MS,
+    1_800_000
+  );
+  const heartbeatTimeoutMs = parsePositiveInt(process.env.ADJUTANT_HEARTBEAT_TIMEOUT_MS, 30_000);
+  const heartbeatPromptPath =
+    process.env.ADJUTANT_HEARTBEAT_FILE_PATH?.trim() || join(cwd, "HEARTBEAT.md");
+  const heartbeatRunner = createHeartbeatRunner({
+    intervalMs: heartbeatIntervalMs,
+    timeoutMs: heartbeatTimeoutMs,
+    readPrompt: async () => await readFile(heartbeatPromptPath, "utf8"),
+    beforeRun: async () => {
+      const session = runLifecycle.sessions().get("main");
+      if (session === undefined) {
+        return null;
+      }
+      const runId = runLifecycle.resolveRunId(session.sessionId);
+      if (runId !== undefined) {
+        return { skipReason: "session-busy" };
+      }
+      return null;
+    },
+    executePrompt: async ({ prompt, timeoutMs }) => {
+      const session = await resolveOrCreateSession("main", {
+        sessionsByKey: runLifecycle.sessions(),
+        recoveryStore,
+        isLoadSessionEnabled: loadSessionCapability,
+        requestWorker: async (method, params) => {
+          return await supervisor.request(method, params, { timeoutMs: 5_000 });
+        },
+      });
+      const observedToolCalls = new Map<string, Record<string, unknown>>();
+      const unsubscribe = subscribeSessionUpdates(session.sessionId, (update) => {
+        const updateType = typeof update.sessionUpdate === "string" ? update.sessionUpdate : "";
+        if (updateType !== "tool_call" && updateType !== "tool_call_update") {
+          return;
+        }
+        const toolCallId =
+          typeof update.toolCallId === "string" && update.toolCallId.length > 0
+            ? update.toolCallId
+            : `heartbeat:${Date.now()}`;
+        const existing = observedToolCalls.get(toolCallId) ?? {};
+        if (typeof update.title === "string" && update.title.length > 0) {
+          existing.toolName = update.title;
+        } else if (typeof update.kind === "string" && update.kind.length > 0) {
+          existing.toolName = update.kind;
+        }
+        if (typeof update.status === "string") {
+          existing.status = update.status;
+        }
+        if ("rawInput" in update) {
+          existing.rawInput = update.rawInput;
+        }
+        if ("rawOutput" in update) {
+          existing.rawOutput = update.rawOutput;
+        }
+        existing.toolCallId = toolCallId;
+        observedToolCalls.set(toolCallId, existing);
+      });
+      try {
+        const result = await supervisor.request(
+          "session/prompt",
+          {
+            sessionId: session.sessionId,
+            prompt,
+            meta: {
+              sessionKey: "main",
+              memoryScope: "main",
+              memoryWriteEnabled: false,
+              origin: "system",
+              isHeartbeat: true,
+            },
+          },
+          { timeoutMs }
+        );
+        const runId = typeof result.runId === "string" ? result.runId : undefined;
+        const text = typeof result.text === "string" ? result.text : undefined;
+        return {
+          runId,
+          text,
+          toolCalls: [...observedToolCalls.values()].map((entry) => ({
+            toolCallId: typeof entry.toolCallId === "string" ? entry.toolCallId : undefined,
+            toolName: typeof entry.toolName === "string" ? entry.toolName : undefined,
+            status: typeof entry.status === "string" ? entry.status : undefined,
+            rawInput: entry.rawInput,
+            rawOutput: entry.rawOutput,
+          })),
+        };
+      } finally {
+        unsubscribe();
+      }
+    },
+    globalQueue,
+    resultStore: heartbeatResultStore,
+    emitEvent: (result) => {
+      emitSse("heartbeat", result as unknown as Record<string, unknown>);
+      logControlPlane({
+        event: "heartbeat.run.completed",
+        runId: typeof result.runId === "string" ? result.runId : null,
+        sessionKey: "main",
+        toolCallId: null,
+        status: result.status,
+        heartbeatEventStatus: result.event.status,
+        reason: result.event.reason,
+      });
+    },
+    onWarn: (message, meta) => {
+      logControlPlane({
+        level: "warn",
+        event: "heartbeat.warn",
+        message,
+        runId: null,
+        sessionKey: "main",
+        toolCallId: null,
+        details: meta,
+      });
+    },
+  });
+
   await replayPendingRecords({
     source: ingestInboxStore,
     apply: async (replay) => {
-      await submitCollectorIngestProjection({
-        request: replay.value.request,
-        projection: replay.value.projection,
-        cursor: replay.cursor,
-        replayed: true,
+      await proactiveIngress.ingest({
+        sessionKey: replay.value.projection.sessionKey,
+        event: replay.value.projection.rawEvent,
+        payload: {
+          request: replay.value.request,
+          projection: replay.value.projection,
+          cursor: replay.cursor,
+          replayed: true,
+        },
       });
     },
   });
@@ -1173,6 +1640,13 @@ export async function main(): Promise<void> {
     await deliverSupervisor.start();
   }
   await replayPendingDeliverQueue();
+  if (heartbeatEnabled) {
+    heartbeatRunner.start();
+  }
+  if (flusherEnabled) {
+    startPendingFlusher();
+    void runFlusherTick("startup");
+  }
 
   const buildThreadSnapshot = (threadId: string): ThreadSnapshotResponse | undefined => {
     const thread = threadRepository.getOrVirtual(threadId);
@@ -1251,6 +1725,13 @@ export async function main(): Promise<void> {
     buildThreadSnapshot,
     supervisor,
     permissionGateway,
+    runHeartbeat: heartbeatEnabled
+      ? async (reason) => await heartbeatRunner.runOnce(reason)
+      : undefined,
+    getLastHeartbeat: heartbeatEnabled ? () => heartbeatRunner.getLast() : undefined,
+    listHeartbeatHistory: heartbeatEnabled
+      ? (input): GetHeartbeatHistoryResponse => heartbeatRunner.getHistory(input)
+      : undefined,
   });
 
   const server = createServer((req, res) => {
@@ -1326,6 +1807,8 @@ export async function main(): Promise<void> {
     if (deliverSupervisor !== undefined) {
       await deliverSupervisor.stop();
     }
+    stopPendingFlusher();
+    heartbeatRunner.stop();
     await supervisor.stop();
     if (viteDevServer !== undefined) {
       await viteDevServer.close();

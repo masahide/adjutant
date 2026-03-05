@@ -1,4 +1,5 @@
 import type { PendingPermission } from "../acp/permission-registry.js";
+import type { HeartbeatRunResultV1 } from "../heartbeat/schema.js";
 
 export type CommandRequest = {
   sessionKey: string;
@@ -24,6 +25,7 @@ export const STREAM_EVENT_TYPES = [
   "run/failed",
   "permission/requested",
   "permission/resolved",
+  "heartbeat",
 ] as const;
 
 export type StreamEventType = (typeof STREAM_EVENT_TYPES)[number];
@@ -224,6 +226,19 @@ export type PostPermissionResolveRequest = {
 };
 
 export type PostPermissionResolveResponse = Record<string, never>;
+
+export type PostHeartbeatRunRequest = {
+  reason?: string;
+};
+
+export type PostHeartbeatRunResponse = HeartbeatRunResultV1;
+
+export type GetHeartbeatLastResponse = HeartbeatRunResultV1 | null;
+
+export type GetHeartbeatHistoryResponse = {
+  items: HeartbeatRunResultV1[];
+  nextCursor?: string;
+};
 
 export function toPermissionSummary(input: PendingPermission): PermissionSummary {
   return {

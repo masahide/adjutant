@@ -118,7 +118,7 @@
 
 ## 8. 次アクション
 
-Phase A/B は完了済みのため、次は Phase C（collector-slack 本移植）を実装する。
+Phase A-E は完了済み。次は Phase F（仕上げと安定化）へ進む。
 
-- 対象: Slack CDP 接続、SlackAdapter、DOM capture、名称キャッシュ、JSONL 保存、`collector/ingest` 連携
-- 出力先: `doc/plan/260301-s01-phase-c-collector-slack-migration.md`
+- 優先タスク: 設定整理、運用 runbook の磨き込み、CI 安定化、移植監査
+- 検証参照: `doc/plan/artifacts/260305-s02-phase-e-verification-report.md`

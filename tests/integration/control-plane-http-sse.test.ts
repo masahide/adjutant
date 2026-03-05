@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -569,6 +569,104 @@ test(
       return entry.scope === "ingest" && entry.key === "slack:C123@1730000000.123";
     });
     assert.equal(ingestEntry?.accepted?.messageId, "msg_collector_fixture_1");
+  }
+);
+
+test(
+  "proactive ingest + flusher + heartbeat が同一 control-plane で連動する",
+  DEFAULT_TEST_TIMEOUT_SECONDS,
+  async (t) => {
+    const stateDir = await mkdtemp(join(tmpdir(), "adjutant-phase-e-e2e-"));
+    t.after(async () => {
+      await rm(stateDir, { recursive: true, force: true });
+    });
+
+    const runtime = await startControlPlane({
+      env: {
+        ADJUTANT_STATE_DIR: stateDir,
+        ADJUTANT_COLLECTOR_SLACK_ENABLED: "1",
+        ADJUTANT_COLLECTOR_SLACK_ENTRY:
+          "tests/fixtures/collector-slack/mock-collector-ingest-once.ts",
+        ADJUTANT_TEST_COLLECTOR_DELAY_MS: "800",
+        ADJUTANT_TEST_MOCK_RUNNER: "1",
+        ADJUTANT_TEST_MOCK_TEXT: "phase-e-e2e",
+        ADJUTANT_TEST_MOCK_DELAY_MS: "1000",
+        ADJUTANT_FLUSHER_ENABLED: "1",
+        ADJUTANT_FLUSHER_INTERVAL_MS: "200",
+        ADJUTANT_HEARTBEAT_ENABLED: "1",
+        ADJUTANT_HEARTBEAT_INTERVAL_MS: "3600000",
+      },
+    });
+    t.after(async () => {
+      await stopControlPlane(runtime.child);
+    });
+
+    const sse = await openSse(runtime.baseUrl);
+    t.after(() => {
+      sse.close();
+    });
+
+    const firstAccepted = await sse.waitFor(
+      (event) =>
+        event.event === "run/accepted" &&
+        typeof event.data.runId === "string" &&
+        event.data.runId.startsWith("session:")
+    );
+    const firstRunId = String(firstAccepted.data.runId);
+    await sse.waitFor(
+      (event) => event.event === "run/completed" && event.data.runId === firstRunId
+    );
+
+    const timelinePath = join(stateDir, "timeline.jsonl");
+    await appendFile(
+      timelinePath,
+      `${JSON.stringify({
+        schema: "adjutant.timeline.record.v1.5",
+        recordType: "event",
+        uid: "flusher-open-1",
+        sessionKey: "slack:channel:C_FLUSHER",
+        ts: "2024-01-01T00:00:00.000Z",
+        loggedAt: "2024-01-01T00:00:00.000Z",
+        event: {
+          schema: "adjutant.event.v1.1",
+          uid: "slack:C_FLUSHER@1",
+          source: "slack",
+          kind: "post",
+          actor: "U_FLUSHER",
+          ts: "2024-01-01T00:00:00.000Z",
+          detail: {
+            slack: {
+              channel_id: "C_FLUSHER",
+              text: "stale flusher post",
+            },
+          },
+        },
+      })}\n`,
+      "utf8"
+    );
+
+    const flusherAccepted = await sse.waitFor(
+      (event) =>
+        event.event === "run/accepted" &&
+        typeof event.data.runId === "string" &&
+        event.data.runId !== firstRunId
+    );
+    const flusherRunId = String(flusherAccepted.data.runId);
+    await sse.waitFor(
+      (event) => event.event === "run/completed" && event.data.runId === flusherRunId
+    );
+
+    const heartbeatRunRes = await fetch(`${runtime.baseUrl}/api/heartbeat/run`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ reason: "phase-e-e2e" }),
+    });
+    assert.equal(heartbeatRunRes.status, 200);
+    const heartbeatRun = (await heartbeatRunRes.json()) as Record<string, unknown>;
+    assert.equal(heartbeatRun.schema, "adjutant.heartbeat.result.v1");
+
+    const heartbeatEvent = await sse.waitFor((event) => event.event === "heartbeat");
+    assert.equal(heartbeatEvent.data.schema, "adjutant.heartbeat.result.v1");
   }
 );
 
@@ -2100,5 +2198,53 @@ test(
     const history = (await historyRes.json()) as ChatHistoryResponse;
     assert.equal(Array.isArray(history.messages), true);
     assert.equal(history.messages.length >= 2, true);
+  }
+);
+
+test(
+  "heartbeat API run/last/history と SSE heartbeat event が連動する",
+  DEFAULT_TEST_TIMEOUT_SECONDS,
+  async (t) => {
+    const runtime = await startControlPlane({
+      env: {
+        ADJUTANT_HEARTBEAT_ENABLED: "1",
+        ADJUTANT_HEARTBEAT_INTERVAL_MS: "3600000",
+      },
+    });
+    t.after(async () => {
+      await stopControlPlane(runtime.child);
+    });
+
+    const sse = await openSse(runtime.baseUrl);
+    t.after(() => {
+      sse.close();
+    });
+
+    const runRes = await fetch(`${runtime.baseUrl}/api/heartbeat/run`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ reason: "manual-test" }),
+    });
+    assert.equal(runRes.status, 200);
+    const runBody = (await runRes.json()) as Record<string, unknown>;
+    assert.equal(runBody.schema, "adjutant.heartbeat.result.v1");
+    assert.equal(typeof runBody.status, "string");
+
+    const event = await sse.waitFor((candidate) => candidate.event === "heartbeat");
+    assert.equal(event.event, "heartbeat");
+    assert.equal(event.data.schema, "adjutant.heartbeat.result.v1");
+
+    const lastRes = await fetch(`${runtime.baseUrl}/api/heartbeat/last`);
+    assert.equal(lastRes.status, 200);
+    const lastBody = (await lastRes.json()) as Record<string, unknown>;
+    assert.equal(lastBody.schema, "adjutant.heartbeat.result.v1");
+    assert.equal(typeof lastBody.status, "string");
+
+    const historyRes = await fetch(`${runtime.baseUrl}/api/heartbeat/history?limit=1`);
+    assert.equal(historyRes.status, 200);
+    const historyBody = (await historyRes.json()) as Record<string, unknown>;
+    const items = Array.isArray(historyBody.items) ? historyBody.items : [];
+    assert.equal(items.length >= 1, true);
+    assert.equal((items[0] as Record<string, unknown>)?.schema, "adjutant.heartbeat.result.v1");
   }
 );

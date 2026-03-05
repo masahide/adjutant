@@ -7,9 +7,13 @@ import type {
   CommandRequest,
   CreateThreadRequest,
   CreateThreadResponse,
+  GetHeartbeatHistoryResponse,
+  GetHeartbeatLastResponse,
   GetChatHistoryResponse,
   GetThreadResponse,
   ListThreadsResponse,
+  PostHeartbeatRunRequest,
+  PostHeartbeatRunResponse,
   PostPermissionResolveRequest,
   PostPermissionResolveResponse,
   PostChatAbortRequest,
@@ -53,6 +57,12 @@ interface ControlPlaneRouterDeps {
   buildThreadSnapshot: (threadId: string) => ThreadSnapshotResponse | undefined;
   supervisor: WorkerSupervisor;
   permissionGateway: PermissionGateway;
+  runHeartbeat?: (reason: string) => Promise<PostHeartbeatRunResponse>;
+  getLastHeartbeat?: () => GetHeartbeatLastResponse;
+  listHeartbeatHistory?: (input?: {
+    limit?: number;
+    cursor?: string;
+  }) => GetHeartbeatHistoryResponse;
 }
 
 function writeJson(res: ServerResponse, statusCode: number, payload: unknown): void {
@@ -179,6 +189,14 @@ function isPostPermissionResolveRequest(value: unknown): value is PostPermission
   );
 }
 
+function isPostHeartbeatRunRequest(value: unknown): value is PostHeartbeatRunRequest {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return record.reason === undefined || typeof record.reason === "string";
+}
+
 function normalizeIdempotencyKey(value: unknown): string | undefined {
   if (typeof value !== "string") {
     return undefined;
@@ -239,6 +257,69 @@ export function createControlPlaneRequestHandler(deps: ControlPlaneRouterDeps) {
 
     if (method === "GET" && url.pathname === "/api/events/stream") {
       deps.sseHub.addClient(req, res);
+      return;
+    }
+
+    if (method === "POST" && url.pathname === "/api/heartbeat/run") {
+      if (deps.runHeartbeat === undefined) {
+        writeJson(res, 501, { code: "NOT_IMPLEMENTED", message: "heartbeat runner is disabled" });
+        return;
+      }
+      try {
+        const payload = await readJsonBodyOptional<unknown>(req);
+        if (payload !== undefined && !isPostHeartbeatRunRequest(payload)) {
+          writeJson(res, 400, {
+            code: "INVALID_REQUEST",
+            message: "reason must be string when provided",
+          });
+          return;
+        }
+        const reason =
+          typeof payload?.reason === "string" && payload.reason.trim().length > 0
+            ? payload.reason.trim()
+            : "manual";
+        const result = await deps.runHeartbeat(reason);
+        writeJson(res, 200, result);
+      } catch (error) {
+        const summary = toErrorSummary(error);
+        writeJson(res, toHttpStatusCode(summary), {
+          code: summary.errorCode,
+          message: summary.errorMessage,
+        });
+      }
+      return;
+    }
+
+    if (method === "GET" && url.pathname === "/api/heartbeat/last") {
+      if (deps.getLastHeartbeat === undefined) {
+        writeJson(res, 501, { code: "NOT_IMPLEMENTED", message: "heartbeat runner is disabled" });
+        return;
+      }
+      writeJson(res, 200, deps.getLastHeartbeat());
+      return;
+    }
+
+    if (method === "GET" && url.pathname === "/api/heartbeat/history") {
+      if (deps.listHeartbeatHistory === undefined) {
+        writeJson(res, 501, { code: "NOT_IMPLEMENTED", message: "heartbeat runner is disabled" });
+        return;
+      }
+      const limitRaw = toQueryValue(url, "limit");
+      if (
+        limitRaw !== undefined &&
+        (!Number.isFinite(Number(limitRaw)) || Number.parseInt(limitRaw, 10) <= 0)
+      ) {
+        writeJson(res, 400, {
+          code: "INVALID_REQUEST",
+          message: "limit must be a positive integer",
+        });
+        return;
+      }
+      const response = deps.listHeartbeatHistory({
+        limit: limitRaw !== undefined ? Number.parseInt(limitRaw, 10) : undefined,
+        cursor: toQueryValue(url, "cursor"),
+      });
+      writeJson(res, 200, response);
       return;
     }
 

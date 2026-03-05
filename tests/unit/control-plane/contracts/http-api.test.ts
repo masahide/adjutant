@@ -33,6 +33,11 @@ test("StreamEventType accepts ACP naming convention with slash separator", () =>
   assert.equal(type, "permission/requested");
 });
 
+test("StreamEventType accepts heartbeat event", () => {
+  const type: StreamEventType = "heartbeat";
+  assert.equal(type, "heartbeat");
+});
+
 test("ChatStreamEvent / ToolEventRecord keep new tool I/O fields optional", () => {
   const legacyEvent: ChatStreamEvent = {
     seq: 1,

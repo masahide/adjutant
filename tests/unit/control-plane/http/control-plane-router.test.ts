@@ -363,3 +363,176 @@ test("POST /api/commands rejects blank sessionKey", async (t) => {
     message: "sessionKey/message are required",
   });
 });
+
+test("heartbeat API: run / last / history が契約どおり応答する", async (t) => {
+  const runLifecycle = new RunLifecycle({
+    now: () => "2026-03-01T00:00:00.000Z",
+    newMessageId: () => "msg_test",
+  });
+  const runEventBuffer = new RunEventBuffer({ retentionMs: 60_000 });
+  const stateDir = await mkdtemp(join(tmpdir(), "adjutant-router-test-heartbeat-"));
+  t.after(async () => {
+    await rm(stateDir, { recursive: true, force: true });
+  });
+  const threadRepository = ThreadRepository.fromStateDir(stateDir);
+  await threadRepository.initialize();
+  const sample = {
+    schema: "adjutant.heartbeat.result.v1" as const,
+    status: "ran" as const,
+    event: {
+      status: "sent" as const,
+      reason: "stale thread",
+    },
+    ts: "2026-03-05T00:00:00.000Z",
+    runId: "session:s1:run:10",
+  };
+
+  const handler = createControlPlaneRequestHandler({
+    sseHub: new SseHub(),
+    renderRootPage: () => "<!doctype html><html></html>",
+    buildSnapshot: () => ({ runs: [], toolEventsByRun: {}, pendingPermissions: [] }),
+    submitPrompt: async () => {
+      throw new Error("not used");
+    },
+    readRunAudit: async () => ({}),
+    runLifecycle,
+    runEventBuffer,
+    chatHistoryStore: new ChatHistoryStore(),
+    threadRepository,
+    buildThreadSnapshot: () => {
+      const thread = threadRepository.getOrVirtual("main");
+      if (thread === undefined) {
+        return undefined;
+      }
+      return {
+        thread,
+        runs: [],
+        toolEventsByRun: {},
+        pendingPermissions: [],
+      };
+    },
+    supervisor: {
+      request: async () => {
+        throw new Error("not used");
+      },
+    } as unknown as WorkerSupervisor,
+    permissionGateway: new PermissionGateway({
+      emitUiEvent: () => {},
+    }),
+    runHeartbeat: async () => sample,
+    getLastHeartbeat: () => sample,
+    listHeartbeatHistory: () => ({
+      items: [sample],
+      nextCursor: "MQ",
+    }),
+  });
+
+  const port = await allocatePort();
+  const server = createServer((req, res) => {
+    void handler(req, res);
+  });
+  await new Promise<void>((resolve) => {
+    server.listen(port, "127.0.0.1", () => resolve());
+  });
+  t.after(async () => {
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve());
+    });
+  });
+
+  const runRes = await fetch(`http://127.0.0.1:${port}/api/heartbeat/run`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ reason: "manual-check" }),
+  });
+  assert.equal(runRes.status, 200);
+  assert.deepEqual(await runRes.json(), sample);
+
+  const lastRes = await fetch(`http://127.0.0.1:${port}/api/heartbeat/last`);
+  assert.equal(lastRes.status, 200);
+  assert.deepEqual(await lastRes.json(), sample);
+
+  const historyRes = await fetch(
+    `http://127.0.0.1:${port}/api/heartbeat/history?limit=10&cursor=MQ`
+  );
+  assert.equal(historyRes.status, 200);
+  assert.deepEqual(await historyRes.json(), {
+    items: [sample],
+    nextCursor: "MQ",
+  });
+});
+
+test("heartbeat history API: invalid limit は 400 を返す", async (t) => {
+  const runLifecycle = new RunLifecycle({
+    now: () => "2026-03-01T00:00:00.000Z",
+    newMessageId: () => "msg_test",
+  });
+  const runEventBuffer = new RunEventBuffer({ retentionMs: 60_000 });
+  const stateDir = await mkdtemp(join(tmpdir(), "adjutant-router-test-heartbeat-invalid-"));
+  t.after(async () => {
+    await rm(stateDir, { recursive: true, force: true });
+  });
+  const threadRepository = ThreadRepository.fromStateDir(stateDir);
+  await threadRepository.initialize();
+
+  const handler = createControlPlaneRequestHandler({
+    sseHub: new SseHub(),
+    renderRootPage: () => "<!doctype html><html></html>",
+    buildSnapshot: () => ({ runs: [], toolEventsByRun: {}, pendingPermissions: [] }),
+    submitPrompt: async () => {
+      throw new Error("not used");
+    },
+    readRunAudit: async () => ({}),
+    runLifecycle,
+    runEventBuffer,
+    chatHistoryStore: new ChatHistoryStore(),
+    threadRepository,
+    buildThreadSnapshot: () => {
+      const thread = threadRepository.getOrVirtual("main");
+      if (thread === undefined) {
+        return undefined;
+      }
+      return {
+        thread,
+        runs: [],
+        toolEventsByRun: {},
+        pendingPermissions: [],
+      };
+    },
+    supervisor: {
+      request: async () => {
+        throw new Error("not used");
+      },
+    } as unknown as WorkerSupervisor,
+    permissionGateway: new PermissionGateway({
+      emitUiEvent: () => {},
+    }),
+    runHeartbeat: async () => {
+      throw new Error("not used");
+    },
+    getLastHeartbeat: () => null,
+    listHeartbeatHistory: () => ({
+      items: [],
+    }),
+  });
+
+  const port = await allocatePort();
+  const server = createServer((req, res) => {
+    void handler(req, res);
+  });
+  await new Promise<void>((resolve) => {
+    server.listen(port, "127.0.0.1", () => resolve());
+  });
+  t.after(async () => {
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve());
+    });
+  });
+
+  const response = await fetch(`http://127.0.0.1:${port}/api/heartbeat/history?limit=abc`);
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), {
+    code: "INVALID_REQUEST",
+    message: "limit must be a positive integer",
+  });
+});

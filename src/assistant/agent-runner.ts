@@ -82,6 +82,7 @@ type AgentRunnerRuntime = {
     memoryScope?: "main" | "spoke";
     memoryWriteEnabled?: boolean;
     stateDir?: string;
+    isHeartbeat?: boolean;
   }) => Promise<{ session: PiAgentSessionLike }>;
   ensureWorkspaceBootstrapFiles: (workspaceDir: string) => Promise<unknown>;
   loadWorkspaceBootstrapFiles: (workspaceDir: string) => Promise<WorkspaceBootstrapFile[]>;
@@ -129,7 +130,7 @@ const defaultRuntime: AgentRunnerRuntime = {
       typeof process.env.OPENAI_API_KEY === "string" && process.env.OPENAI_API_KEY.trim().length > 0
     );
   },
-  createSession: async ({ cwd, model, memoryScope, memoryWriteEnabled, stateDir }) => {
+  createSession: async ({ cwd, model, memoryScope, memoryWriteEnabled, stateDir, isHeartbeat }) => {
     const module = await import("./agent-session-factory.js");
     return await module.createPiAgentSession({
       cwd,
@@ -137,6 +138,7 @@ const defaultRuntime: AgentRunnerRuntime = {
       memoryScope,
       memoryWriteEnabled,
       stateDir,
+      isHeartbeat,
     });
   },
   ensureWorkspaceBootstrapFiles,
@@ -191,6 +193,7 @@ async function resolveAgentSession(params: {
     memoryScope: params.memoryScope,
     memoryWriteEnabled: params.options.memoryWriteEnabled,
     stateDir: params.stateDir,
+    isHeartbeat: params.options.isHeartbeat === true,
   });
 
   if (typeof sessionId === "string" && sessionId.length > 0) {

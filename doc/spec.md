@@ -449,6 +449,10 @@ flowchart LR
 - `batch classifier` は `respond|note|ignore` を返す。タイムアウト/例外/低 confidence は fail-closed で `note` として扱う。
 - dispatch は既定で `runTarget=main` へ送信し、元セッションは `originSessionKey` で保持する。
 - global queue は `dm/group/channel/flusher/heartbeat` の source 優先度で同時実行を制御し、DM burst slot と starvation 昇格を持つ。
+- Phase E（2026-03-05）契約固定:
+  - control-plane 実装配置は `src/control-plane/proactive/*` を正本とする。
+  - ingest 連携は `CollectorIngestHandler` の `onAccept` から proactive pipeline へ委譲する。
+  - classifier の fail-closed 方針（timeout/例外/低 confidence -> `note`）は必須契約とする。
 
 ### 13.3 Timeline v1.5 / Watermark / Pending Flusher
 
@@ -463,6 +467,10 @@ flowchart LR
 - 別人返信（oldest actor と異なる actor）を検出した session は抑制して起動しない。
 - tick 後は `watermarks.scan.lastGoodOffset` に `lastScannedOffset` を揃えて保存し、prune を実行する。
 - timeline truncate 復旧で `lastScannedOffset > fileSize` の場合、offset と session 状態を 0 / 空へリセットする。
+- Phase E（2026-03-05）契約固定:
+  - schema 型定義は `src/control-plane/proactive/schema.ts` を正本とする。
+  - `assistant_final` でのみ `handled.lastHandledOffset` を前進させる。
+  - flusher 運用手順の正本は `doc/runbook/proactive-flusher-operations.md` とする。
 
 ### 13.4 初回実行リチュアル（BOOTSTRAP 注入）
 
@@ -680,6 +688,10 @@ classDiagram
   - `POST /api/commands`
   - `GET /api/snapshot`
   - `GET /api/events/stream`
+  - `POST /api/heartbeat/run`
+  - `GET /api/heartbeat/last`
+  - `GET /api/heartbeat/history?limit={n}&cursor={opaque}`
+  - `GET /api/events/stream` は `event: heartbeat` を含む
   - `GET /api/chat/runs/:runId/stream` (`event: chat`)
     - `ChatStreamEvent` は後方互換の optional 拡張として
       `toolCallId` / `toolName` / `toolStatus` / `toolInput` / `toolOutput` / `toolError` を持つ
@@ -687,6 +699,7 @@ classDiagram
     - `toolEventsByRun[runId][]` は optional で `rawInput` / `rawOutput` / `error` を含む
   - `POST /api/commands` は `idempotencyKey` を受け付け、同一 payload 再送時は run を再作成せず既存 `runId` を返す
   - 同一 `idempotencyKey` で payload が異なる場合は `409 INVALID_REQUEST` を返す
+  - heartbeat 実行時は `report_heartbeat_status` を 1 回必須とし、payload は `src/control-plane/heartbeat/schema.ts` で検証する
 
 #### API/SSE 例
 
@@ -740,6 +753,13 @@ data: {"runId":"session:sess_xxx:run:1","update":{"sessionUpdate":"agent_message
   - journal: `state/journal/control-plane/idempotency.jsonl`
   - snapshot: `state/cursor/control-plane.idempotency.snapshot.json`
   - キーは `scope + logicalKey`（例: `command:sessionKey:idempotencyKey`, `ingest:dedupeKey`）で管理する。
+- proactive / heartbeat 永続化の正本:
+  - timeline: `state/timeline.jsonl`
+  - watermarks: `state/watermarks.json`
+  - heartbeat runs: `state/heartbeat-runs.jsonl`
+- watermark commit 規約:
+  - run terminal が `assistant_final` かつ `timelineOffset` が取得できた場合のみ前進する。
+  - `assistant_aborted|assistant_error` と offset 未取得時は前進しない。
 - backlog 運用指標は `ingest_backlog_count` と `oldest_ingest_age_seconds` を使用し、しきい値・一次対応は `doc/runbook/collector-backlog-monitoring.md` を正本とする。
 
 ### 14.7 Capability Gate 方針
@@ -753,7 +773,7 @@ data: {"runId":"session:sess_xxx:run:1","update":{"sessionUpdate":"agent_message
 
 ### 14.8 エラー分類と回復
 
-- 代表エラー: `UNSUPPORTED_CAPABILITY`, `ACP_PROTOCOL_ERROR`, `JOURNAL_APPEND_FAILED`, `WORKER_TIMEOUT`, `WORKER_CRASHED`, `DOWNSTREAM_ERROR`, `INVALID_RECORD`, `SESSION_BUSY`, `DELIVER_TIMEOUT`, `DELIVER_RETRY_EXHAUSTED`
+- 代表エラー: `UNSUPPORTED_CAPABILITY`, `ACP_PROTOCOL_ERROR`, `JOURNAL_APPEND_FAILED`, `WORKER_TIMEOUT`, `WORKER_CRASHED`, `DOWNSTREAM_ERROR`, `INVALID_RECORD`, `SESSION_BUSY`, `DELIVER_TIMEOUT`, `DELIVER_RETRY_EXHAUSTED`, `CLASSIFIER_TIMEOUT`, `CLASSIFIER_INVALID_OUTPUT`, `TIMELINE_APPEND_FAILED`, `WATERMARK_SAVE_FAILED`, `HEARTBEAT_FAILED`
 - worker 異常終了時は supervisor が再起動を試行し、構造化ログへ理由を記録する。
 - process 再起動時は journal + cursor から未処理のみ再開する。
 - deliver プロセス異常終了時は control-plane supervisor が再起動を試行し、`control-plane.deliver-queue` cursor 未満の未完了 enqueue を replay する。
@@ -761,6 +781,8 @@ data: {"runId":"session:sess_xxx:run:1","update":{"sessionUpdate":"agent_message
 - restart 後の `collector/ingest` dedupe 判定は ingest dedupe store を復元し、canonical `messageId` の再利用を継続する。
 - collector 側障害（CDP 切断、ingest timeout、backlog 増加）は `doc/runbook/collector-backlog-monitoring.md` の一次対応に従う。
 - deliver 側障害（timeout, crash, completion 遅延）は `doc/runbook/deliver-queue-recovery.md` の一次対応に従う。
+- proactive/flusher 側障害は `doc/runbook/proactive-flusher-operations.md` の一次対応に従う。
+- heartbeat 側障害は `doc/runbook/heartbeat-operations.md` の一次対応に従う。
 - 運用ロールバック手順は `doc/runbook/phase-b-rollback.md` を正本とする。
 
 ### 14.9 v1 制約
