@@ -93,3 +93,4 @@ vite.config.ts.timestamp-*
 
 vendor/
 .playwright-cli/
+doc/.DS_Store
