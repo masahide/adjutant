@@ -1,0 +1,18 @@
+{
+  "name": "play-slack-search",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "pnpm run format:check && pnpm run typecheck && pnpm run test",
+    "format:check": "prettier --check .",
+    "format:write": "prettier --write .",
+    "slack-search": "node --experimental-strip-types ./scripts/slack-search.ts",
+    "test": "node --test --experimental-strip-types ./tests/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "^25.3.5",
+    "prettier": "^3.8.1",
+    "typescript": "^5.9.3"
+  }
+}

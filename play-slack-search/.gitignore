@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Local configuration
+.env
+.env.local
+
+# Browser/session artifacts
+.playwright-cli/
+
+# Generated output
+tmp/
+coverage/
+
+# Logs
+*.log
+pnpm-debug.log*
+npm-debug.log*
+
+# OS files
+.DS_Store
