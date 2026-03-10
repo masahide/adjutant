@@ -18,11 +18,13 @@ test('parseArgs は検索実行時のデフォルト値を補完する', () => {
 
   assert.deepEqual(options, {
     close: false,
+    hydrate: false,
     limit: null,
     listChannels: false,
     listUsers: false,
     profile: options.profile,
     query: 'from:me',
+    resolveChannelIds: [],
     session: DEFAULT_SESSION,
     workspaceUrl: 'https://example.slack.com',
   });
@@ -46,6 +48,7 @@ test('parseArgs は .env 相当のデフォルト値を補完する', () => {
 test('parseArgs は equals 形式と一覧取得オプションを解釈する', () => {
   const options = parseArgs([
     '--list-channels',
+    '--hydrate',
     '--limit=3',
     '--session=my-session',
     '--profile=~/custom-profile',
@@ -55,6 +58,7 @@ test('parseArgs は equals 形式と一覧取得オプションを解釈する',
   ]);
 
   assert.equal(options.listChannels, true);
+  assert.equal(options.hydrate, true);
   assert.equal(options.limit, 3);
   assert.equal(options.session, 'my-session');
   assert.equal(options.profile, '~/custom-profile');
@@ -72,6 +76,48 @@ test('parseArgs は list-users を解釈する', () => {
 
   assert.equal(options.listChannels, false);
   assert.equal(options.listUsers, true);
+  assert.equal(options.hydrate, false);
+  assert.equal(options.limit, 5);
+});
+
+test('parseArgs は resolve-channel-id を解釈する', () => {
+  const options = parseArgs([
+    '--resolve-channel-id',
+    'C12345678',
+    '--workspace-url=https://example.slack.com',
+  ]);
+
+  assert.equal(options.listChannels, false);
+  assert.equal(options.listUsers, false);
+  assert.deepEqual(options.resolveChannelIds, ['C12345678']);
+  assert.equal(options.query, '');
+});
+
+test('parseArgs は resolve-channel-id を複数回受け付ける', () => {
+  const options = parseArgs([
+    '--resolve-channel-id',
+    'C12345678',
+    '--resolve-channel-id=C23456789,C34567890',
+    '--workspace-url=https://example.slack.com',
+  ]);
+
+  assert.deepEqual(options.resolveChannelIds, [
+    'C12345678',
+    'C23456789',
+    'C34567890',
+  ]);
+});
+
+test('parseArgs は list-user を list-users の alias として解釈する', () => {
+  const options = parseArgs([
+    '--list-user',
+    '--limit=5',
+    '--workspace-url=https://example.slack.com',
+  ]);
+
+  assert.equal(options.listChannels, false);
+  assert.equal(options.listUsers, true);
+  assert.equal(options.hydrate, false);
   assert.equal(options.limit, 5);
 });
 
@@ -122,6 +168,18 @@ test('parseArgs は list-channels と list-users の併用を拒否する', () =
   );
 });
 
+test('parseArgs は resolve-channel-id と list-users の併用を拒否する', () => {
+  assert.throws(
+    () =>
+      parseArgs(['--resolve-channel-id', 'C123', '--list-users'], {
+        env: {
+          [PLAY_SLACK_SEARCH_WORKSPACE_URL_ENV]: 'https://example.slack.com',
+        },
+      }),
+    /cannot be used together/,
+  );
+});
+
 test('parseArgs は不正な limit を拒否する', () => {
   assert.throws(
     () =>
@@ -134,6 +192,18 @@ test('parseArgs は不正な limit を拒否する', () => {
   );
 });
 
+test('parseArgs は値なしの limit を明示的に拒否する', () => {
+  assert.throws(
+    () =>
+      parseArgs(['--list-channels', '--limit'], {
+        env: {
+          [PLAY_SLACK_SEARCH_WORKSPACE_URL_ENV]: 'https://example.slack.com',
+        },
+      }),
+    /--limit requires a value/,
+  );
+});
+
 test('parseArgs は未知の引数を拒否する', () => {
   assert.throws(
     () =>
@@ -143,5 +213,17 @@ test('parseArgs は未知の引数を拒否する', () => {
         },
       }),
     /Unknown argument/,
+  );
+});
+
+test('parseArgs は hydrate 単独利用を拒否する', () => {
+  assert.throws(
+    () =>
+      parseArgs(['--query', 'from:me', '--hydrate'], {
+        env: {
+          [PLAY_SLACK_SEARCH_WORKSPACE_URL_ENV]: 'https://example.slack.com',
+        },
+      }),
+    /--hydrate.*list-channels.*list-users/,
   );
 });

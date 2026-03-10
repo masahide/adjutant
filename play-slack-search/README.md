@@ -26,6 +26,7 @@ PLAY_SLACK_SEARCH_PROFILE=~/.playwright-cli/slack
 pnpm slack-search --query 'from:me'
 pnpm slack-search --list-channels --limit 10
 pnpm slack-search --list-users --limit 10
+pnpm slack-search --list-users --hydrate
 pnpm format:write
 pnpm check
 ```
@@ -63,6 +64,12 @@ pnpm slack-search --workspace-url https://your-workspace.slack.com --query 'from
 
 ```bash
 pnpm slack-search --list-channels --limit 50 --output ./tmp/channels.json
+```
+
+一覧前に Slack クライアント状態の warm-up を試みたい場合は `--hydrate` を付けます。
+
+```bash
+pnpm slack-search --list-channels --hydrate --output ./tmp/channels.json
 ```
 
 ユーザー一覧をファイルへ保存する例です。

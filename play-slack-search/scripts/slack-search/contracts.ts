@@ -12,12 +12,14 @@ export interface SessionInfo {
 
 export interface Options {
   close: boolean;
+  hydrate: boolean;
   limit: number | null;
   listChannels: boolean;
   listUsers: boolean;
   output?: string;
   profile: string;
   query: string;
+  resolveChannelIds: string[];
   session: string;
   workspaceUrl: string;
 }
@@ -29,13 +31,34 @@ export interface SearchCodeInput {
 }
 
 export interface ListChannelsCodeInput {
+  hydrate?: boolean;
   limit: number;
   workspaceUrl: string;
 }
 
 export interface ListUsersCodeInput {
+  hydrate?: boolean;
   limit: number;
   workspaceUrl: string;
+}
+
+export interface ResolveChannelCodeInput {
+  channelIds: string[];
+  workspaceUrl: string;
+}
+
+export interface HydrateCodeInput {
+  target: 'channels' | 'users';
+  workspaceUrl: string;
+}
+
+export interface HydratePayload {
+  mode: 'hydrate';
+  finalUrl: string;
+  openedView: boolean;
+  pageTitle: string;
+  scrollPasses: number;
+  target: 'channels' | 'users';
 }
 
 export interface ExtractedResult {
@@ -58,6 +81,21 @@ export interface SearchPayload {
   results: ExtractedResult[];
   searchUrl: string;
   sortLabel: string;
+}
+
+export interface ResolvedChannelInfo {
+  channelId: string;
+  channelName: string | null;
+  resolved: boolean;
+  source: 'reduxPersistence.channels' | 'search.suggestion' | 'unresolved';
+  stateKey: string | null;
+}
+
+export interface ResolveChannelsPayload {
+  channels: ResolvedChannelInfo[];
+  listUrl: string;
+  mode: 'resolve-channels';
+  pageTitle: string;
 }
 
 export type ChannelType =
@@ -90,11 +128,35 @@ export interface ChannelInfo {
 export interface ChannelListPayload {
   mode: 'list-channels';
   channels: ChannelInfo[];
+  hydrateDebug?: ChannelListHydrateDebug;
   listUrl: string;
   pageTitle: string;
-  source: 'reduxPersistence.channels';
+  source:
+    | 'reduxPersistence.channels'
+    | 'ui.directories.channels'
+    | 'reduxPersistence.channels+ui.directories.channels';
   stateKey: string | null;
   totalChannelCount: number;
+}
+
+export interface ChannelListHydratePageDebug {
+  currentPage: number | null;
+  nextPageAvailable: boolean;
+  rowsSeen: number;
+  sampleNames: string[];
+  uniqueAfterPage: number;
+}
+
+export interface ChannelListHydrateDebug {
+  error: string | null;
+  finalSortLabel: string | null;
+  firstObservedPage: number | null;
+  openedDirectory: boolean;
+  pageVisits: ChannelListHydratePageDebug[];
+  resetToFirstPage: boolean;
+  sortSetToNewest: boolean;
+  stopReason: string | null;
+  uiChannelCount: number;
 }
 
 export interface UserInfo {
@@ -119,26 +181,55 @@ export interface UserInfo {
   isUltraRestricted: boolean;
 }
 
+export interface UserListHydrateDebug {
+  clickedMemberButton: boolean;
+  error: string | null;
+  finalUiUserCount: number;
+  firstPassDeclaredCount: number | null;
+  firstPassUiUserCount: number;
+  memberPanelOpened: boolean;
+  openAttempts: number;
+  secondPassDeclaredCount: number | null;
+  secondPassRan: boolean;
+  secondPassUiUserCount: number | null;
+}
+
 export interface UserListPayload {
   mode: 'list-users';
   users: UserInfo[];
+  hydrateDebug?: UserListHydrateDebug;
   listUrl: string;
   pageTitle: string;
-  source: 'reduxPersistence.members' | 'reduxPersistence.users';
+  source:
+    | 'reduxPersistence.members'
+    | 'reduxPersistence.users'
+    | 'reduxPersistence.members+users'
+    | 'ui.member-panel'
+    | 'reduxPersistence.members+ui.member-panel'
+    | 'reduxPersistence.users+ui.member-panel'
+    | 'reduxPersistence.members+users+ui.member-panel';
   stateKey: string | null;
   totalUserCount: number;
 }
 
 export interface OutputMetadata {
+  debug?: {
+    sessionMessages: string[];
+  };
   generatedAt: string;
   profile: string;
   session: string;
   workspaceUrl: string;
 }
 
-export type PayloadBody = SearchPayload | ChannelListPayload | UserListPayload;
+export type PayloadBody =
+  | SearchPayload
+  | ChannelListPayload
+  | UserListPayload
+  | ResolveChannelsPayload;
 
 export type OutputPayload =
   | (SearchPayload & OutputMetadata & { query: string })
   | (ChannelListPayload & OutputMetadata & { query: null })
-  | (UserListPayload & OutputMetadata & { query: null });
+  | (UserListPayload & OutputMetadata & { query: null })
+  | (ResolveChannelsPayload & OutputMetadata & { query: null });

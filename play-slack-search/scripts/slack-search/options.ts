@@ -18,6 +18,7 @@ export function parseArgs(
   const env = parseOptions.env ?? process.env;
   const parsedOptions: Options = {
     close: false,
+    hydrate: false,
     limit: null,
     listChannels: false,
     listUsers: false,
@@ -25,6 +26,7 @@ export function parseArgs(
       readDefaultEnvValue(env, PLAY_SLACK_SEARCH_PROFILE_ENV) ??
       defaultProfilePath(),
     query: '',
+    resolveChannelIds: [],
     session:
       readDefaultEnvValue(env, PLAY_SLACK_SEARCH_SESSION_ENV) ??
       DEFAULT_SESSION,
@@ -40,8 +42,8 @@ export function parseArgs(
       printHelp(env);
       process.exit(0);
     }
-    if ((arg === '--query' || arg === '-q') && next) {
-      parsedOptions.query = next;
+    if (arg === '--query' || arg === '-q') {
+      parsedOptions.query = readRequiredOptionValue(arg, next);
       index += 1;
       continue;
     }
@@ -53,12 +55,25 @@ export function parseArgs(
       parsedOptions.listChannels = true;
       continue;
     }
-    if (arg === '--list-users') {
+    if (arg === '--list-users' || arg === '--list-user') {
       parsedOptions.listUsers = true;
       continue;
     }
-    if ((arg === '--output' || arg === '-o') && next) {
-      parsedOptions.output = next;
+    if (arg === '--resolve-channel-id') {
+      parsedOptions.resolveChannelIds.push(
+        ...parseResolveChannelIds(readRequiredOptionValue(arg, next)),
+      );
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith('--resolve-channel-id=')) {
+      parsedOptions.resolveChannelIds.push(
+        ...parseResolveChannelIds(arg.slice('--resolve-channel-id='.length)),
+      );
+      continue;
+    }
+    if (arg === '--output' || arg === '-o') {
+      parsedOptions.output = readRequiredOptionValue(arg, next);
       index += 1;
       continue;
     }
@@ -66,8 +81,8 @@ export function parseArgs(
       parsedOptions.output = arg.slice('--output='.length);
       continue;
     }
-    if (arg === '--session' && next) {
-      parsedOptions.session = next;
+    if (arg === '--session') {
+      parsedOptions.session = readRequiredOptionValue(arg, next);
       index += 1;
       continue;
     }
@@ -75,8 +90,8 @@ export function parseArgs(
       parsedOptions.session = arg.slice('--session='.length);
       continue;
     }
-    if (arg === '--profile' && next) {
-      parsedOptions.profile = next;
+    if (arg === '--profile') {
+      parsedOptions.profile = readRequiredOptionValue(arg, next);
       index += 1;
       continue;
     }
@@ -84,8 +99,8 @@ export function parseArgs(
       parsedOptions.profile = arg.slice('--profile='.length);
       continue;
     }
-    if (arg === '--workspace-url' && next) {
-      parsedOptions.workspaceUrl = next;
+    if (arg === '--workspace-url') {
+      parsedOptions.workspaceUrl = readRequiredOptionValue(arg, next);
       index += 1;
       continue;
     }
@@ -93,8 +108,11 @@ export function parseArgs(
       parsedOptions.workspaceUrl = arg.slice('--workspace-url='.length);
       continue;
     }
-    if (arg === '--limit' && next) {
-      parsedOptions.limit = parsePositiveInteger(next, '--limit');
+    if (arg === '--limit') {
+      parsedOptions.limit = parsePositiveInteger(
+        readRequiredOptionValue(arg, next),
+        '--limit',
+      );
       index += 1;
       continue;
     }
@@ -109,17 +127,29 @@ export function parseArgs(
       parsedOptions.close = true;
       continue;
     }
+    if (arg === '--hydrate') {
+      parsedOptions.hydrate = true;
+      continue;
+    }
 
     throw new Error(`Unknown argument: ${arg}`);
   }
 
-  if (parsedOptions.listChannels && parsedOptions.listUsers) {
+  const activeModeCount = [
+    parsedOptions.listChannels,
+    parsedOptions.listUsers,
+    parsedOptions.resolveChannelIds.length > 0,
+  ].filter(Boolean).length;
+
+  if (activeModeCount > 1) {
     throw new Error(
-      '`--list-channels` and `--list-users` cannot be used together.',
+      '`--list-channels`, `--list-users`, and `--resolve-channel-id` cannot be used together.',
     );
   }
   if (
-    (parsedOptions.listChannels || parsedOptions.listUsers) &&
+    (parsedOptions.listChannels ||
+      parsedOptions.listUsers ||
+      parsedOptions.resolveChannelIds.length > 0) &&
     parsedOptions.query.trim()
   ) {
     throw new Error('`--query` cannot be used together with list modes.');
@@ -127,10 +157,20 @@ export function parseArgs(
   if (
     !parsedOptions.listChannels &&
     !parsedOptions.listUsers &&
+    parsedOptions.resolveChannelIds.length === 0 &&
     !parsedOptions.query.trim()
   ) {
     throw new Error(
-      '`--query` is required unless `--list-channels` or `--list-users` is specified.',
+      '`--query` is required unless `--list-channels`, `--list-users`, or `--resolve-channel-id` is specified.',
+    );
+  }
+  if (
+    parsedOptions.hydrate &&
+    !parsedOptions.listChannels &&
+    !parsedOptions.listUsers
+  ) {
+    throw new Error(
+      '`--hydrate` can only be used together with `--list-channels` or `--list-users`.',
     );
   }
   if (!parsedOptions.workspaceUrl.trim()) {
@@ -153,11 +193,15 @@ function printHelp(env: NodeJS.ProcessEnv): void {
     '  node --experimental-strip-types ./scripts/slack-search.ts --query "from:<@UTEST0001> after:2026-03-03"',
     '  node --experimental-strip-types ./scripts/slack-search.ts --list-channels',
     '  node --experimental-strip-types ./scripts/slack-search.ts --list-users',
+    '  node --experimental-strip-types ./scripts/slack-search.ts --resolve-channel-id C12345678 --resolve-channel-id C23456789',
     '',
     'Options:',
-    '  --query, -q          Slack search query. Required unless --list-channels or --list-users is used.',
+    '  --query, -q          Slack search query. Required unless --list-channels, --list-users, or --resolve-channel-id is used.',
     '  --list-channels      Emit channel info list from Slack client state.',
     '  --list-users         Emit user info list from Slack client state.',
+    '  --list-user          Alias for --list-users.',
+    '  --resolve-channel-id Resolve one or more channel IDs to channel names best-effort. Repeatable, also accepts comma-separated IDs.',
+    '  --hydrate            Best-effort warm up Slack client state before list modes.',
     '  --output, -o         Write JSON to a file as well as stdout.',
     `  --session            Playwright session name. Default: ${defaultSession}`,
     `  --profile            Browser profile directory. Default: ${defaultProfile}`,
@@ -170,12 +214,26 @@ function printHelp(env: NodeJS.ProcessEnv): void {
   process.stdout.write(`${lines.join('\n')}\n`);
 }
 
+function parseResolveChannelIds(value: string): string[] {
+  return value
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+}
+
 function parsePositiveInteger(value: string, flag: string): number {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed) || parsed < 1) {
     throw new Error(`${flag} must be a positive integer: ${value}`);
   }
   return parsed;
+}
+
+function readRequiredOptionValue(flag: string, value?: string): string {
+  if (!value || value.startsWith('-')) {
+    throw new Error(`${flag} requires a value.`);
+  }
+  return value;
 }
 
 function readDefaultEnvValue(

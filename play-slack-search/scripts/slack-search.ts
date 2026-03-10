@@ -13,7 +13,12 @@ function main(): void {
   loadPackageEnv();
   const options = parseArgs(process.argv.slice(2));
   const profile = normalizeProfilePath(options.profile);
-  const { openedSession, session } = prepareSession({
+  const {
+    debug,
+    openedSession,
+    profile: openedProfile,
+    session,
+  } = prepareSession({
     profile,
     requestedSession: options.session,
     workspaceUrl: options.workspaceUrl,
@@ -22,7 +27,8 @@ function main(): void {
   try {
     const payloadBody = executeSlackCommand(options, session);
     const payload = buildOutputPayload(payloadBody, {
-      profile,
+      debug,
+      profile: openedProfile,
       query: options.query,
       session,
       workspaceUrl: options.workspaceUrl,
@@ -39,6 +45,9 @@ function main(): void {
 function buildOutputPayload(
   payloadBody: PayloadBody,
   metadata: {
+    debug?: {
+      sessionMessages: string[];
+    };
     profile: string;
     query: string;
     session: string;
@@ -47,6 +56,7 @@ function buildOutputPayload(
 ): OutputPayload {
   const baseMetadata = {
     generatedAt: new Date().toISOString(),
+    ...(metadata.debug ? { debug: metadata.debug } : {}),
     profile: metadata.profile,
     session: metadata.session,
     workspaceUrl: metadata.workspaceUrl,

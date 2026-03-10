@@ -25,9 +25,10 @@ CLI の入口は `scripts/slack-search.ts` です。
 3. ブラウザプロファイルのパスを正規化する
 4. 既存の Playwright session を再利用できるか判定する
 5. `search` / `list-channels` / `list-users` のどれを動かすか決める
-6. `playwright-cli run-code` にブラウザ内実行コードを渡す
-7. `### Result` ブロックの JSON を取り出す
-8. 共通メタデータを足して stdout と必要なら `--output` 先に書く
+6. `--hydrate` があれば先に Slack UI をたどって client state の warm-up を試みる
+7. `playwright-cli run-code` にブラウザ内実行コードを渡す
+8. `### Result` ブロックの JSON を取り出す
+9. 共通メタデータを足して stdout と必要なら `--output` 先に書く
 
 主要な実装ファイル:
 
@@ -186,14 +187,15 @@ channel-list は `scripts/slack-search/browser/list-channels.ts` が担当しま
 
 channel-list は state の `channels` slice を読みます。
 
-その後、次の条件でフィルタします。
+その後、次のような channel-like entry を一覧対象にします。
 
 - `channel.is_channel`
-- または `channel.is_group`
+- `channel.is_group`
+- `channel.is_im`
+- `channel.is_mpim`
+- `channel.is_private`
 
-ここで重要なのは、現在の実装では DM / MPIM は一覧対象に含めていないことです。
-
-`classifyChannel()` 自体は `dm` / `mpim` を返せますが、前段の filter が `is_channel` / `is_group` に限定されているため、実質的には public/private channel の一覧です。
+つまり現在は public/private channel だけでなく、DM / MPIM も含めて返します。ただし取得元はあくまでクライアント内キャッシュなので、未同期の会話は出てきません。
 
 ### 7.3 整形内容
 
@@ -235,12 +237,7 @@ channel-list と同じく IndexedDB を使います。
 
 当初は `state.users` を読んでいましたが、実際の Slack client state では `users` が空、または存在しない一方で、`members` に実データが入っているケースがありました。
 
-そのため現在は次の候補を比較しています。
-
-1. `state.members`
-2. `state.users`
-
-両方の entry 数を見て、実データがある方を採用します。返却 JSON の `source` には実際に使った slice 名を入れます。
+そのため現在は `state.members` と `state.users` を両方読み、ID / entry key ベースで可能な限りマージします。片方にしか無いユーザーや、片方にしか無い profile/email/title などを拾えるようにしています。返却 JSON の `source` には `members` / `users` / `members+users` のどれを使ったかを入れます。
 
 ### 8.3 取り出す項目
 
@@ -281,7 +278,7 @@ channel-list と同じく IndexedDB を使います。
 ### 8.5 制約
 
 - これは Slack クライアントにキャッシュ済みの member 情報です
-- 必ずしもワークスペース全ユーザーを完全網羅するとは限りません
+- `members` と `users` をマージしても、必ずしもワークスペース全ユーザーを完全網羅するとは限りません
 - bot、削除済みユーザー、外部チーム所属ユーザーも state に入っていれば返ります
 
 ## 9. 出力形式
@@ -296,6 +293,17 @@ channel-list と同じく IndexedDB を使います。
 `query` は search のときだけ検索文字列で、list 系では `null` です。
 
 `--output` を付けた場合は stdout に出すだけでなく、親ディレクトリを `mkdir -p` したうえでファイルにも書きます。
+
+## 9.5 `--hydrate` の内部動作
+
+`--hydrate` は `--list-channels` または `--list-users` と一緒に使う前処理オプションです。
+
+- まず `workspaceUrl` を開く
+- 対象に応じて `Browse channels` / `People` / `Directory` などの view を best-effort で開く
+- 開けた view と現在ページ上の大きい scroll container を複数回スクロールして、Slack client state の追加読み込みを促す
+- 最後に workspace URL へ戻って、通常の `reduxPersistence` 読み取りを実行する
+
+これは完全保証ではなく、Slack UI 変更の影響を受ける補助機能です。ただし単純な cache 読み取りだけよりは、一覧件数が増える可能性があります。
 
 ## 10. 既知の弱点
 
