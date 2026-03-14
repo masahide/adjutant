@@ -158,6 +158,22 @@ flowchart LR
 - notification
   - `channel_id`, `channel_name`, `notification_type`, `title`, `message_text`, `user`, `event_ts`
 
+vNext では notification について、collector 調整により以下の optional key を追加収集する前提とする。
+
+- `team_id?`
+- `thread_ts?`
+- `message_ts?`
+- `permalink?`
+- `mention_target_user_id?`
+- `is_direct_mention?`
+
+派生規約:
+
+- `message_ts` は raw field が無い場合、`ts` または `entry.item.message.ts` から派生してよい。
+- `permalink` は raw field を必須とせず、`workspaceHost + channel_id + message_ts` から派生してよい。
+- `mention_target_user_id` は raw field を必須とせず、Slack blocks の `user` node または本文中の `<@USER_ID>` から抽出してよい。
+- `is_direct_mention` は raw field が無い場合、抽出した mention target と self user id から派生判定してよい。
+
 注記:
 
 - 現実装の `detail.slack` には `type` フィールドを付与していない。
@@ -270,32 +286,38 @@ flowchart LR
 - `schema=adjutant.raw-fetch.event.v1`
 - `kind=raw_fetch`
 - `source`, `at`, `payload`, `logged_at` を保持
-- `ADJUTANT_RAW_FETCH_LOG_MAX_PAYLOAD_CHARS` が 0 より大きい場合、`payload` は文字数上限を超えると `_truncated` 付き preview に切り詰める
+- `ADJUTANT_RAW_FETCH_LOG_MAX_PAYLOAD_CHARS` が 0 より大きい場合、`payload` は文字数上限を超えると `_truncated` 付き preview に切り詰める。v1 の script 既定値は `"20000"` とする。
 
 ## 8. 設定
 
 ### 8.1 収集ランタイム
 
-| 変数                                       | 既定値                              | 用途                                |
-| ------------------------------------------ | ----------------------------------- | ----------------------------------- |
-| `CDP_HOST`                                 | `127.0.0.1`                         | CDP 接続先ホスト                    |
-| `CDP_PORT`                                 | `9222`                              | CDP 接続先ポート                    |
-| `CDP_ENDPOINT_FILE`                        | `.adjutant/cdp-endpoint.json`       | 接続先 JSON の読み込み元            |
-| `DATA_DIR`                                 | `<stateDir>/data`                   | 出力ディレクトリ                    |
-| `ADJUTANT_SLACK_ACCOUNT_ID`                | `default`                           | Slack 保存先 account_id             |
-| `ADJUTANT_TZ`                              | `Asia/Tokyo`                        | イベント時刻整形タイムゾーン        |
-| `ADJUTANT_DEBUG`                           | -                                   | Slack デバッグトピック有効化        |
-| `ADJUTANT_DISABLE_DOM_CAPTURE`             | `0`                                 | DOM 補完無効化                      |
-| `ADJUTANT_DEBUG_UI`                        | `0`                                 | Debug UI サーバ起動                 |
-| `ADJUTANT_DEBUG_UI_PORT`                   | `8787`                              | Debug UI ポート                     |
-| `ADJUTANT_CDP_EVENT_LOG`                   | `0`                                 | CDP 生イベントを JSONL 保存         |
-| `ADJUTANT_CDP_EVENT_LOG_PATH`              | `<dataDir>/_debug/cdp-events.jsonl` | CDP 生イベント出力先                |
-| `ADJUTANT_CDP_EVENT_LOG_MAX_PARAM_CHARS`   | `0`                                 | params 切り詰め上限 (`0` は無制限)  |
-| `ADJUTANT_RAW_FETCH_LOG`                   | `0`                                 | Raw Fetch イベントを JSONL 保存     |
-| `ADJUTANT_RAW_FETCH_LOG_PATH`              | `<dataDir>/_debug/raw-fetch.jsonl`  | Raw Fetch イベント出力先            |
-| `ADJUTANT_RAW_FETCH_LOG_MAX_PAYLOAD_CHARS` | `0`                                 | payload 切り詰め上限 (`0` は無制限) |
-| `CDP_WAIT_ATTEMPTS`                        | `10` (script)                       | CDP 起動待ち試行回数                |
-| `CDP_WAIT_DELAY`                           | `1` (script, sec)                   | CDP 起動待ち間隔                    |
+| 変数                                       | 既定値                               | 用途                                  |
+| ------------------------------------------ | ------------------------------------ | ------------------------------------- |
+| `CDP_HOST`                                 | `127.0.0.1`                          | CDP 接続先ホスト                      |
+| `CDP_PORT`                                 | `9222`                               | CDP 接続先ポート                      |
+| `CDP_ENDPOINT_FILE`                        | `.adjutant/cdp-endpoint.json`        | 接続先 JSON の読み込み元              |
+| `DATA_DIR`                                 | `<stateDir>/data`                    | 出力ディレクトリ                      |
+| `ADJUTANT_SLACK_ACCOUNT_ID`                | `default`                            | Slack 保存先 account_id               |
+| `ADJUTANT_SLACK_SELF_USER_IDS`             | -                                    | カンマ区切りの self user id 一覧      |
+| `ADJUTANT_SLACK_WORKSPACE_HOST`            | -                                    | raw log 解析時の単一 workspace host   |
+| `ADJUTANT_SLACK_WORKSPACE_HOSTS`           | -                                    | `teamId=workspaceHost` の CSV         |
+| `ADJUTANT_TZ`                              | `Asia/Tokyo`                         | イベント時刻整形タイムゾーン          |
+| `ADJUTANT_DEBUG`                           | -                                    | Slack デバッグトピック有効化          |
+| `ADJUTANT_DISABLE_DOM_CAPTURE`             | `0`                                  | DOM 補完無効化                        |
+| `ADJUTANT_DEBUG_UI`                        | `0`                                  | Debug UI サーバ起動                   |
+| `ADJUTANT_DEBUG_UI_PORT`                   | `8787`                               | Debug UI ポート                       |
+| `ADJUTANT_CDP_EVENT_LOG`                   | `0`                                  | CDP 生イベントを JSONL 保存           |
+| `ADJUTANT_CDP_EVENT_LOG_PATH`              | `<dataDir>/_debug/cdp-events.jsonl`  | CDP 生イベント出力先                  |
+| `ADJUTANT_CDP_EVENT_LOG_MAX_PARAM_CHARS`   | `0`                                  | params 切り詰め上限 (`0` は無制限)    |
+| `ADJUTANT_RAW_FETCH_LOG`                   | `0`                                  | Raw Fetch イベントを JSONL 保存       |
+| `ADJUTANT_RAW_FETCH_LOG_PATH`              | `<dataDir>/_debug/raw-fetch.jsonl`   | Raw Fetch イベント出力先              |
+| `ADJUTANT_RAW_LOG_PATH`                    | `<dataDir>/_debug/slack-debug.jsonl` | raw debug capture / analyze 用ログ    |
+| `ADJUTANT_RAW_FETCH_LOG_MAX_PAYLOAD_CHARS` | `"20000"`                            | payload 切り詰め上限                  |
+| `CDP_WAIT_ATTEMPTS`                        | `10` (script)                        | CDP 起動待ち試行回数                  |
+| `CDP_WAIT_DELAY`                           | `1` (script, sec)                    | CDP 起動待ち間隔                      |
+| `PLAY_SLACK_SEARCH_SESSION`                | `slack`                              | adapter が使う playwright-cli session |
+| `PLAY_SLACK_SEARCH_PROFILE`                | playwright-cli 既定 profile          | adapter が使う browser profile path   |
 
 `ADJUTANT_DEBUG` の主な値:
 
@@ -702,27 +724,39 @@ data: {"runId":"session:sess_xxx:run:1","update":{"sessionUpdate":"agent_message
 
 - `collector/ingest` は Slack 通知や self activity の流入点として扱うが、vNext の標準経路では durable replay を前提にしない。
 - 自分宛メンション notification のみ即時 AI run を起動する。
+- notification projection は `NormalizedEvent(kind=notification)` から `SlackNotificationEvent` を生成し、`detail.slack.is_direct_mention === true` を最優先、無い場合は `detail.slack.mention_target_user_id` または `meta.mention_target_user_id` の有無で direct mention を判定する。
 - self activity は record-only とし、即時 AI 起動は行わない。
 - self activity は `state/activity/self/YYYY-MM-DD.jsonl` に日次保存する。
+- self activity は 1 行 1 JSON record の append-only で保存し、reaction の `messageText` は観測時点のスナップショットとして保持して後続再取得で上書きしない。
 - 自分宛メンションではない notification は v1 の通知起点 run 対象にしない。
 - notification 正規化は `teamId` / `threadTs` / `messageTs` / `permalink` を追加収集する方向で collector を調整する。collector 調整完了まではいずれも optional を許容し、anchor 解決に必要な情報が不足する場合は `needs_review` へ倒す。
 - Slack 通知起点 run は `slack-activity` セッションへ集約する。
+- `channelId` を欠く notification は projection せず drop する。
 - `threadTs` があればそれを優先して Slack thread 文脈取得の anchor とする。
 - `messageTs` しかない場合は `play-slack-search(mode=message)` で親 thread を解決し、失敗時は `needs_review` とする。
 - `threadTs` と `messageTs` がともに無い場合は `play-slack-search(mode=permalink)` で permalink から anchor 解決を試み、失敗時は `needs_review` とする。
 - AI が必要な文脈を欠く場合は `play-slack-search` を通じてその場で Slack から取得する。
 - `play-slack-search` は `thread` / `message` / `search` / `permalink` を提供し、spawn adapter の timeout は 180000ms とする。
+- `play-slack-search` は `customTools` から外部コマンド `play-slack-search` を spawn して呼び出し、stdout JSON を結果として解釈する。stderr、非0終了、invalid JSON、timeout は構造化ログへ記録し、通知処理結果は `needs_review` へ倒す。
 - v1 では Slack への自動送信は行わず、返信が必要な場合は draft reply の生成までに留める。
 - heartbeat は `main` セッション上の full agent turn とする。
 - heartbeat prompt の既定は `Read HEARTBEAT.md if it exists (workspace context). Follow it strictly. Do not infer or repeat old tasks from prior chats. If nothing needs attention, reply HEARTBEAT_OK.` とする。
+- heartbeat session には heartbeat 専用の structured tool を登録せず、判定はモデルの text 応答を正とする。
 - `HEARTBEAT.md` が存在して内容が実質空の場合のみ run 自体を skip する。
 - `HEARTBEAT.md` が存在しない場合は default heartbeat prompt のまま run を継続する。
 - main セッションが busy の場合、heartbeat は割り込まず `skip + 後再試行` とする。
 - heartbeat が `HEARTBEAT_OK` または同等の短い ACK を返した場合、追加の表示や送信は行わず、UI 上も既定でフィルタする。
 - heartbeat が `HEARTBEAT_OK` 以外の有意味な出力を返した場合は、main transcript に heartbeat 応答であると識別できる形で残す。
 - `ActivityFeed` は AI session ではなく UI view であり、Slack 通知を新しい順に全文つきで確認するための lightweight unread-like surface とする。v1 では既読状態を保持しない。
-- 既存の `report_heartbeat_status` / `adjutant.heartbeat.result.v1` / `/api/heartbeat/*` / `event: heartbeat` は Phase 5 で互換方針を定めて移行する。v1 計画段階では完全互換を前提にしない。
-- transcript の日付切替は notification-driven flow の本計画には含めず、別計画で `chat-history-store` / `markdown-summary-batch` / 関連テスト・UI への影響を調査した上で扱う。
+- `GET /api/activity-feed?limit=<n>&cursor=<cursor>` を v1 の公開面とし、`items: ActivityItem[]`, `nextCursor?`, `generatedAt` を返す。既定は新しい順で、server-side filter は持たない。
+- `NotificationDecision` は `no_action | draft_reply | needs_review(replyText?)` に正規化し、`draft_reply -> ActivityItem.kind=draft_reply`, `needs_review -> ActivityItem.kind=needs_review`, `no_action -> ActivityItem.kind=no_action` として UI view に投影する。
+- self activity は v1 の `ActivityFeed` には投影しない。
+- 既存の `report_heartbeat_status` / `adjutant.heartbeat.result.v1` / `/api/heartbeat/*` / `event: heartbeat` は Phase 5 で OpenClaw 寄せへ移行する。v1 では次の互換方針を取る。
+  - 旧 heartbeat API は段階移行が終わるまで暫定維持してよい
+  - 新しい heartbeat の正は `main` transcript 上の full turn と `HEARTBEAT_OK` フィルタ契約とする
+  - runner は legacy `report_heartbeat_status` payload を読み取れる場合のみ互換 fallback として受理してよい
+  - 旧 result-store / SSE heartbeat event への依存は新機能から増やさない
+- transcript の日付切替は notification-driven flow の本計画に含める。少なくとも `chat-history-store` / `markdown-summary-batch` / 関連テスト・UI への影響を同一計画内で解消する。
 
 ### 14.7 Capability Gate 方針
 

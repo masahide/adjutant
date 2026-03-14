@@ -47,3 +47,13 @@ test("projectCollectorIngestRequest returns canonical projection", () => {
   assert.equal(projected.occurredAt, fixture.request.occurredAt);
   assert.deepEqual(projected.rawEvent, fixture.request.payload);
 });
+
+test("notification は channel/thread に関係なく slack-activity へ集約される", () => {
+  const notificationFixture = fixtures.find((fixture) =>
+    fixture.name.includes("notification maps to slack-activity")
+  );
+  assert.ok(notificationFixture);
+
+  const sessionKey = resolveSlackSessionKey(notificationFixture.request.payload);
+  assert.equal(sessionKey, "slack-activity");
+});

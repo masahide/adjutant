@@ -84,7 +84,7 @@
     }
   },
   {
-    "name": "group notification maps to group session key",
+    "name": "notification maps to slack-activity session key",
     "request": {
       "messageId": "msg_notification_group",
       "dedupeKey": "slack:G777@1730000000.200:message:U1",
@@ -106,7 +106,7 @@
       }
     },
     "expected": {
-      "sessionKey": "slack:group:G777",
+      "sessionKey": "slack-activity",
       "message": "[Slack notification] type=message channel=G777 message=group note"
     }
   },

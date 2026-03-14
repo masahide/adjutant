@@ -422,41 +422,47 @@ async function openSsePath(baseUrl: string, path: string): Promise<SseConnection
   let cancelled = false;
   let buffer = "";
   void (async () => {
-    while (!cancelled) {
-      const { done, value } = await reader.read();
-      if (done) {
-        break;
-      }
-      buffer += decoder.decode(value, { stream: true });
-      let delimiterIndex = buffer.indexOf("\n\n");
-      while (delimiterIndex >= 0) {
-        const block = buffer.slice(0, delimiterIndex);
-        buffer = buffer.slice(delimiterIndex + 2);
-        const lines = block
-          .split("\n")
-          .map((line) => line.trim())
-          .filter((line) => line.length > 0 && !line.startsWith(":"));
-        let eventName = "";
-        let dataText = "";
-        for (const line of lines) {
-          if (line.startsWith("event:")) {
-            eventName = line.slice("event:".length).trim();
+    try {
+      while (!cancelled) {
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+        buffer += decoder.decode(value, { stream: true });
+        let delimiterIndex = buffer.indexOf("\n\n");
+        while (delimiterIndex >= 0) {
+          const block = buffer.slice(0, delimiterIndex);
+          buffer = buffer.slice(delimiterIndex + 2);
+          const lines = block
+            .split("\n")
+            .map((line) => line.trim())
+            .filter((line) => line.length > 0 && !line.startsWith(":"));
+          let eventName = "";
+          let dataText = "";
+          for (const line of lines) {
+            if (line.startsWith("event:")) {
+              eventName = line.slice("event:".length).trim();
+              continue;
+            }
+            if (line.startsWith("data:")) {
+              dataText += line.slice("data:".length).trim();
+            }
+          }
+          if (eventName.length === 0 || dataText.length === 0) {
+            delimiterIndex = buffer.indexOf("\n\n");
             continue;
           }
-          if (line.startsWith("data:")) {
-            dataText += line.slice("data:".length).trim();
-          }
-        }
-        if (eventName.length === 0 || dataText.length === 0) {
-          delimiterIndex = buffer.indexOf("\n\n");
-          continue;
-        }
 
-        events.push({
-          event: eventName,
-          data: JSON.parse(dataText) as Record<string, unknown>,
-        });
-        delimiterIndex = buffer.indexOf("\n\n");
+          events.push({
+            event: eventName,
+            data: JSON.parse(dataText) as Record<string, unknown>,
+          });
+          delimiterIndex = buffer.indexOf("\n\n");
+        }
+      }
+    } catch (error) {
+      if (!cancelled) {
+        throw error;
       }
     }
   })();
@@ -630,6 +636,135 @@ test(
     const inboxPath = join(stateDir, "journal", "control-plane", "inbox.jsonl");
     const inboxRaw = await readFile(inboxPath, "utf8");
     assert.equal(inboxRaw.includes('"messageId":"msg_collector_fixture_1"'), true);
+  }
+);
+
+test(
+  "notification -> decision -> activity-feed reflects play_slack_search failure as needs_review",
+  DEFAULT_TEST_TIMEOUT_SECONDS,
+  async (t) => {
+    const stateDir = await mkdtemp(join(tmpdir(), "adjutant-notification-activity-feed-"));
+    t.after(async () => {
+      await rm(stateDir, { recursive: true, force: true });
+    });
+
+    const runtime = await startControlPlane({
+      env: {
+        ADJUTANT_STATE_DIR: stateDir,
+        ADJUTANT_COLLECTOR_SLACK_ENABLED: "1",
+        ADJUTANT_COLLECTOR_SLACK_ENTRY:
+          "tests/fixtures/collector-slack/mock-collector-notification-once.ts",
+        ADJUTANT_TEST_COLLECTOR_DELAY_MS: "500",
+        ADJUTANT_TEST_MOCK_RUNNER: "1",
+        ADJUTANT_TEST_MOCK_TEXT: '{"action":"no_action","reason":"informational"}',
+        ADJUTANT_TEST_MOCK_TOOL_CALLS: "1",
+        ADJUTANT_TEST_MOCK_TOOL_NAME: "play_slack_search",
+        ADJUTANT_TEST_MOCK_TOOL_STATUS: "failed",
+        ADJUTANT_TEST_MOCK_TOOL_OUTPUT: "failed to derive permalink for mode=thread",
+        ADJUTANT_TEST_MOCK_TOOL_ERROR: "failed to derive permalink for mode=thread",
+      },
+    });
+    t.after(async () => {
+      await stopControlPlane(runtime.child);
+    });
+
+    const sse = await openSse(runtime.baseUrl);
+    t.after(() => {
+      sse.close();
+    });
+
+    const acceptedEvent = await sse.waitFor(
+      (event) =>
+        event.event === "run/accepted" &&
+        typeof event.data.runId === "string" &&
+        typeof event.data.sessionId === "string"
+    );
+    const runId = String(acceptedEvent.data.runId);
+
+    await sse.waitFor((event) => event.event === "run/completed" && event.data.runId === runId);
+
+    const feedRes = await fetch(`${runtime.baseUrl}/api/activity-feed?limit=10`);
+    assert.equal(feedRes.status, 200);
+    const feed = (await feedRes.json()) as {
+      items: Array<{
+        kind: string;
+        messageText: string;
+        summary?: string;
+        title?: string;
+        sessionKey?: string;
+      }>;
+    };
+
+    assert.equal(feed.items.length > 0, true);
+    assert.equal(feed.items[0]?.kind, "needs_review");
+    assert.equal(feed.items[0]?.title, "Untitled Workflow");
+    assert.equal(feed.items[0]?.sessionKey, "slack-activity");
+    assert.equal(feed.items[0]?.messageText, "<@UTEST0001> test");
+    assert.equal(
+      feed.items[0]?.summary,
+      "play_slack_search failed: failed to derive permalink for mode=thread"
+    );
+  }
+);
+
+test(
+  "notification -> decision -> activity-feed reflects draft_reply",
+  DEFAULT_TEST_TIMEOUT_SECONDS,
+  async (t) => {
+    const stateDir = await mkdtemp(join(tmpdir(), "adjutant-notification-draft-reply-"));
+    t.after(async () => {
+      await rm(stateDir, { recursive: true, force: true });
+    });
+
+    const runtime = await startControlPlane({
+      env: {
+        ADJUTANT_STATE_DIR: stateDir,
+        ADJUTANT_COLLECTOR_SLACK_ENABLED: "1",
+        ADJUTANT_COLLECTOR_SLACK_ENTRY:
+          "tests/fixtures/collector-slack/mock-collector-notification-once.ts",
+        ADJUTANT_TEST_COLLECTOR_DELAY_MS: "500",
+        ADJUTANT_TEST_MOCK_RUNNER: "1",
+        ADJUTANT_TEST_MOCK_TEXT:
+          '{"action":"draft_reply","reason":"need follow-up","replyText":"確認します。追加情報をください。"}',
+      },
+    });
+    t.after(async () => {
+      await stopControlPlane(runtime.child);
+    });
+
+    const sse = await openSse(runtime.baseUrl);
+    t.after(() => {
+      sse.close();
+    });
+
+    const acceptedEvent = await sse.waitFor(
+      (event) =>
+        event.event === "run/accepted" &&
+        typeof event.data.runId === "string" &&
+        typeof event.data.sessionId === "string"
+    );
+    const runId = String(acceptedEvent.data.runId);
+
+    await sse.waitFor((event) => event.event === "run/completed" && event.data.runId === runId);
+
+    const feedRes = await fetch(`${runtime.baseUrl}/api/activity-feed?limit=5`);
+    assert.equal(feedRes.status, 200);
+    const feed = (await feedRes.json()) as {
+      items: Array<{
+        kind: string;
+        title?: string;
+        sessionKey?: string;
+        messageText: string;
+        summary?: string;
+      }>;
+    };
+
+    assert.equal(feed.items.length >= 1, true);
+    assert.equal(feed.items[0]?.kind, "draft_reply");
+    assert.equal(feed.items[0]?.title, "Untitled Workflow");
+    assert.equal(feed.items[0]?.sessionKey, "slack-activity");
+    assert.equal(feed.items[0]?.messageText, "確認します。追加情報をください。");
+    assert.equal(feed.items[0]?.summary, "need follow-up");
   }
 );
 
@@ -2372,5 +2507,103 @@ test(
     const items = Array.isArray(historyBody.items) ? historyBody.items : [];
     assert.equal(items.length >= 1, true);
     assert.equal((items[0] as Record<string, unknown>)?.schema, "adjutant.heartbeat.result.v1");
+  }
+);
+
+test(
+  "heartbeat の有意味な応答だけが main transcript に heartbeat 応答として残る",
+  DEFAULT_TEST_TIMEOUT_SECONDS,
+  async (t) => {
+    const runtime = await startControlPlane({
+      env: {
+        ADJUTANT_TEST_MOCK_RUNNER: "1",
+        ADJUTANT_HEARTBEAT_ENABLED: "1",
+        ADJUTANT_HEARTBEAT_INTERVAL_MS: "3600000",
+        ADJUTANT_TEST_MOCK_TEXT: "stale thread needs attention",
+      },
+    });
+    t.after(async () => {
+      await stopControlPlane(runtime.child);
+    });
+
+    const runRes = await fetch(`${runtime.baseUrl}/api/heartbeat/run`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ reason: "manual-test" }),
+    });
+    assert.equal(runRes.status, 200);
+
+    const historyRes = await fetch(`${runtime.baseUrl}/api/chat/history?sessionKey=main`);
+    assert.equal(historyRes.status, 200);
+    const history = (await historyRes.json()) as ChatHistoryResponse;
+    assert.equal(Array.isArray(history.messages), true);
+    assert.equal(history.messages.length >= 1, true);
+    const lastMessage = history.messages[history.messages.length - 1];
+    assert.equal(lastMessage?.role, "assistant");
+    assert.equal(
+      typeof lastMessage?.content === "string" &&
+        lastMessage.content.includes("[Heartbeat:manual-test] stale thread needs attention"),
+      true
+    );
+  }
+);
+
+test(
+  "heartbeat が HEARTBEAT_OK を返した場合は main transcript に追加しない",
+  DEFAULT_TEST_TIMEOUT_SECONDS,
+  async (t) => {
+    const runtime = await startControlPlane({
+      env: {
+        ADJUTANT_TEST_MOCK_RUNNER: "1",
+        ADJUTANT_HEARTBEAT_ENABLED: "1",
+        ADJUTANT_HEARTBEAT_INTERVAL_MS: "3600000",
+        ADJUTANT_TEST_MOCK_TEXT: "HEARTBEAT_OK",
+      },
+    });
+    t.after(async () => {
+      await stopControlPlane(runtime.child);
+    });
+
+    const runRes = await fetch(`${runtime.baseUrl}/api/heartbeat/run`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ reason: "manual-test" }),
+    });
+    assert.equal(runRes.status, 200);
+
+    const historyRes = await fetch(`${runtime.baseUrl}/api/chat/history?sessionKey=main`);
+    assert.equal(historyRes.status, 200);
+    const history = (await historyRes.json()) as ChatHistoryResponse;
+    assert.deepEqual(history.messages, []);
+  }
+);
+
+test(
+  "heartbeat は periodic 実行で heartbeat event を送出する",
+  DEFAULT_TEST_TIMEOUT_SECONDS,
+  async (t) => {
+    const runtime = await startControlPlane({
+      env: {
+        ADJUTANT_TEST_MOCK_RUNNER: "1",
+        ADJUTANT_HEARTBEAT_ENABLED: "1",
+        ADJUTANT_HEARTBEAT_INTERVAL_MS: "150",
+        ADJUTANT_TEST_MOCK_TEXT: "HEARTBEAT_OK",
+      },
+    });
+    t.after(async () => {
+      await stopControlPlane(runtime.child);
+    });
+
+    const sse = await openSse(runtime.baseUrl);
+    t.after(() => {
+      sse.close();
+    });
+
+    const first = await sse.waitFor(
+      (candidate) => candidate.event === "heartbeat" && candidate.data.status === "ran",
+      5000
+    );
+    assert.equal(first.event, "heartbeat");
+    assert.equal(first.data.status, "ran");
   }
 );

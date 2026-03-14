@@ -42,7 +42,13 @@ const defaultSessionDependencies: SessionDependencies = {
   closeSession: safeCloseSession,
   listSessions,
   log: logSessionMessage,
-  openSession: (input, log) => openPlaywrightSession(input, runPlaywright, cloneProfileForReadOnlyUse, log),
+  openSession: (input, log) =>
+    openPlaywrightSession(
+      input,
+      runPlaywright,
+      cloneProfileForReadOnlyUse,
+      log,
+    ),
 };
 
 export function prepareSession(

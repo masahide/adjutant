@@ -148,3 +148,53 @@ test("runAgent reuses agent session when sessionId is provided", async () => {
     setAgentRunnerRuntimeForTest(null);
   }
 });
+
+test("runAgent mock runner can emit fake tool call failure", async () => {
+  process.env.ADJUTANT_TEST_MOCK_RUNNER = "1";
+  process.env.ADJUTANT_TEST_MOCK_TOOL_CALLS = "1";
+  process.env.ADJUTANT_TEST_MOCK_TOOL_NAME = "play_slack_search";
+  process.env.ADJUTANT_TEST_MOCK_TOOL_STATUS = "failed";
+  process.env.ADJUTANT_TEST_MOCK_TOOL_OUTPUT = "timeout after 180000ms";
+  process.env.ADJUTANT_TEST_MOCK_TOOL_ERROR = "timeout after 180000ms";
+  process.env.ADJUTANT_TEST_MOCK_TEXT = '{"action":"no_action","reason":"informational"}';
+
+  const toolEvents: unknown[] = [];
+  try {
+    const result = await runAgent({
+      runId: "run_mock_tool_1",
+      sessionKey: "slack-activity",
+      prompt: "notification prompt",
+      callbacks: {
+        onToolCall: (event) => toolEvents.push(event),
+      },
+    });
+
+    assert.equal(result.text, '{"action":"no_action","reason":"informational"}');
+    assert.equal(toolEvents.length, 2);
+    assert.deepEqual(toolEvents[0], {
+      event: "tool_execution_start",
+      toolCallId: "mock_tool_call_1",
+      name: "play_slack_search",
+      title: "play_slack_search",
+      kind: "search",
+      rawInput: { prompt: "notification prompt" },
+    });
+    assert.deepEqual(toolEvents[1], {
+      event: "tool_execution_end",
+      toolCallId: "mock_tool_call_1",
+      name: "play_slack_search",
+      status: "error",
+      error: "timeout after 180000ms",
+      rawOutput: "timeout after 180000ms",
+    });
+  } finally {
+    delete process.env.ADJUTANT_TEST_MOCK_RUNNER;
+    delete process.env.ADJUTANT_TEST_MOCK_TOOL_CALLS;
+    delete process.env.ADJUTANT_TEST_MOCK_TOOL_NAME;
+    delete process.env.ADJUTANT_TEST_MOCK_TOOL_STATUS;
+    delete process.env.ADJUTANT_TEST_MOCK_TOOL_OUTPUT;
+    delete process.env.ADJUTANT_TEST_MOCK_TOOL_ERROR;
+    delete process.env.ADJUTANT_TEST_MOCK_TEXT;
+    setAgentRunnerRuntimeForTest(null);
+  }
+});

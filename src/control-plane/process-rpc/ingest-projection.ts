@@ -54,6 +54,9 @@ function resolveThreadTs(event: NormalizedEvent): string | undefined {
 }
 
 export function resolveSlackSessionKey(event: NormalizedEvent): string {
+  if (event.kind === "notification") {
+    return "slack-activity";
+  }
   const channelId = resolveChannelId(event);
   const threadTs = resolveThreadTs(event);
 

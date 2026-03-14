@@ -5,7 +5,7 @@ import { isAbsolute, join, resolve } from "node:path";
 export const DEFAULT_CDP_HOST = "127.0.0.1";
 export const DEFAULT_CDP_PORT = 9222;
 export const DEFAULT_CDP_ENDPOINT_FILE = ".adjutant/cdp-endpoint.json";
-export const DEFAULT_COLLECTOR_ENTRY = "src/collector-slack/main.ts";
+export const DEFAULT_COLLECTOR_ENTRY = "src/collector-slack/process-rpc-entry.ts";
 
 export type CollectorCdpEndpoint = {
   host: string;
@@ -20,6 +20,7 @@ export type CollectorSlackConfig = {
   endpoint: CollectorCdpEndpoint;
   dataDir: string;
   accountId: string;
+  workspaceHostsByTeam: Record<string, string>;
   disableDomCapture: boolean;
   debugUiEnabled: boolean;
   debugUiPort: number;
@@ -64,6 +65,33 @@ function parsePort(raw: string | undefined): number | undefined {
     return undefined;
   }
   return value;
+}
+
+function parseWorkspaceHostsByTeam(raw: string | undefined): Record<string, string> {
+  if (typeof raw !== "string" || raw.trim().length === 0) {
+    return {};
+  }
+  const entries: Record<string, string> = {};
+  for (const part of raw.split(",")) {
+    const trimmed = part.trim();
+    if (!trimmed) {
+      continue;
+    }
+    const separator = trimmed.indexOf("=");
+    if (separator <= 0 || separator === trimmed.length - 1) {
+      continue;
+    }
+    const teamId = trimmed.slice(0, separator).trim();
+    const host = trimmed
+      .slice(separator + 1)
+      .trim()
+      .replace(/^\/+|\/+$/g, "");
+    if (!teamId || !host) {
+      continue;
+    }
+    entries[teamId] = host;
+  }
+  return entries;
 }
 
 function resolveEndpointFilePath(pathValue: string, cwd: string): string {
@@ -173,6 +201,7 @@ export function loadCollectorSlackConfig(options: LoadConfigOptions = {}): Colle
     endpoint,
     dataDir: resolveDataDir(env, stateDir),
     accountId,
+    workspaceHostsByTeam: parseWorkspaceHostsByTeam(env.ADJUTANT_SLACK_WORKSPACE_HOSTS),
     disableDomCapture: parseBoolean(env.ADJUTANT_DISABLE_DOM_CAPTURE, false),
     debugUiEnabled: parseBoolean(env.ADJUTANT_DEBUG_UI, false),
     debugUiPort,

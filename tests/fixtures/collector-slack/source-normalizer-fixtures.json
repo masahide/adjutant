@@ -36,11 +36,22 @@
       "source": "slack",
       "kind": "notification",
       "ts": "2026-03-01T10:00:02.000Z",
+      "meta": {
+        "team_id": "T123",
+        "mention_target_user_id": "U999"
+      },
       "detail": {
         "slack": {
+          "team_id": "T123",
           "channel_id": "C123",
           "notification_type": "message",
-          "message_text": "notice"
+          "title": "Direct mention",
+          "message_text": "<@U999> notice",
+          "message_ts": "1730000000.456",
+          "thread_ts": "1730000000.400",
+          "permalink": "https://workspace-alpha.slack.com/archives/C123/p1730000000456",
+          "mention_target_user_id": "U999",
+          "is_direct_mention": true
         }
       }
     }

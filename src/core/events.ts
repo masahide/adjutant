@@ -33,6 +33,8 @@ export type SlackReactionDetail = {
 };
 
 export type SlackNotificationDetail = {
+  team_id?: string;
+  workspace_host?: string;
   channel_id?: string;
   channel_name?: string;
   notification_type: string;
@@ -40,6 +42,11 @@ export type SlackNotificationDetail = {
   message_text?: string;
   user?: string;
   event_ts?: string;
+  message_ts?: string;
+  thread_ts?: string;
+  permalink?: string;
+  mention_target_user_id?: string;
+  is_direct_mention?: boolean;
 };
 
 export type SlackDetail = SlackPostDetail | SlackReactionDetail | SlackNotificationDetail;

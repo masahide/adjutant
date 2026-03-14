@@ -345,6 +345,14 @@ function resolveMockDelayMs(value: string | undefined): number {
   return Math.min(parsed, 30_000);
 }
 
+function parseBooleanEnv(value: string | undefined): boolean {
+  if (typeof value !== "string") {
+    return false;
+  }
+  const normalized = value.trim().toLowerCase();
+  return normalized === "1" || normalized === "true";
+}
+
 async function waitForAbortableDelay(
   delayMs: number,
   signal: AbortSignal | undefined
@@ -383,10 +391,36 @@ export async function runAgent(options: AgentRunOptions): Promise<AgentRunResult
     const text = process.env.ADJUTANT_TEST_MOCK_TEXT ?? "mock-final";
     const stopReason = process.env.ADJUTANT_TEST_MOCK_STOP_REASON ?? "end_turn";
     const delayMs = resolveMockDelayMs(process.env.ADJUTANT_TEST_MOCK_DELAY_MS);
+    const mockToolCalls = parseBooleanEnv(process.env.ADJUTANT_TEST_MOCK_TOOL_CALLS);
+    const mockToolName = process.env.ADJUTANT_TEST_MOCK_TOOL_NAME ?? "play_slack_search";
+    const mockToolStatus = process.env.ADJUTANT_TEST_MOCK_TOOL_STATUS === "failed" ? "error" : "ok";
+    const mockToolOutput = process.env.ADJUTANT_TEST_MOCK_TOOL_OUTPUT ?? "mock-tool-output";
+    const mockToolError = process.env.ADJUTANT_TEST_MOCK_TOOL_ERROR ?? "mock-tool-error";
+    if (mockToolCalls) {
+      options.callbacks?.onToolCall?.({
+        event: "tool_execution_start",
+        toolCallId: "mock_tool_call_1",
+        name: mockToolName,
+        title: mockToolName,
+        kind: "search",
+        rawInput: { prompt: options.prompt },
+      });
+    }
     if (delta.length > 0) {
       options.callbacks?.onTextDelta?.(delta);
     }
     await waitForAbortableDelay(delayMs, options.signal);
+    if (mockToolCalls) {
+      options.callbacks?.onToolCall?.({
+        event: "tool_execution_end",
+        toolCallId: "mock_tool_call_1",
+        name: mockToolName,
+        status: mockToolStatus,
+        ...(mockToolStatus === "ok"
+          ? { rawOutput: mockToolOutput }
+          : { error: mockToolError, rawOutput: mockToolOutput }),
+      });
+    }
     return {
       runId: options.runId,
       text,

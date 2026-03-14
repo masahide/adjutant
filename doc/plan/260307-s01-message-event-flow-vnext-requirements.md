@@ -227,7 +227,8 @@
 9. Persist Outcome
    - transcript、audit、timeline action、handoff candidate、memory candidate を保存する。
 10. Deliver / Handoff / Summarize
-   - reply 送信、main handoff、shared memory 更新候補の反映を行う。
+
+- reply 送信、main handoff、shared memory 更新候補の反映を行う。
 
 ## 5. ソース別フロー Requirements by Source
 
@@ -336,14 +337,8 @@
 {
   "conversationScope": "slack:channel:C123:thread:1741160000.000100",
   "threadSnapshotRef": "state://threads/slack:channel:C123:thread:1741160000.000100/snapshot",
-  "recentEventRefs": [
-    "state://timeline/offset/12001",
-    "state://timeline/offset/12002"
-  ],
-  "sharedFactRefs": [
-    "memory://shared/daily/2026-03-07#L12",
-    "memory://shared/long-term#L88"
-  ],
+  "recentEventRefs": ["state://timeline/offset/12001", "state://timeline/offset/12002"],
+  "sharedFactRefs": ["memory://shared/daily/2026-03-07#L12", "memory://shared/long-term#L88"],
   "policyHints": {
     "priority": "normal",
     "deliveryMode": "draft_or_send"
@@ -378,4 +373,3 @@
 - `dispatch_spoke_then_handoff_main` を router の第一級 action にするか、RunOutcome でのみ表現するか
 - user が UI から main と spoke をどう切り替えるか
 - delivery を `draft` と `send` に分ける境界を policy でどう管理するか
-

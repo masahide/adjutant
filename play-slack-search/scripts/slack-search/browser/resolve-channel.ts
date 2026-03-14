@@ -155,9 +155,9 @@ export async function runResolveChannelInBrowser(
       .filter({ hasText: /^Search\b/ })
       .first();
 
-    await searchButton.click({ timeout: searchDialogTimeoutMs }).catch(
-      () => null,
-    );
+    await searchButton
+      .click({ timeout: searchDialogTimeoutMs })
+      .catch(() => null);
     await searchDialog
       .waitFor({ state: 'visible', timeout: searchDialogTimeoutMs })
       .catch(() => null);
@@ -172,9 +172,9 @@ export async function runResolveChannelInBrowser(
     }
 
     await page.keyboard.press('Escape').catch(() => null);
-    await searchDialog.waitFor({ state: 'hidden', timeout: 2_000 }).catch(
-      () => null,
-    );
+    await searchDialog
+      .waitFor({ state: 'hidden', timeout: 2_000 })
+      .catch(() => null);
   };
 
   const resolveChannelFromSearchSuggestion = async (channelId: string) => {
@@ -185,15 +185,15 @@ export async function runResolveChannelInBrowser(
     await page
       .waitForFunction(
         (channelIdForLookup: string) => {
-          return [...document.querySelectorAll<HTMLElement>('[role="option"]')].some(
-            (option) => {
-              const optionText = option.textContent ?? '';
-              return (
-                option.dataset.id === channelIdForLookup ||
-                optionText.includes(channelIdForLookup)
-              );
-            },
-          );
+          return [
+            ...document.querySelectorAll<HTMLElement>('[role="option"]'),
+          ].some((option) => {
+            const optionText = option.textContent ?? '';
+            return (
+              option.dataset.id === channelIdForLookup ||
+              optionText.includes(channelIdForLookup)
+            );
+          });
         },
         channelId,
         { timeout: searchResultsTimeoutMs },
@@ -228,7 +228,9 @@ export async function runResolveChannelInBrowser(
         return text.replace(/Enter$/u, '').trim();
       };
 
-      const channelOption = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(
+      const channelOption = [
+        ...document.querySelectorAll<HTMLElement>('[role="option"]'),
+      ].find(
         (option) =>
           option.dataset.type === 'channel' &&
           option.dataset.id === channelIdForLookup,
@@ -278,7 +280,7 @@ export async function runResolveChannelInBrowser(
   );
   const unresolvedIds = requestedIds.filter((channelId) => {
     const resolved = resolvedById.get(channelId);
-    return !(resolved?.resolved);
+    return !resolved?.resolved;
   });
 
   if (unresolvedIds.length > 0 && (await openSearchDialog())) {

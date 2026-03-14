@@ -13,8 +13,9 @@ test("markdown summary batch processes transcript incrementally with watermark d
   });
 
   const transcriptsDir = join(workspaceDir, "transcripts");
-  await mkdir(transcriptsDir, { recursive: true });
-  const transcriptPath = join(transcriptsDir, "main.jsonl");
+  const sessionDir = join(transcriptsDir, "main");
+  await mkdir(sessionDir, { recursive: true });
+  const transcriptPath = join(sessionDir, "2026-02-28.jsonl");
   await writeFile(
     transcriptPath,
     [
@@ -49,6 +50,7 @@ test("markdown summary batch processes transcript incrementally with watermark d
   const dailyPath = join(workspaceDir, "memory", "2026-02-28.md");
   const dailyBefore = await readFile(dailyPath, "utf8");
   assert.equal(dailyBefore.includes("Session Summary"), true);
+  assert.equal(dailyBefore.includes("Session Key: main"), true);
 
   const second = await service.runOnce();
   assert.equal(second.processedSessions, 1);

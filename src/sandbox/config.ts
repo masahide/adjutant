@@ -11,7 +11,7 @@ function parseSandboxMode(value: string | undefined): SandboxMode {
   if (normalized === "off" || normalized === "non-main" || normalized === "all") {
     return normalized;
   }
-  return "all";
+  return "off";
 }
 
 function parseBoolean(value: string | undefined, fallback: boolean): boolean {

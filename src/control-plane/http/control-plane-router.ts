@@ -4,6 +4,7 @@ import type { PermissionGateway } from "../acp/permission-gateway.js";
 import type { WorkerSupervisor } from "../acp/worker-supervisor.js";
 import type {
   AcceptedResponse,
+  GetActivityFeedResponse,
   CommandRequest,
   CreateThreadRequest,
   CreateThreadResponse,
@@ -63,6 +64,10 @@ interface ControlPlaneRouterDeps {
     limit?: number;
     cursor?: string;
   }) => GetHeartbeatHistoryResponse;
+  buildActivityFeed?: (input?: {
+    limit?: number;
+    cursor?: string;
+  }) => Promise<GetActivityFeedResponse>;
 }
 
 function writeJson(res: ServerResponse, statusCode: number, payload: unknown): void {
@@ -212,6 +217,17 @@ function toQueryValue(url: URL, key: string): string | undefined {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function parsePositiveIntegerQuery(value: string | undefined): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error("INVALID_REQUEST: limit must be a positive integer");
+  }
+  return parsed;
 }
 
 function writeSse(res: ServerResponse, event: string, payload: unknown): void {
@@ -590,6 +606,30 @@ export function createControlPlaneRequestHandler(deps: ControlPlaneRouterDeps) {
         messages: deps.chatHistoryStore.list(sessionKey),
       };
       writeJson(res, 200, response);
+      return;
+    }
+
+    if (method === "GET" && url.pathname === "/api/activity-feed") {
+      try {
+        const limit = parsePositiveIntegerQuery(toQueryValue(url, "limit"));
+        const cursor = toQueryValue(url, "cursor");
+        const response = deps.buildActivityFeed
+          ? await deps.buildActivityFeed({
+              limit,
+              cursor,
+            })
+          : {
+              items: [],
+              generatedAt: new Date().toISOString(),
+            };
+        writeJson(res, 200, response);
+      } catch (error) {
+        const summary = toErrorSummary(error);
+        writeJson(res, toHttpStatusCode(summary), {
+          code: summary.errorCode,
+          message: summary.errorMessage,
+        });
+      }
       return;
     }
 

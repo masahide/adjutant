@@ -321,8 +321,8 @@ export async function runListUsersInBrowser(
 
             return Boolean(
               dialog.querySelector('[role=tab][aria-selected="true"]') &&
-              (dialog.querySelector('[role=list][aria-label*="Members"]') ??
-                dialog.querySelector('[role=list]')),
+                (dialog.querySelector('[role=list][aria-label*="Members"]') ??
+                  dialog.querySelector('[role=list]')),
             );
           })
           .catch(() => false);

@@ -88,10 +88,10 @@ export function isChannelLikeEntry(channel: unknown): boolean {
   const rawChannel = channel as Record<string, unknown>;
   return Boolean(
     rawChannel.is_channel ||
-    rawChannel.is_group ||
-    rawChannel.is_im ||
-    rawChannel.is_mpim ||
-    rawChannel.is_private,
+      rawChannel.is_group ||
+      rawChannel.is_im ||
+      rawChannel.is_mpim ||
+      rawChannel.is_private,
   );
 }
 
@@ -1088,10 +1088,10 @@ export async function runListChannelsInBrowser(
         const rawChannel = channel as Record<string, unknown>;
         return Boolean(
           rawChannel.is_channel ||
-          rawChannel.is_group ||
-          rawChannel.is_im ||
-          rawChannel.is_mpim ||
-          rawChannel.is_private,
+            rawChannel.is_group ||
+            rawChannel.is_im ||
+            rawChannel.is_mpim ||
+            rawChannel.is_private,
         );
       };
 

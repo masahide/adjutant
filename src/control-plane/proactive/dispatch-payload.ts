@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import type { IngestProjection } from "../process-rpc/ingest-projection.js";
+import { buildNotificationDecisionPrompt } from "../notification-decision.js";
 
 export type CollectorDispatchPayload = {
   sessionKey: string;
@@ -26,7 +27,10 @@ export function buildCollectorDispatchPayload(
     const first = projections[0];
     return {
       sessionKey: first.sessionKey,
-      message: first.message,
+      message:
+        first.rawEvent.kind === "notification"
+          ? buildNotificationDecisionPrompt(first)
+          : first.message,
       idempotencyKey: first.dedupeKey,
       eventKind: first.rawEvent.kind,
       dedupeSummary: first.dedupeKey,

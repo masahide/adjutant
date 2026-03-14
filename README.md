@@ -16,6 +16,11 @@ Slack Desktop の Chrome DevTools Protocol (CDP) からイベントを収集し�
 GitHub / ローカル Git 収集は未実装で、仕様メモは `doc/spec.md` にあります。日次 Markdown 要約は `ADJUTANT_MARKDOWN_SUMMARY_BATCH_ENABLED=1` で有効化できます。
 bash ツールの Docker サンドボックス実行は `ADJUTANT_SANDBOX_MODE=non-main|all` で有効化できます（既定 `off`）。
 
+デバッグ向けメモ:
+
+- 現状の実装では raw log 検証とローカル起動をしやすくするため、`ADJUTANT_SANDBOX_MODE` の既定値を一時的に `off` にしています。
+- Docker sandbox を前提に確認したい場合だけ、`ADJUTANT_SANDBOX_MODE=non-main|all` を明示してください。
+
 日次 Markdown 要約バッチの実装挙動（抜粋）は次のとおりです。
 
 - 実行は単一 in-flight（前回実行中の tick は skip）
@@ -63,65 +68,74 @@ pnpm check               # format -> typecheck -> test
 
 ## 実行時設定
 
-| 変数                                           | 既定値                                               | 用途                                                                    |
-| ---------------------------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------- |
-| `CDP_HOST`                                     | `127.0.0.1`                                          | CDP 接続先ホスト                                                        |
-| `CDP_PORT`                                     | `9222`                                               | CDP 接続先ポート                                                        |
-| `CDP_ENDPOINT_FILE`                            | `.adjutant/cdp-endpoint.json`                        | 接続先上書き JSON (`host`, `port`)                                      |
-| `ADJUTANT_COLLECTOR_SLACK_ENABLED`             | `0`                                                  | `collector-slack` 子プロセス起動フラグ（Phase C 準備）                  |
-| `ADJUTANT_COLLECTOR_SLACK_ENTRY`               | `src/collector-slack/main.ts`                        | `collector-slack` エントリポイント（Phase C 準備）                      |
-| `DATA_DIR`                                     | `./data`                                             | JSONL 保存ルート                                                        |
-| `ADJUTANT_DATA_DIR`                            | `<stateDir>/data`                                    | collector 保存ルート（`DATA_DIR` より優先）                             |
-| `ADJUTANT_SLACK_ACCOUNT_ID`                    | `default`                                            | Slack 保存先 account_id                                                 |
-| `ADJUTANT_TZ`                                  | `Asia/Tokyo`                                         | 正規化イベントのタイムゾーン                                            |
-| `ADJUTANT_DEBUG`                               | -                                                    | Slack アダプタ詳細ログ (`slack:verbose` など)                           |
-| `ADJUTANT_DISABLE_DOM_CAPTURE`                 | `0`                                                  | リアクション時 DOM キャプチャ無効化                                     |
-| `ADJUTANT_DEBUG_UI`                            | `0`                                                  | Debug UI (`http://127.0.0.1:8787`) を有効化                             |
-| `ADJUTANT_DEBUG_UI_PORT`                       | `8787`                                               | Debug UI ポート                                                         |
-| `ADJUTANT_CDP_EVENT_LOG`                       | `0`                                                  | CDP 生イベントを JSONL へ保存                                           |
-| `ADJUTANT_CDP_EVENT_LOG_PATH`                  | `<dataDir>/_debug/cdp-events.jsonl`                  | CDP 生イベントの出力先                                                  |
-| `ADJUTANT_CDP_EVENT_LOG_MAX_PARAM_CHARS`       | `0`                                                  | params を文字列化して上限超過時に切り詰め (`0` は無制限)                |
-| `ADJUTANT_RAW_FETCH_LOG`                       | `0`                                                  | `raw_fetch` デバッグイベントを JSONL へ保存（内部 fetch hook も有効化） |
-| `ADJUTANT_RAW_FETCH_LOG_PATH`                  | `<dataDir>/_debug/raw-fetch.jsonl`                   | `raw_fetch` イベントの出力先                                            |
-| `ADJUTANT_RAW_FETCH_LOG_MAX_PAYLOAD_CHARS`     | `0`                                                  | payload を文字列化して上限超過時に切り詰め (`0` は無制限)               |
-| `ADJUTANT_CONTROL_PLANE_PORT`                  | `3100`                                               | control-plane API サーバーのポート                                      |
-| `ADJUTANT_CONTROL_PLANE_HOST`                  | `127.0.0.1`                                          | control-plane API サーバーのバインドアドレス                            |
-| `ADJUTANT_VITE_PORT`                           | `5173`                                               | AI アシスタント Web UI（Vite）のポート                                  |
-| `ADJUTANT_DELIVER_SLACK_ENABLED`               | `0`                                                  | `deliver-slack` 子プロセス起動フラグ                                    |
-| `ADJUTANT_DELIVER_SLACK_ENTRY`                 | `src/deliver-slack/stdio-server.ts`                  | `deliver-slack` エントリポイント                                        |
-| `ADJUTANT_DELIVER_SLACK_AUTO_COMPLETE`         | `1`                                                  | `deliver/enqueue` 受理後に `deliver/completed` を自動通知する           |
-| `ADJUTANT_DELIVER_SLACK_COMPLETION_DELAY_MS`   | `5`                                                  | 自動 completion 通知までの遅延（ミリ秒）                                |
-| `ADJUTANT_DELIVER_SLACK_SIMULATE_FAILURE`      | `0`                                                  | 自動 completion を `failed` 扱いで通知する（テスト/障害注入用）         |
-| `ADJUTANT_WORKSPACE_DIR`                       | `<stateDir>/workspace`                               | アシスタントのワークスペースディレクトリ                                |
-| `ADJUTANT_STATE_DIR`                           | `~/.adjutant`                                        | アシスタント state ルート（session transcript / watermark など）        |
-| `ADJUTANT_SESSION_AGENT_ID`                    | `main`                                               | session 保存先を切る agent ID                                           |
-| `ADJUTANT_SESSION_TRANSCRIPTS_DIR`             | `<stateDir>/agents/<agentId>/sessions`               | session JSONL 保存先 override                                           |
-| `ADJUTANT_SESSION_ENTRIES_PATH`                | `<stateDir>/agents/<agentId>/sessions/sessions.json` | セッションメタ情報（`sessionId`, `sessionFile`）保存先                  |
-| `ADJUTANT_MARKDOWN_SUMMARY_BATCH_ENABLED`      | `0`                                                  | 日次 Markdown 要約バッチを有効化                                        |
-| `ADJUTANT_MARKDOWN_SUMMARY_BATCH_INTERVAL_MS`  | `3600000`                                            | 要約バッチ実行間隔（ミリ秒）                                            |
-| `ADJUTANT_MARKDOWN_SUMMARY_BATCH_MESSAGES`     | `15`                                                 | 1セッションから採用する末尾メッセージ数                                 |
-| `ADJUTANT_MARKDOWN_SUMMARY_BATCH_MAX_SESSIONS` | `200`                                                | 1 tick あたり最大処理セッション数                                       |
-| `ADJUTANT_MARKDOWN_SUMMARY_BATCH_TIMEZONE`     | `UTC`                                                | summary batch の集計タイムゾーン                                        |
-| `ADJUTANT_FLUSHER_ENABLED`                     | `1`                                                  | pending flusher の有効化                                                |
-| `ADJUTANT_FLUSHER_INTERVAL_MS`                 | `60000`                                              | pending flusher 実行間隔（ミリ秒）                                      |
-| `ADJUTANT_FLUSHER_STALE_MS`                    | `900000`                                             | stale open post 判定閾値（ミリ秒）                                      |
-| `ADJUTANT_HEARTBEAT_ENABLED`                   | `1`                                                  | heartbeat 定期実行の有効化                                              |
-| `ADJUTANT_HEARTBEAT_INTERVAL_MS`               | `1800000`                                            | heartbeat 実行間隔（ミリ秒）                                            |
-| `ADJUTANT_HEARTBEAT_TIMEOUT_MS`                | `30000`                                              | heartbeat run のタイムアウト（ミリ秒）                                  |
-| `ADJUTANT_HEARTBEAT_FILE_PATH`                 | `<cwd>/HEARTBEAT.md`                                 | heartbeat prompt の読み込みパス                                         |
-| `ADJUTANT_ROUTE_LLM_ENABLED`                   | `0`                                                  | Slack通知の一次判定に OpenAI route LLM を使うかどうか                   |
-| `ADJUTANT_ROUTE_LLM_MODEL`                     | `gpt-5-mini`                                         | route LLM に使用する OpenAI モデル名                                    |
-| `ADJUTANT_ROUTE_LLM_TIMEOUT_MS`                | `1000`                                               | route LLM 判定のタイムアウト（ミリ秒）                                  |
-| `ADJUTANT_ROUTE_LLM_MAX_CONCURRENT`            | `1`                                                  | route LLM 判定の同時実行上限（1で逐次）                                 |
-| `ADJUTANT_SANDBOX_MODE`                        | `off`                                                | bash sandbox mode（`off` / `non-main` / `all`）                         |
-| `ADJUTANT_SANDBOX_IMAGE`                       | `adjutant-sandbox:trixie-slim`                       | sandbox Docker image                                                    |
-| `ADJUTANT_SANDBOX_AUTO_BUILD_IMAGE`            | `true`                                               | sandbox image が未存在時に自動 build                                    |
-| `ADJUTANT_SANDBOX_WORKDIR`                     | `/workspace`                                         | コンテナ内作業ディレクトリ                                              |
-| `ADJUTANT_SANDBOX_ENV_ALLOWLIST`               | `LANG,LC_ALL,TERM,TZ`                                | sandbox へ受け渡す環境変数 allowlist                                    |
-| `ADJUTANT_SANDBOX_NETWORK`                     | 未設定（bridge）                                     | Docker network（例: `none`）                                            |
-| `ADJUTANT_SANDBOX_MEMORY`                      | 未設定                                               | Docker memory limit（例: `1g`）                                         |
-| `ADJUTANT_SANDBOX_PIDS_LIMIT`                  | `256`                                                | Docker pids limit                                                       |
-| `OPENAI_API_KEY`                               | -                                                    | route LLM 有効時に利用する OpenAI API キー                              |
+| 変数                                           | 既定値                                               | 用途                                                                                  |
+| ---------------------------------------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `CDP_HOST`                                     | `127.0.0.1`                                          | CDP 接続先ホスト                                                                      |
+| `CDP_PORT`                                     | `9222`                                               | CDP 接続先ポート                                                                      |
+| `CDP_ENDPOINT_FILE`                            | `.adjutant/cdp-endpoint.json`                        | 接続先上書き JSON (`host`, `port`)                                                    |
+| `ADJUTANT_COLLECTOR_SLACK_ENABLED`             | `0`                                                  | `collector-slack` 子プロセス起動フラグ（Phase C 準備）                                |
+| `ADJUTANT_COLLECTOR_SLACK_ENTRY`               | `src/collector-slack/main.ts`                        | `collector-slack` エントリポイント（Phase C 準備）                                    |
+| `DATA_DIR`                                     | `./data`                                             | JSONL 保存ルート                                                                      |
+| `ADJUTANT_DATA_DIR`                            | `<stateDir>/data`                                    | collector 保存ルート（`DATA_DIR` より優先）                                           |
+| `ADJUTANT_SLACK_ACCOUNT_ID`                    | `default`                                            | Slack 保存先 account_id                                                               |
+| `ADJUTANT_SLACK_SELF_USER_IDS`                 | -                                                    | カンマ区切りの self user id 一覧。direct mention 判定と raw log 解析で使用            |
+| `ADJUTANT_SLACK_WORKSPACE_HOSTS`               | -                                                    | `teamId=workspaceHost` の CSV。permalink 生成時の workspace host override             |
+| `ADJUTANT_SLACK_WORKSPACE_HOST`                | -                                                    | raw log 解析時の単一 workspace host override                                          |
+| `ADJUTANT_TZ`                                  | `Asia/Tokyo`                                         | 正規化イベントのタイムゾーン                                                          |
+| `ADJUTANT_DEBUG`                               | -                                                    | Slack アダプタ詳細ログ (`slack:verbose` など)                                         |
+| `ADJUTANT_DISABLE_DOM_CAPTURE`                 | `0`                                                  | リアクション時 DOM キャプチャ無効化                                                   |
+| `ADJUTANT_DEBUG_UI`                            | `0`                                                  | Debug UI (`http://127.0.0.1:8787`) を有効化                                           |
+| `ADJUTANT_DEBUG_UI_PORT`                       | `8787`                                               | Debug UI ポート                                                                       |
+| `ADJUTANT_CDP_EVENT_LOG`                       | `0`                                                  | CDP 生イベントを JSONL へ保存                                                         |
+| `ADJUTANT_CDP_EVENT_LOG_PATH`                  | `<dataDir>/_debug/cdp-events.jsonl`                  | CDP 生イベントの出力先                                                                |
+| `ADJUTANT_CDP_EVENT_LOG_MAX_PARAM_CHARS`       | `0`                                                  | params を文字列化して上限超過時に切り詰め (`0` は無制限)                              |
+| `ADJUTANT_RAW_FETCH_LOG`                       | `0`                                                  | `raw_fetch` デバッグイベントを JSONL へ保存（内部 fetch hook も有効化）               |
+| `ADJUTANT_RAW_FETCH_LOG_PATH`                  | `<dataDir>/_debug/raw-fetch.jsonl`                   | `raw_fetch` イベントの出力先                                                          |
+| `ADJUTANT_RAW_LOG_PATH`                        | `<dataDir>/_debug/slack-debug.jsonl`                 | raw debug capture / analyze 用の統合ログ出力先                                        |
+| `ADJUTANT_RAW_FETCH_LOG_MAX_PAYLOAD_CHARS`     | `"20000"`                                            | payload を文字列化して上限超過時に切り詰める既定文字数                                |
+| `ADJUTANT_CONTROL_PLANE_PORT`                  | `3100`                                               | control-plane API サーバーのポート                                                    |
+| `ADJUTANT_CONTROL_PLANE_HOST`                  | `127.0.0.1`                                          | control-plane API サーバーのバインドアドレス                                          |
+| `ADJUTANT_VITE_PORT`                           | `5173`                                               | AI アシスタント Web UI（Vite）のポート                                                |
+| `ADJUTANT_DELIVER_SLACK_ENABLED`               | `0`                                                  | `deliver-slack` 子プロセス起動フラグ                                                  |
+| `ADJUTANT_DELIVER_SLACK_ENTRY`                 | `src/deliver-slack/stdio-server.ts`                  | `deliver-slack` エントリポイント                                                      |
+| `ADJUTANT_DELIVER_SLACK_AUTO_COMPLETE`         | `1`                                                  | `deliver/enqueue` 受理後に `deliver/completed` を自動通知する                         |
+| `ADJUTANT_DELIVER_SLACK_COMPLETION_DELAY_MS`   | `5`                                                  | 自動 completion 通知までの遅延（ミリ秒）                                              |
+| `ADJUTANT_DELIVER_SLACK_SIMULATE_FAILURE`      | `0`                                                  | 自動 completion を `failed` 扱いで通知する（テスト/障害注入用）                       |
+| `ADJUTANT_WORKSPACE_DIR`                       | `<stateDir>/workspace`                               | アシスタントのワークスペースディレクトリ                                              |
+| `ADJUTANT_STATE_DIR`                           | `~/.adjutant`                                        | アシスタント state ルート（session transcript / watermark など）                      |
+| `ADJUTANT_SESSION_AGENT_ID`                    | `main`                                               | session 保存先を切る agent ID                                                         |
+| `ADJUTANT_SESSION_TRANSCRIPTS_DIR`             | `<stateDir>/agents/<agentId>/sessions`               | session JSONL 保存先 override                                                         |
+| `ADJUTANT_SESSION_ENTRIES_PATH`                | `<stateDir>/agents/<agentId>/sessions/sessions.json` | セッションメタ情報（`sessionId`, `sessionFile`）保存先                                |
+| `ADJUTANT_MARKDOWN_SUMMARY_BATCH_ENABLED`      | `0`                                                  | 日次 Markdown 要約バッチを有効化                                                      |
+| `ADJUTANT_MARKDOWN_SUMMARY_BATCH_INTERVAL_MS`  | `3600000`                                            | 要約バッチ実行間隔（ミリ秒）                                                          |
+| `ADJUTANT_MARKDOWN_SUMMARY_BATCH_MESSAGES`     | `15`                                                 | 1セッションから採用する末尾メッセージ数                                               |
+| `ADJUTANT_MARKDOWN_SUMMARY_BATCH_MAX_SESSIONS` | `200`                                                | 1 tick あたり最大処理セッション数                                                     |
+| `ADJUTANT_MARKDOWN_SUMMARY_BATCH_TIMEZONE`     | `UTC`                                                | summary batch の集計タイムゾーン                                                      |
+| `ADJUTANT_FLUSHER_ENABLED`                     | `1`                                                  | pending flusher の有効化                                                              |
+| `ADJUTANT_FLUSHER_INTERVAL_MS`                 | `60000`                                              | pending flusher 実行間隔（ミリ秒）                                                    |
+| `ADJUTANT_FLUSHER_STALE_MS`                    | `900000`                                             | stale open post 判定閾値（ミリ秒）                                                    |
+| `ADJUTANT_HEARTBEAT_ENABLED`                   | `1`                                                  | heartbeat 定期実行の有効化                                                            |
+| `ADJUTANT_HEARTBEAT_INTERVAL_MS`               | `1800000`                                            | heartbeat 実行間隔（ミリ秒）                                                          |
+| `ADJUTANT_HEARTBEAT_TIMEOUT_MS`                | `30000`                                              | heartbeat run のタイムアウト（ミリ秒）                                                |
+| `ADJUTANT_HEARTBEAT_FILE_PATH`                 | `<cwd>/HEARTBEAT.md`                                 | heartbeat prompt の読み込みパス                                                       |
+| `ADJUTANT_ROUTE_LLM_ENABLED`                   | `0`                                                  | Slack通知の一次判定に OpenAI route LLM を使うかどうか                                 |
+| `ADJUTANT_ROUTE_LLM_MODEL`                     | `gpt-5-mini`                                         | route LLM に使用する OpenAI モデル名                                                  |
+| `ADJUTANT_ROUTE_LLM_TIMEOUT_MS`                | `1000`                                               | route LLM 判定のタイムアウト（ミリ秒）                                                |
+| `ADJUTANT_ROUTE_LLM_MAX_CONCURRENT`            | `1`                                                  | route LLM 判定の同時実行上限（1で逐次）                                               |
+| `ADJUTANT_SANDBOX_MODE`                        | `off`                                                | bash sandbox mode（`off` / `non-main` / `all`）                                       |
+| `ADJUTANT_SANDBOX_IMAGE`                       | `adjutant-sandbox:trixie-slim`                       | sandbox Docker image                                                                  |
+| `ADJUTANT_SANDBOX_AUTO_BUILD_IMAGE`            | `true`                                               | sandbox image が未存在時に自動 build                                                  |
+| `ADJUTANT_SANDBOX_WORKDIR`                     | `/workspace`                                         | コンテナ内作業ディレクトリ                                                            |
+| `ADJUTANT_SANDBOX_ENV_ALLOWLIST`               | `LANG,LC_ALL,TERM,TZ`                                | sandbox へ受け渡す環境変数 allowlist                                                  |
+| `ADJUTANT_SANDBOX_NETWORK`                     | 未設定（bridge）                                     | Docker network（例: `none`）                                                          |
+| `ADJUTANT_SANDBOX_MEMORY`                      | 未設定                                               | Docker memory limit（例: `1g`）                                                       |
+| `ADJUTANT_SANDBOX_PIDS_LIMIT`                  | `256`                                                | Docker pids limit                                                                     |
+| `PLAY_SLACK_SEARCH_SESSION`                    | `slack`                                              | `play-slack-search` adapter が使う playwright-cli セッション名                        |
+| `PLAY_SLACK_SEARCH_PROFILE`                    | playwright-cli の既定 profile                        | `play-slack-search` adapter が使う browser profile path                               |
+| `PLAY_SLACK_SEARCH_WORKSPACE_URL`              | -                                                    | `play_slack_search` が request/permalink から workspace を解決できない場合の fallback |
+| `OPENAI_API_KEY`                               | -                                                    | route LLM 有効時に利用する OpenAI API キー                                            |
+
+`play_slack_search` は `workspaceUrl` を request で受けるか、notification の `permalink` から workspace を解決します。`PLAY_SLACK_SEARCH_WORKSPACE_URL` はそのどちらも使えない場合の最後の fallback です。複数 workspace 運用では、この環境変数に依存せず、collector が保持する `workspace_host` / `permalink` を優先させてください。
 
 ## Bash sandbox（Docker）
 
@@ -193,7 +207,23 @@ ADJUTANT_DEBUG_UI=1 ADJUTANT_DEBUG=slack:fetch:hook pnpm start
 ADJUTANT_CDP_EVENT_LOG=1 ADJUTANT_CDP_EVENT_LOG_MAX_PARAM_CHARS=20000 pnpm start
 ADJUTANT_RAW_FETCH_LOG=1 ADJUTANT_RAW_FETCH_LOG_MAX_PAYLOAD_CHARS=20000 pnpm start
 ADJUTANT_DISABLE_DOM_CAPTURE=1 pnpm start
+pnpm rawlog:capture
 ```
+
+raw fetch log を使った notification payload 検証の準備:
+
+```bash
+pnpm rawlog:prepare
+pnpm rawlog:capture
+pnpm rawlog:analyze
+```
+
+詳細手順は [doc/runbook/raw-fetch-notification-validation.md](doc/runbook/raw-fetch-notification-validation.md) を参照。
+
+補足:
+
+- `pnpm rawlog:capture` は現状の既定値のまま Docker sandbox なしで動きます。
+- `pnpm start` でも同様に、環境変数を付けなければ sandbox は起動しません。
 
 ## 注意点
 

@@ -12,13 +12,16 @@ test("buildCustomToolDefinitions enables memory tools only for main scope", () =
     memoryScope: "main",
   });
   const mainNames = mainTools.map((tool) => tool.name).sort();
-  assert.deepEqual(mainNames, ["memory_get", "memory_search"]);
+  assert.deepEqual(mainNames, ["memory_get", "memory_search", "play_slack_search"]);
 
   const spokeTools = buildCustomToolDefinitions({
     cwd: process.cwd(),
     memoryScope: "spoke",
   });
-  assert.equal(spokeTools.length, 0);
+  assert.deepEqual(
+    spokeTools.map((tool) => tool.name),
+    ["play_slack_search"]
+  );
 });
 
 test("buildCustomToolDefinitions enables memory_write only when memoryWriteEnabled is true", () => {
@@ -88,4 +91,18 @@ test("buildCustomToolDefinitions enables sandboxed bash by mode and memoryScope"
   );
 
   configureSandbox(null);
+});
+
+test("buildCustomToolDefinitions excludes play_slack_search from heartbeat sessions", () => {
+  const tools = buildCustomToolDefinitions({
+    cwd: process.cwd(),
+    memoryScope: "main",
+    isHeartbeat: true,
+  });
+
+  assert.equal(
+    tools.some((tool) => tool.name === "play_slack_search"),
+    false
+  );
+  assert.equal(tools.length, 0);
 });

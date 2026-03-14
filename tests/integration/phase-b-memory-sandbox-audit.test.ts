@@ -195,9 +195,10 @@ test("Phase B integration: memory_write -> summary batch -> memory_search", asyn
   );
 
   const transcriptsDir = join(root, "transcripts");
-  await mkdir(transcriptsDir, { recursive: true });
+  const sessionDir = join(transcriptsDir, "main");
+  await mkdir(sessionDir, { recursive: true });
   await writeFile(
-    join(transcriptsDir, "main.jsonl"),
+    join(sessionDir, "2026-02-28.jsonl"),
     [
       JSON.stringify({
         role: "user",

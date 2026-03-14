@@ -36,6 +36,7 @@ import {
 } from "./control-plane/http/chat-stream-event-mapper.js";
 import { ChatHistoryStore } from "./control-plane/http/chat-history-store.js";
 import { createControlPlaneRequestHandler } from "./control-plane/http/control-plane-router.js";
+import { createActivityFeedReader } from "./control-plane/http/activity-feed.js";
 import { RunLifecycle } from "./control-plane/http/run-lifecycle.js";
 import { RunEventBuffer } from "./control-plane/http/run-event-buffer.js";
 import { SessionThreadCoordinator } from "./control-plane/http/session-thread-coordinator.js";
@@ -66,6 +67,7 @@ import { HeartbeatResultStore } from "./control-plane/heartbeat/result-store.js"
 import { buildSnapshotResponse } from "./control-plane/http/snapshot-builder.js";
 import { renderMinimalUiPage } from "./ui/minimal-page.js";
 import { UiRuntime } from "./ui/runtime.js";
+import { parseNotificationDecision } from "./control-plane/notification-decision.js";
 
 function resolveProjectRoot(): string {
   return resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -701,6 +703,18 @@ export async function main(): Promise<void> {
     | ((input: SubmitPromptInput) => Promise<SubmitPromptResult>)
     | undefined;
   const ingestCursorByRunId = new Map<string, Cursor>();
+  const notificationRunContextByRunId = new Map<
+    string,
+    {
+      sessionKey: string;
+      notificationUid: string;
+      title?: string;
+      originalMessageText: string;
+      permalink?: string;
+      teamId?: string;
+      channelId?: string;
+    }
+  >();
   type CollectorIngestPending = {
     request: CollectorIngestRequest;
     projection: IngestProjection;
@@ -815,6 +829,18 @@ export async function main(): Promise<void> {
     if (submitPromptForCollector === undefined) {
       throw new Error("INGEST_PIPELINE_NOT_READY");
     }
+    if (
+      input.items.length > 1 &&
+      input.items.some((entry) => entry.projection.rawEvent.kind === "notification")
+    ) {
+      for (const item of input.items) {
+        await submitCollectorIngestBatch({
+          source: input.source,
+          items: [item],
+        });
+      }
+      return;
+    }
     const payload = buildCollectorDispatchPayload(input.items.map((entry) => entry.projection));
     const latestCursor = selectLatestCursor(input.items);
     const replayed = input.items.every((entry) => entry.replayed);
@@ -823,6 +849,30 @@ export async function main(): Promise<void> {
       message: payload.message,
       idempotencyKey: payload.idempotencyKey,
     });
+    if (input.items.length === 1 && input.items[0]?.projection.rawEvent.kind === "notification") {
+      const event = input.items[0].projection.rawEvent;
+      const detail = event.detail;
+      const slack =
+        detail !== undefined && typeof detail === "object" && detail !== null && "slack" in detail
+          ? (detail as { slack?: unknown }).slack
+          : undefined;
+      const slackRecord =
+        typeof slack === "object" && slack !== null && !Array.isArray(slack)
+          ? (slack as Record<string, unknown>)
+          : {};
+      notificationRunContextByRunId.set(result.accepted.runId, {
+        sessionKey: payload.sessionKey,
+        notificationUid: event.uid,
+        title: typeof slackRecord.title === "string" ? slackRecord.title : undefined,
+        originalMessageText:
+          typeof slackRecord.message_text === "string"
+            ? slackRecord.message_text
+            : (event.subject ?? ""),
+        permalink: typeof slackRecord.permalink === "string" ? slackRecord.permalink : undefined,
+        teamId: typeof slackRecord.team_id === "string" ? slackRecord.team_id : undefined,
+        channelId: typeof slackRecord.channel_id === "string" ? slackRecord.channel_id : undefined,
+      });
+    }
     const run = runLifecycle.runs().get(result.accepted.runId);
     if (run?.status === "completed" || run?.status === "failed") {
       await ingestInboxStore.commitThrough(latestCursor);
@@ -1267,6 +1317,53 @@ export async function main(): Promise<void> {
           return;
         }
         const text = typeof result.text === "string" ? result.text : "";
+        const notificationContext = notificationRunContextByRunId.get(accepted.runId);
+        if (notificationContext !== undefined) {
+          const toolCalls = runToolCallAccum.get(accepted.runId)?.values();
+          const decision = parseNotificationDecision(text, { toolCalls });
+          try {
+            await timelineStore.appendEvent({
+              sessionKey: notificationContext.sessionKey,
+              uid: `${notificationContext.notificationUid}:decision:${accepted.runId}`,
+              ts: done.finishedAt ?? new Date().toISOString(),
+              loggedAt: done.finishedAt ?? new Date().toISOString(),
+              event: {
+                schema: "adjutant.event.v1.1",
+                uid: `${notificationContext.notificationUid}:decision:${accepted.runId}`,
+                source: "slack",
+                kind: "notification_decision",
+                subject: decision.reason ?? decision.reviewNotes ?? decision.replyText ?? "",
+                ts: done.finishedAt ?? new Date().toISOString(),
+                meta: {
+                  notificationUid: notificationContext.notificationUid,
+                  action: decision.action,
+                  reason: decision.reason,
+                  replyText: decision.replyText,
+                  reviewNotes: decision.reviewNotes,
+                  originalMessageText: notificationContext.originalMessageText,
+                  title: notificationContext.title,
+                  permalink: notificationContext.permalink,
+                  teamId: notificationContext.teamId,
+                  channelId: notificationContext.channelId,
+                  runId: accepted.runId,
+                },
+              },
+            });
+          } catch (error) {
+            const summary = toErrorSummary(error);
+            logControlPlane({
+              level: "warn",
+              event: "timeline.notification_decision.append_failed",
+              runId: accepted.runId,
+              sessionKey: notificationContext.sessionKey,
+              toolCallId: null,
+              errorCode: summary.errorCode,
+              message: summary.errorMessage,
+            });
+          } finally {
+            notificationRunContextByRunId.delete(accepted.runId);
+          }
+        }
         runEventBuffer.append(
           accepted.runId,
           mapPromptResultToChatStreamEvent({
@@ -1321,6 +1418,7 @@ export async function main(): Promise<void> {
           });
         }
       } catch (error) {
+        notificationRunContextByRunId.delete(accepted.runId);
         const runBeforeFailure = runLifecycle.runs().get(accepted.runId);
         if (runBeforeFailure?.status === "cancelled") {
           clearRunAccumulators(accepted.runId);
@@ -1592,6 +1690,14 @@ export async function main(): Promise<void> {
     },
     globalQueue,
     resultStore: heartbeatResultStore,
+    recordMeaningfulText: async ({ runId, text, reason }) => {
+      chatHistoryStore.appendAssistantMessage({
+        sessionKey: "main",
+        runId: runId ?? `heartbeat:${Date.now()}`,
+        message: `[Heartbeat:${reason}] ${text}`,
+        timestamp: new Date().toISOString(),
+      });
+    },
     emitEvent: (result) => {
       emitSse("heartbeat", result as unknown as Record<string, unknown>);
       logControlPlane({
@@ -1732,6 +1838,7 @@ export async function main(): Promise<void> {
     listHeartbeatHistory: heartbeatEnabled
       ? (input): GetHeartbeatHistoryResponse => heartbeatRunner.getHistory(input)
       : undefined,
+    buildActivityFeed: createActivityFeedReader(timelineStore),
   });
 
   const server = createServer((req, res) => {

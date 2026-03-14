@@ -350,6 +350,27 @@ function createWatermarkKey(filePath: string, sessionsDir: string): string {
   return `state:${normalizeRelativePath(rel)}`;
 }
 
+function isDailyTranscriptBasename(name: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(name);
+}
+
+function deriveSessionKeyFromFilePath(filePath: string, sessionsDir: string): string {
+  const rel = normalizeRelativePath(relative(resolve(sessionsDir), resolve(filePath)));
+  if (!rel || rel.startsWith("..")) {
+    return basename(filePath, ".jsonl");
+  }
+  const relWithoutExtension = rel.replace(/\.jsonl$/i, "");
+  const segments = relWithoutExtension.split("/").filter(Boolean);
+  if (segments.length === 0) {
+    return basename(filePath, ".jsonl");
+  }
+  const last = segments[segments.length - 1] ?? "";
+  if (segments.length > 1 && isDailyTranscriptBasename(last)) {
+    return segments.slice(0, -1).join("/");
+  }
+  return relWithoutExtension;
+}
+
 function resolveWatermarkState(
   watermark: SummaryBatchWatermarkV1,
   candidate: SessionFileCandidate
@@ -588,7 +609,8 @@ export async function runMarkdownSummaryBatch(
       continue;
     }
 
-    const sessionKey = parsedSessionKey || basename(filePath, ".jsonl");
+    const sessionKey =
+      parsedSessionKey || deriveSessionKeyFromFilePath(filePath, options.sessionTranscriptsDir);
     const sourcePath = toSourcePathLabel(filePath, [options.sessionTranscriptsDir]);
     let progressOffset = fromOffset;
     let progressTs = state?.lastProcessedTs ?? nowIso;

@@ -4,7 +4,6 @@ import type { GlobalConcurrencyQueue } from "../proactive/global-concurrency-que
 import type { HeartbeatHistoryPage, HeartbeatResultStore } from "./result-store.js";
 import {
   HEARTBEAT_RESULT_SCHEMA_V1,
-  HEARTBEAT_TOOL_NAME,
   type HeartbeatRunResultV1,
   type ReportHeartbeatStatusPayload,
   validateReportHeartbeatStatusPayload,
@@ -40,6 +39,11 @@ type HeartbeatRunnerOptions = {
   globalQueue?: GlobalConcurrencyQueue;
   resultStore: HeartbeatResultStore;
   emitEvent?: (result: HeartbeatRunResultV1) => void;
+  recordMeaningfulText?: (input: {
+    runId?: string;
+    text: string;
+    reason: string;
+  }) => Promise<void> | void;
   onWarn?: (message: string, meta?: Record<string, unknown>) => void;
 };
 
@@ -52,11 +56,15 @@ export type HeartbeatRunner = {
 };
 
 const HEARTBEAT_CONTRACT = [
-  "You must call `report_heartbeat_status` exactly once.",
-  "status must be one of: no_action_needed, needs_attention, task_completed.",
-  "notify should be true only when user notification is required.",
-  "reason should be concise and actionable.",
-].join("\n");
+  "Read HEARTBEAT.md if it exists (workspace context).",
+  "Follow it strictly.",
+  "Do not infer or repeat old tasks from prior chats.",
+  "If nothing needs attention, reply HEARTBEAT_OK.",
+].join(" ");
+
+function isEnoent(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException | undefined)?.code === "ENOENT";
+}
 
 function normalizeToolName(value: unknown): string {
   if (typeof value !== "string") {
@@ -67,7 +75,7 @@ function normalizeToolName(value: unknown): string {
 
 function isHeartbeatToolCall(value: HeartbeatObservedToolCall): boolean {
   const toolName = normalizeToolName(value.toolName);
-  return toolName === HEARTBEAT_TOOL_NAME || toolName.includes("report_heartbeat_status");
+  return toolName.includes("report_heartbeat_status");
 }
 
 function ensurePromptContract(text: string): string {
@@ -75,7 +83,7 @@ function ensurePromptContract(text: string): string {
   if (trimmed.length === 0) {
     return "";
   }
-  if (trimmed.toLowerCase().includes("report_heartbeat_status")) {
+  if (trimmed.includes("HEARTBEAT_OK")) {
     return trimmed;
   }
   return `${trimmed}\n\n${HEARTBEAT_CONTRACT}`;
@@ -107,6 +115,40 @@ function parseHeartbeatReport(input: HeartbeatPromptExecutionResult): {
   };
 }
 
+function classifyHeartbeatOutcome(input: HeartbeatPromptExecutionResult): {
+  eventStatus: "sent" | "ok-token" | "ok-empty";
+  reason?: string;
+} {
+  const parsed = parseHeartbeatReport(input);
+  if (parsed.payload !== undefined) {
+    return {
+      eventStatus:
+        parsed.payload.notify === true
+          ? "sent"
+          : parsed.payload.reason !== undefined && parsed.payload.reason.trim().length > 0
+            ? "ok-token"
+            : "ok-empty",
+      reason: parsed.payload.reason,
+    };
+  }
+
+  const trimmed = input.text?.trim() ?? "";
+  if (trimmed.length === 0) {
+    return {
+      eventStatus: "ok-empty",
+    };
+  }
+  if (trimmed === "HEARTBEAT_OK") {
+    return {
+      eventStatus: "ok-token",
+    };
+  }
+  return {
+    eventStatus: "sent",
+    reason: trimmed,
+  };
+}
+
 function buildResult(input: {
   nowIso: string;
   status: "ran" | "skipped" | "failed";
@@ -124,6 +166,20 @@ function buildResult(input: {
     ts: input.nowIso,
     runId: input.runId,
   };
+}
+
+function getMeaningfulHeartbeatText(text: string | undefined): string | undefined {
+  if (typeof text !== "string") {
+    return undefined;
+  }
+  const trimmed = text.trim();
+  if (trimmed.length === 0) {
+    return undefined;
+  }
+  if (trimmed === "HEARTBEAT_OK") {
+    return undefined;
+  }
+  return trimmed;
 }
 
 export function createHeartbeatRunner(options: HeartbeatRunnerOptions): HeartbeatRunner {
@@ -174,15 +230,18 @@ export function createHeartbeatRunner(options: HeartbeatRunnerOptions): Heartbea
         release = lease.release;
       }
 
-      let prompt = "";
+      let prompt: string | undefined;
       try {
         prompt = await readPrompt();
       } catch (error) {
-        options.onWarn?.("heartbeat.prompt.read_failed", {
-          reason: error instanceof Error ? error.message : String(error),
-        });
+        if (!isEnoent(error)) {
+          options.onWarn?.("heartbeat.prompt.read_failed", {
+            reason: error instanceof Error ? error.message : String(error),
+          });
+        }
       }
-      const promptWithContract = ensurePromptContract(prompt);
+      const promptWithContract =
+        prompt === undefined ? HEARTBEAT_CONTRACT : ensurePromptContract(prompt);
       if (promptWithContract.length === 0) {
         return await finalize(
           buildResult({
@@ -199,31 +258,28 @@ export function createHeartbeatRunner(options: HeartbeatRunnerOptions): Heartbea
         prompt: promptWithContract,
         timeoutMs,
       });
-      const parsed = parseHeartbeatReport(executed);
-      if (parsed.payload === undefined) {
-        return await finalize(
-          buildResult({
-            nowIso: nowIso(),
-            status: "failed",
-            eventStatus: "failed",
-            reason: parsed.reason,
+      const outcome = classifyHeartbeatOutcome(executed);
+      const meaningfulText = getMeaningfulHeartbeatText(executed.text);
+      if (meaningfulText !== undefined) {
+        try {
+          await options.recordMeaningfulText?.({
             runId: executed.runId,
-          })
-        );
+            text: meaningfulText,
+            reason,
+          });
+        } catch (error) {
+          options.onWarn?.("heartbeat.meaningful_text.record_failed", {
+            runId: executed.runId,
+            reason: error instanceof Error ? error.message : String(error),
+          });
+        }
       }
-
-      const eventStatus =
-        parsed.payload.notify === true
-          ? "sent"
-          : parsed.payload.reason !== undefined && parsed.payload.reason.trim().length > 0
-            ? "ok-token"
-            : "ok-empty";
       return await finalize(
         buildResult({
           nowIso: nowIso(),
           status: "ran",
-          eventStatus,
-          reason: parsed.payload.reason,
+          eventStatus: outcome.eventStatus,
+          reason: outcome.reason,
           runId: executed.runId,
         })
       );

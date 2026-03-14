@@ -536,3 +536,140 @@ test("heartbeat history API: invalid limit は 400 を返す", async (t) => {
     message: "limit must be a positive integer",
   });
 });
+
+test("GET /api/activity-feed returns newest-first unread-like items", async (t) => {
+  const runLifecycle = new RunLifecycle({
+    now: () => "2026-03-01T00:00:00.000Z",
+    newMessageId: () => "msg_test",
+  });
+  const runEventBuffer = new RunEventBuffer({ retentionMs: 60_000 });
+  const stateDir = await mkdtemp(join(tmpdir(), "adjutant-router-test-activity-feed-"));
+  t.after(async () => {
+    await rm(stateDir, { recursive: true, force: true });
+  });
+  const threadRepository = ThreadRepository.fromStateDir(stateDir);
+  await threadRepository.initialize();
+
+  const handler = createControlPlaneRequestHandler({
+    sseHub: new SseHub(),
+    renderRootPage: () => "<!doctype html><html></html>",
+    buildSnapshot: () => ({ runs: [], toolEventsByRun: {}, pendingPermissions: [] }),
+    submitPrompt: async () => {
+      throw new Error("not used");
+    },
+    readRunAudit: async () => ({}),
+    runLifecycle,
+    runEventBuffer,
+    chatHistoryStore: new ChatHistoryStore(),
+    threadRepository,
+    buildThreadSnapshot: () => undefined,
+    supervisor: {
+      request: async () => {
+        throw new Error("not used");
+      },
+    } as unknown as WorkerSupervisor,
+    permissionGateway: new PermissionGateway({
+      emitUiEvent: () => {},
+    }),
+    buildActivityFeed: async (input) => ({
+      items: [
+        {
+          activityId: "evt-1",
+          ts: "2026-03-14T10:00:00.000Z",
+          kind: "notification_received",
+          messageText: "<@U1> test",
+          sessionKey: "slack-activity",
+          permalink: "https://workspace-alpha.slack.com/archives/C1/p1",
+        },
+      ],
+      nextCursor: input?.cursor ? undefined : "MQ",
+      generatedAt: "2026-03-14T10:00:05.000Z",
+    }),
+  });
+
+  const port = await allocatePort();
+  const server = createServer((req, res) => {
+    void handler(req, res);
+  });
+  await new Promise<void>((resolve) => {
+    server.listen(port, "127.0.0.1", () => resolve());
+  });
+  t.after(async () => {
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve());
+    });
+  });
+
+  const response = await fetch(`http://127.0.0.1:${port}/api/activity-feed?limit=10&cursor=MQ`);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    items: [
+      {
+        activityId: "evt-1",
+        ts: "2026-03-14T10:00:00.000Z",
+        kind: "notification_received",
+        messageText: "<@U1> test",
+        sessionKey: "slack-activity",
+        permalink: "https://workspace-alpha.slack.com/archives/C1/p1",
+      },
+    ],
+    generatedAt: "2026-03-14T10:00:05.000Z",
+  });
+});
+
+test("GET /api/activity-feed validates limit", async (t) => {
+  const runLifecycle = new RunLifecycle({
+    now: () => "2026-03-01T00:00:00.000Z",
+    newMessageId: () => "msg_test",
+  });
+  const runEventBuffer = new RunEventBuffer({ retentionMs: 60_000 });
+  const stateDir = await mkdtemp(join(tmpdir(), "adjutant-router-test-activity-feed-invalid-"));
+  t.after(async () => {
+    await rm(stateDir, { recursive: true, force: true });
+  });
+  const threadRepository = ThreadRepository.fromStateDir(stateDir);
+  await threadRepository.initialize();
+
+  const handler = createControlPlaneRequestHandler({
+    sseHub: new SseHub(),
+    renderRootPage: () => "<!doctype html><html></html>",
+    buildSnapshot: () => ({ runs: [], toolEventsByRun: {}, pendingPermissions: [] }),
+    submitPrompt: async () => {
+      throw new Error("not used");
+    },
+    readRunAudit: async () => ({}),
+    runLifecycle,
+    runEventBuffer,
+    chatHistoryStore: new ChatHistoryStore(),
+    threadRepository,
+    buildThreadSnapshot: () => undefined,
+    supervisor: {
+      request: async () => {
+        throw new Error("not used");
+      },
+    } as unknown as WorkerSupervisor,
+    permissionGateway: new PermissionGateway({
+      emitUiEvent: () => {},
+    }),
+  });
+
+  const port = await allocatePort();
+  const server = createServer((req, res) => {
+    void handler(req, res);
+  });
+  await new Promise<void>((resolve) => {
+    server.listen(port, "127.0.0.1", () => resolve());
+  });
+  t.after(async () => {
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve());
+    });
+  });
+
+  const response = await fetch(`http://127.0.0.1:${port}/api/activity-feed?limit=abc`);
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), {
+    code: "INVALID_REQUEST",
+    message: "limit must be a positive integer",
+  });
+});

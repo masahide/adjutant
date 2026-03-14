@@ -240,6 +240,24 @@ export type GetHeartbeatHistoryResponse = {
   nextCursor?: string;
 };
 
+export type ActivityItem = {
+  activityId: string;
+  ts: string;
+  kind: "notification_received" | "draft_reply" | "needs_review" | "no_action" | "note";
+  messageText: string;
+  title?: string;
+  summary?: string;
+  sessionKey?: string;
+  permalink?: string;
+  status?: string;
+};
+
+export type GetActivityFeedResponse = {
+  items: ActivityItem[];
+  nextCursor?: string;
+  generatedAt: string;
+};
+
 export function toPermissionSummary(input: PendingPermission): PermissionSummary {
   return {
     requestId: input.requestId,

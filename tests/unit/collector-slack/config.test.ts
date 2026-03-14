@@ -85,7 +85,7 @@ test("loadCollectorSlackConfig resolves collector env defaults", () => {
   });
 
   assert.equal(config.collectorEnabled, true);
-  assert.equal(config.collectorEntry, "src/collector-slack/main.ts");
+  assert.equal(config.collectorEntry, "src/collector-slack/process-rpc-entry.ts");
   assert.equal(config.accountId, "default");
   assert.equal(config.dataDir, "/tmp/state/data");
   assert.equal(config.disableDomCapture, true);
@@ -105,4 +105,18 @@ test("loadCollectorSlackConfig prefers ADJUTANT_DATA_DIR over DATA_DIR", () => {
   });
 
   assert.equal(config.dataDir, "/tmp/adjutant-data");
+});
+
+test("loadCollectorSlackConfig parses workspace host overrides by team", () => {
+  const config = loadCollectorSlackConfig({
+    env: {
+      ADJUTANT_SLACK_WORKSPACE_HOSTS: "TTEAM0001=workspace-alpha.slack.com,TBA5B5CF8=app.slack.com",
+    },
+    exists: () => false,
+  });
+
+  assert.deepEqual(config.workspaceHostsByTeam, {
+    TTEAM0001: "workspace-alpha.slack.com",
+    TBA5B5CF8: "app.slack.com",
+  });
 });

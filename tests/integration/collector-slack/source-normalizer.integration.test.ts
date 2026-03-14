@@ -45,3 +45,17 @@ test("fetch/websocket/response event stream normalizes and dedupes to unique sla
     ["fetch", "websocket", "response"]
   );
 });
+
+test("notification optional fields survive integration normalization", () => {
+  const stream = [{ sourceKind: "response", payload: fixture.events.notification }] as const;
+
+  const normalized = normalizeAndDedupeSourceEvents(stream);
+  assert.equal(normalized.length, 1);
+  const detail = normalized[0]?.event.detail;
+  const slack = detail && "slack" in detail ? (detail.slack as Record<string, unknown>) : undefined;
+  assert.equal(slack?.team_id, "T123");
+  assert.equal(slack?.message_ts, "1730000000.456");
+  assert.equal(slack?.thread_ts, "1730000000.400");
+  assert.equal(slack?.mention_target_user_id, "U999");
+  assert.equal(slack?.is_direct_mention, true);
+});
