@@ -443,14 +443,12 @@ flowchart LR
 ### 13.2 Notification-Driven 実行方針
 
 - vNext では広い proactive ルーティングパイプラインを標準経路にしない。
-- Slack 通知処理は notification-driven を基本とし、即時 AI 起動対象は「明らかに自分宛」の通知だけに限定する。
-- self-directed allowlist:
-  - `strong`: DM、明示メンション
-  - `medium`: 自分が参加した thread への返信、キーワード通知
-  - `weak`: リアクション通知、一般 activity、分類不能通知
-- `strong` は即時 AI run 対象とする。
-- `medium` と `weak` は record/view 対象とし、即時 AI 起動は行わない。
+- Slack 通知処理は notification-driven を基本とし、即時 AI 起動対象は自分宛メンション通知だけに限定する。
+- 自分宛メンション通知のみを即時 AI run 対象とする。
+- DM はメンションがなくても v1 の通知起点即時 AI run 対象にしない。
+- それ以外の notification は vNext の通知起点処理対象にしない。
 - self post / self reaction は自分の行動ログとして扱い、AI 即時起動トリガーにはしない。
+- notification 正規化は `teamId` / `threadTs` / `messageTs` / `permalink` を含む shape へ拡張する前提とし、collector 側で必要情報を追加収集する。
 - Slack 通知起点 run の既定 session は `slack-activity` とする。
 - `threadTs` / `messageTs` は session 分離のためではなく、Slack 上の thread/message 文脈を取得する anchor として扱う。
 - `threadTs` がない場合は `messageTs` から親 thread を解決し、失敗時は `needs_review` とする。
@@ -596,14 +594,14 @@ sequenceDiagram
 
   C->>CP: collector/ingest(notification/self activity)
   CP-->>C: accepted
-  alt self-directed strong notification
+  alt direct mention notification
     CP->>AW: initialize/session.new/session.prompt
     AW->>T: play-slack-search(...)
     T-->>AW: context
     AW-->>CP: session/update stream
     AW-->>CP: draft reply / no_action / needs_review
-  else self activity / medium / weak
-    CP-->>CP: record or display only
+  else self activity / non-mention notification
+    CP-->>CP: record only or ignore
   end
 ```
 
@@ -655,6 +653,7 @@ classDiagram
   - `POST /api/commands`
   - `GET /api/snapshot`
   - `GET /api/events/stream`
+  - `GET /api/activity-feed`
   - `POST /api/heartbeat/run`
   - `GET /api/heartbeat/last`
   - `GET /api/heartbeat/history?limit={n}&cursor={opaque}`
@@ -665,7 +664,8 @@ classDiagram
   - `GET /api/threads/:threadId/snapshot`
     - `toolEventsByRun[runId][]` は optional で `rawInput` / `rawOutput` / `error` を含む
   - `POST /api/commands` は session 単位の手動入力として扱う
-  - heartbeat は OpenClaw 寄せの full agent turn とし、専用 structured tool 呼び出しを必須にしない
+- `GET /api/activity-feed` は `ActivityItem[]` を返す newest-first の unread-like view API とし、v1 では既読状態を保持しない
+- heartbeat は OpenClaw 寄せの full agent turn とし、専用 structured tool 呼び出しを必須にしない
 
 #### API/SSE 例
 
@@ -701,12 +701,17 @@ data: {"runId":"session:sess_xxx:run:1","update":{"sessionUpdate":"agent_message
 ### 14.6 Notification / Heartbeat 実行規約
 
 - `collector/ingest` は Slack 通知や self activity の流入点として扱うが、vNext の標準経路では durable replay を前提にしない。
-- self-directed `strong` notification のみ即時 AI run を起動する。
-- `medium` / `weak` notification と self activity は record-only とし、即時 AI 起動は行わない。
+- 自分宛メンション notification のみ即時 AI run を起動する。
+- self activity は record-only とし、即時 AI 起動は行わない。
+- self activity は `state/activity/self/YYYY-MM-DD.jsonl` に日次保存する。
+- 自分宛メンションではない notification は v1 の通知起点 run 対象にしない。
+- notification 正規化は `teamId` / `threadTs` / `messageTs` / `permalink` を追加収集する方向で collector を調整する。collector 調整完了まではいずれも optional を許容し、anchor 解決に必要な情報が不足する場合は `needs_review` へ倒す。
 - Slack 通知起点 run は `slack-activity` セッションへ集約する。
 - `threadTs` があればそれを優先して Slack thread 文脈取得の anchor とする。
 - `messageTs` しかない場合は `play-slack-search(mode=message)` で親 thread を解決し、失敗時は `needs_review` とする。
+- `threadTs` と `messageTs` がともに無い場合は `play-slack-search(mode=permalink)` で permalink から anchor 解決を試み、失敗時は `needs_review` とする。
 - AI が必要な文脈を欠く場合は `play-slack-search` を通じてその場で Slack から取得する。
+- `play-slack-search` は `thread` / `message` / `search` / `permalink` を提供し、spawn adapter の timeout は 180000ms とする。
 - v1 では Slack への自動送信は行わず、返信が必要な場合は draft reply の生成までに留める。
 - heartbeat は `main` セッション上の full agent turn とする。
 - heartbeat prompt の既定は `Read HEARTBEAT.md if it exists (workspace context). Follow it strictly. Do not infer or repeat old tasks from prior chats. If nothing needs attention, reply HEARTBEAT_OK.` とする。
@@ -714,7 +719,10 @@ data: {"runId":"session:sess_xxx:run:1","update":{"sessionUpdate":"agent_message
 - `HEARTBEAT.md` が存在しない場合は default heartbeat prompt のまま run を継続する。
 - main セッションが busy の場合、heartbeat は割り込まず `skip + 後再試行` とする。
 - heartbeat が `HEARTBEAT_OK` または同等の短い ACK を返した場合、追加の表示や送信は行わず、UI 上も既定でフィルタする。
-- `ActivityFeed` は AI session ではなく UI view であり、Slack 通知を新しい順に全文つきで確認するための lightweight unread surface とする。
+- heartbeat が `HEARTBEAT_OK` 以外の有意味な出力を返した場合は、main transcript に heartbeat 応答であると識別できる形で残す。
+- `ActivityFeed` は AI session ではなく UI view であり、Slack 通知を新しい順に全文つきで確認するための lightweight unread-like surface とする。v1 では既読状態を保持しない。
+- 既存の `report_heartbeat_status` / `adjutant.heartbeat.result.v1` / `/api/heartbeat/*` / `event: heartbeat` は Phase 5 で互換方針を定めて移行する。v1 計画段階では完全互換を前提にしない。
+- transcript の日付切替は notification-driven flow の本計画には含めず、別計画で `chat-history-store` / `markdown-summary-batch` / 関連テスト・UI への影響を調査した上で扱う。
 
 ### 14.7 Capability Gate 方針
 
