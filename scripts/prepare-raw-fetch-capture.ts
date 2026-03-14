@@ -2,6 +2,9 @@ import { mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
 import { loadCollectorSlackConfig } from "../src/collector-slack/config.js";
+import { loadProjectEnv } from "../src/runtime/load-project-env.js";
+
+loadProjectEnv();
 
 function resolveRawFetchLogPath(): string {
   const config = loadCollectorSlackConfig();

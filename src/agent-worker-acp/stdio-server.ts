@@ -1,6 +1,7 @@
 import { createInterface } from "node:readline";
 
 import { AgentRunnerAdapter } from "./adapters/agent-runner-adapter.js";
+import { loadProjectEnv } from "../runtime/load-project-env.js";
 import { handleAuthenticate } from "./handlers/authenticate.js";
 import { handleInitialize } from "./handlers/initialize.js";
 import { handleSessionCancel } from "./handlers/session-cancel.js";
@@ -11,6 +12,8 @@ import { configureWorkerSandboxFromEnv } from "./sandbox-bootstrap.js";
 import { SessionExecutionRegistry } from "./session-execution-registry.js";
 import { WorkerSessionStore } from "./session-store.js";
 import { WorkerRuntimeError } from "./errors.js";
+
+loadProjectEnv();
 
 interface JsonRpcRequest {
   jsonrpc: "2.0";

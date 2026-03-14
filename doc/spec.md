@@ -20,6 +20,10 @@ Adjutant は Slack Desktop の CDP イベントを収集し、`NormalizedEvent` 
 
 ## 2. 実装スコープ
 
+- ランタイム entrypoint（`pnpm start`, `pnpm dev`, `pnpm serve`, rawlog scripts, subprocess stdio server）は、リポジトリ直下の `.env` と `.env.local` を自動で読み込む。
+- 優先順位は `export 済み env > .env.local > .env` とする。
+- 実行時に必要な固有情報は `.env.local` に置く。
+
 ### 2.1 レガシー実装済み
 
 - Slack CDP 接続 (`connectToSlackPage`)

@@ -4,6 +4,9 @@ import { join } from "node:path";
 import type { ChildProcess } from "node:child_process";
 import { ensureSlackWithCdp } from "./lib/slackCdp.js";
 import { applyCollectorRuntimeDefaults } from "./lib/collectorRuntime.js";
+import { loadProjectEnv } from "../src/runtime/load-project-env.js";
+
+loadProjectEnv();
 
 type ProcessConfig = {
   name: string;

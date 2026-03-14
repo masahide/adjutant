@@ -2,10 +2,13 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import { loadCollectorSlackConfig } from "../src/collector-slack/config.js";
+import { loadProjectEnv } from "../src/runtime/load-project-env.js";
 import {
   deriveSlackNotificationFields,
   sanitizeWorkspaceHost,
 } from "../src/collector-slack/notification-derived-fields.js";
+
+loadProjectEnv();
 
 type RawFetchRecord = {
   schema?: string;

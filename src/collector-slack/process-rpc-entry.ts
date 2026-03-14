@@ -2,6 +2,7 @@ import { join } from "node:path";
 
 import type { CollectorIngestRequest } from "../contracts/process-rpc/method-types.js";
 import type { NormalizedEvent } from "../core/events.js";
+import { loadProjectEnv } from "../runtime/load-project-env.js";
 import { loadCollectorSlackConfig } from "./config.js";
 import {
   enrichNotificationEvent,
@@ -16,6 +17,8 @@ import {
 import { SelfActivityStore } from "./self-activity-store.js";
 import { connectToSlackPage } from "../../legacy/impl-20260228/src/runtime/slackConnection.js";
 import { SlackAdapter } from "../../legacy/impl-20260228/src/slack/adapter.js";
+
+loadProjectEnv();
 
 type JsonRpcResponse = {
   jsonrpc?: string;

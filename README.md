@@ -45,7 +45,16 @@ tests/          # node --test 用テスト
 
 ```bash
 pnpm install
+cp .env.example .env.local
 ```
+
+リポジトリ直下の `.env` と `.env.local` は、実行エントリから自動で読み込まれます。優先順位は次の通りです。
+
+1. すでに `export` 済みの環境変数
+2. `.env.local`
+3. `.env`
+
+実行時に必要な固有情報は `.env.local` に置いてください。`.env` / `.env.local` は Git 管理外です。
 
 ## 主なコマンド
 

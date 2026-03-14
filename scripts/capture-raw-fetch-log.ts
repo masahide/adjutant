@@ -2,11 +2,14 @@ import { appendFile, mkdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
 import { loadCollectorSlackConfig } from "../src/collector-slack/config.js";
+import { loadProjectEnv } from "../src/runtime/load-project-env.js";
 import {
   connectToSlackPage,
   type SlackCdpClient,
 } from "../legacy/impl-20260228/src/runtime/slackConnection.js";
 import { SlackAdapter } from "../legacy/impl-20260228/src/slack/adapter.js";
+
+loadProjectEnv();
 
 type DebugEventRecord = {
   schema: "adjutant.slack-debug.event.v1";

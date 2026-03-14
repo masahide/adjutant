@@ -65,9 +65,12 @@ import { WatermarkStore } from "./control-plane/proactive/watermark-store.js";
 import { createHeartbeatRunner } from "./control-plane/heartbeat/heartbeat-runner.js";
 import { HeartbeatResultStore } from "./control-plane/heartbeat/result-store.js";
 import { buildSnapshotResponse } from "./control-plane/http/snapshot-builder.js";
+import { loadProjectEnv } from "./runtime/load-project-env.js";
 import { renderMinimalUiPage } from "./ui/minimal-page.js";
 import { UiRuntime } from "./ui/runtime.js";
 import { parseNotificationDecision } from "./control-plane/notification-decision.js";
+
+loadProjectEnv();
 
 function resolveProjectRoot(): string {
   return resolve(dirname(fileURLToPath(import.meta.url)), "..");

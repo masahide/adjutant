@@ -1,6 +1,9 @@
 import { PROCESS_RPC_METHODS } from "../contracts/process-rpc/method-types.js";
 import { validateDeliverEnqueueRequest } from "../contracts/process-rpc/rpc-types.js";
 import { attachUtf8LineReader } from "../control-plane/supervisor/stdio-supervisor-utils.js";
+import { loadProjectEnv } from "../runtime/load-project-env.js";
+
+loadProjectEnv();
 
 interface JsonRpcRequest {
   jsonrpc: "2.0";

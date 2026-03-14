@@ -10,6 +10,7 @@ import {
   type PlaySlackSearchResult,
 } from "../src/assistant/play-slack-search-tool.js";
 import { deriveSlackPermalink } from "../src/collector-slack/notification-derived-fields.js";
+import { loadProjectEnv } from "../src/runtime/load-project-env.js";
 
 import {
   type DefaultSessionExport,
@@ -35,6 +36,8 @@ const { prepareSession, safeCloseSession } =
     SafeCloseSessionExport;
 const { DEFAULT_SESSION } =
   require("../play-slack-search/scripts/slack-search/contracts.ts") as DefaultSessionExport;
+
+loadProjectEnv();
 
 interface PermalinkCodeInput {
   limit: number;
