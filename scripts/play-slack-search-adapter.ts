@@ -238,14 +238,6 @@ export function extractThreadTsFromUrl(urlValue: string | undefined): string | u
   }
 }
 
-function resolveMessagePermalink(request: PlaySlackSearchRequest, workspaceUrl: string): string {
-  const permalinkRequest = buildPermalinkRequest(request, workspaceUrl);
-  if (!permalinkRequest.permalink) {
-    throw new Error("failed to resolve message permalink");
-  }
-  return permalinkRequest.permalink;
-}
-
 export function resolveThreadPermalinkFromMessage(
   request: PlaySlackSearchRequest,
   workspaceUrl: string,
