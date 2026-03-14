@@ -60,11 +60,8 @@ Adjutant は Slack Desktop の CDP イベントを収集し、`NormalizedEvent` 
 - permission request/resolve/cancel の registry + gateway
 - run 単位の tool event bridge（重複判定付き）
 - control-plane HTTP/SSE API（`POST /api/commands`, `GET /api/snapshot`, `GET /api/events/stream`）
-- `POST /api/commands` の idempotency 重複吸収（同一 `sessionKey+idempotencyKey+message` は同一 `runId` を再返却）
-- `POST /api/commands` の idempotency 競合検知（同一 key で payload 差分時は `409 INVALID_REQUEST`）
 - control-plane 同居 WebUI の最小画面配信（`GET /`）
 - session recovery（`sessionKey -> sessionId`）の journal/snapshot/replay 永続化
-- `deliver/completed` の冪等最終状態ストア（completed 優先）
 - JSONL journal append/drain、cursor load/commit、journal compaction
 - UI runtime の pending permission 管理と tool event 参照
 - AuditDetailTab 向け view model 生成（ツールイベント表示用）
@@ -443,29 +440,22 @@ flowchart LR
   - JSONL 最終行が改行なしでも 1 行として解析する
   - バッチ実行は単一 in-flight（実行中 tick は skip）で重複実行を防ぐ
 
-### 13.2 ルーティングパイプライン v1.5
+### 13.2 Notification-Driven 実行方針
 
-- pipeline は `rule triage` -> `attention window` -> `batch classifier` -> `notification queue` -> `chat dispatch` の順で処理する。
-- sessionKey は Slack channel/thread から解決する。
-  - channel: `slack:channel:<channelId>`
-  - group/im: `slack:group:<channelId>` / `slack:<channelId>`
-  - thread: `:thread:<threadTs>` を付与
-- `rule triage`:
-  - self 投稿は drop
-  - DM は immediate
-  - mention は immediate
-  - channel post は accumulate
-- `attention window` は sessionKey 単位でバッファし、idle または maxWait で flush する。
-- 既定値:
-  - channel: `idle=1000ms`, `maxWait=30000ms`
-  - DM: `idle=200ms`, `maxWait=1000ms`
-- `batch classifier` は `respond|note|ignore` を返す。タイムアウト/例外/低 confidence は fail-closed で `note` として扱う。
-- dispatch は既定で `runTarget=main` へ送信し、元セッションは `originSessionKey` で保持する。
-- global queue は `dm/group/channel/flusher/heartbeat` の source 優先度で同時実行を制御し、DM burst slot と starvation 昇格を持つ。
-- Phase E（2026-03-05）契約固定:
-  - control-plane 実装配置は `src/control-plane/proactive/*` を正本とする。
-  - ingest 連携は `CollectorIngestHandler` の `onAccept` から proactive pipeline へ委譲する。
-  - classifier の fail-closed 方針（timeout/例外/低 confidence -> `note`）は必須契約とする。
+- vNext では広い proactive ルーティングパイプラインを標準経路にしない。
+- Slack 通知処理は notification-driven を基本とし、即時 AI 起動対象は「明らかに自分宛」の通知だけに限定する。
+- self-directed allowlist:
+  - `strong`: DM、明示メンション
+  - `medium`: 自分が参加した thread への返信、キーワード通知
+  - `weak`: リアクション通知、一般 activity、分類不能通知
+- `strong` は即時 AI run 対象とする。
+- `medium` と `weak` は record/view 対象とし、即時 AI 起動は行わない。
+- self post / self reaction は自分の行動ログとして扱い、AI 即時起動トリガーにはしない。
+- Slack 通知起点 run の既定 session は `slack-activity` とする。
+- `threadTs` / `messageTs` は session 分離のためではなく、Slack 上の thread/message 文脈を取得する anchor として扱う。
+- `threadTs` がない場合は `messageTs` から親 thread を解決し、失敗時は `needs_review` とする。
+- 必要な文脈は保存済み queue から再生するのではなく、`play-slack-search` を通じてその場で取得する。
+- 旧 proactive pipeline（attention window / batch classifier / flusher）は legacy 実装として残るが、vNext の標準 notification 経路では前提にしない。
 
 ### 13.3 Timeline v1.5 / Watermark / Pending Flusher
 
@@ -547,16 +537,16 @@ flowchart LR
 ### 14.1 目的と方針
 
 - AI 実行部を `agent-worker-acp` として分離し、`control-plane` と ACP（JSON-RPC over stdio）で接続する。
-- `collector` / `deliver` は Process RPC（JSON-RPC over stdio）で `control-plane` と接続する。
-- 各プロセスは受信メッセージを処理前に inbound journal（JSONL）へ追記し、同期 `accepted` と非同期 `completed|failed` を分離する。
-- v1 は単一ホスト前提、at-least-once 前提、重複は dedupe と冪等更新で吸収する。
+- `collector` は Process RPC（JSON-RPC over stdio）で `control-plane` と接続する。
+- vNext の標準経路は OpenClaw 寄せの session/transcript 中心設計とし、durable queue / replay / duplicate 吸収を control-plane の主要責務にしない。
+- Slack 通知は ephemeral trigger として扱い、必要な文脈は `play-slack-search` で都度取得する。
+- heartbeat は `main` セッション上の full agent turn とし、`HEARTBEAT.md` / `HEARTBEAT_OK` / busy 時 `skip + retry` の mental model を採用する。
 
 ### 14.2 プロセス構成
 
-- `control-plane`: 親プロセス。API 提供、ジョブ制御、worker/collector/deliver の起動監視、capability gate、journal/cursor 管理、`web-ui` の同居ホスティング
+- `control-plane`: 親プロセス。API 提供、ジョブ制御、worker/collector の起動監視、capability gate、`web-ui` の同居ホスティング
 - `agent-worker-acp`: 子プロセス。ACP サーバーとして `initialize/session/*` を処理し `session/update` を通知
 - `collector-slack`: 子プロセス。Slack 由来イベントを `collector/ingest` で control-plane へ送信
-- `deliver-slack`: 子プロセス。`deliver/enqueue` を受けて外部送信し `deliver/completed` を通知
 - `web-ui`: `control-plane` 同一プロセス内で配信される UI（HTTP/SSE 経由で API を利用）
 - `cli`: control-plane API（HTTP）に接続する外部クライアント
 - 開発時は Vite dev server を別プロセスで起動してもよいが、本番/標準起動は同居を正とする
@@ -581,67 +571,40 @@ flowchart LR
     AW[agent-worker-acp]
   end
 
-  subgraph DLV[deliver process]
-    D[deliver-slack]
-  end
-
   CLI[cli-ui]
-  CPJ[(state/journal/control-plane/inbox.jsonl)]
-  DJ[(state/journal/deliver-slack/inbox.jsonl)]
-  CPCUR[(state/cursor/control-plane.inbox.json)]
-  DCUR[(state/cursor/deliver-slack.inbox.json)]
-  CPDQ[(state/journal/control-plane/deliver-queue.jsonl)]
-  CPDQC[(state/cursor/control-plane.deliver-queue.json)]
-  CPIDC[(state/journal/control-plane/idempotency.jsonl)]
-  CPIDS[(state/cursor/control-plane.idempotency.snapshot.json)]
-  CPDCS[(state/cursor/control-plane.deliver-completion.snapshot.json)]
   SVC[Slack / External APIs]
 
   CP -->|spawn/monitor/signal| C
   CP -->|spawn/monitor/signal| AW
-  CP -->|spawn/monitor/signal| D
 
   CP <-- ACP over stdio --> AW
   C <-- Process RPC over stdio --> CP
-  D <-- Process RPC over stdio --> CP
   WEB <-- inprocess HTTP SSE --> CP
   CLI <-- HTTP --> CP
 
-  CP <--> CPJ
-  D <--> DJ
-  CP <--> CPCUR
-  D <--> DCUR
-  CP <--> CPDQ
-  CP <--> CPDQC
-  CP <--> CPIDC
-  CP <--> CPIDS
-  CP <--> CPDCS
-
   C -->|ingest| SVC
-  D -->|post| SVC
 ```
 
-### 14.4 代表シーケンス（accepted/completed 分離）
+### 14.4 代表シーケンス（notification-driven）
 
 ```mermaid
 sequenceDiagram
   participant C as collector-slack
   participant CP as control-plane
   participant AW as agent-worker(ACP)
-  participant D as deliver-slack
-  participant J1 as cp journal
-  participant J2 as deliver journal
+  participant T as play-slack-search
 
-  C->>CP: collector/ingest(event)
-  CP->>J1: append inbound
-  CP-->>C: accepted(messageId)
-  CP->>AW: initialize/session.new/session.prompt
-  AW-->>CP: session/update stream
-  CP->>D: deliver/enqueue(command)
-  D->>J2: append inbound
-  D-->>CP: accepted(messageId)
-  D->>Slack: send message
-  D-->>CP: deliver/completed(messageId)
+  C->>CP: collector/ingest(notification/self activity)
+  CP-->>C: accepted
+  alt self-directed strong notification
+    CP->>AW: initialize/session.new/session.prompt
+    AW->>T: play-slack-search(...)
+    T-->>AW: context
+    AW-->>CP: session/update stream
+    AW-->>CP: draft reply / no_action / needs_review
+  else self activity / medium / weak
+    CP-->>CP: record or display only
+  end
 ```
 
 #### Worker 実行制御クラス図
@@ -684,17 +647,8 @@ classDiagram
   - optional stable は実装任意（phase/プロセスごとに採否を決定）。未採用時は capability 不在として `UNSUPPORTED_CAPABILITY` を返却する。
   - optional unstable: `session/list`, `session/resume`, `session/fork`, `session/set_model`（feature flag 有効時のみ）
   - 実行制約: 異なる `sessionId` の `session/prompt` は並行実行可能、同一 `sessionId` の同時 `session/prompt` は `SESSION_BUSY` を返却
-- Process RPC（control-plane <-> collector/deliver）
-  - request/response: `collector/ingest`, `deliver/enqueue`（同期 `accepted`）
-  - notification: `deliver/completed`（非同期、at-least-once）
-  - `deliver/enqueue` request（`DeliverEnqueueRequest`）
-    - 必須: `messageId`, `dedupeKey`, `target`, `payload`, `attempt`, `maxAttempts`
-    - 任意: `notBefore`
-  - `deliver/enqueue` response（`DeliverEnqueueResponse`）
-    - `messageId`, `status=accepted`, `acceptedAt`
-  - `deliver/completed` notification（`DeliverCompletedNotification`）
-    - 必須: `messageId`, `status(completed|failed)`, `finishedAt`
-    - 任意: `error`（失敗時の概要）
+- Process RPC（control-plane <-> collector）
+  - request/response: `collector/ingest`（同期 `accepted`）
   - 型定義の正本: `src/contracts/process-rpc/method-types.ts`, `src/contracts/process-rpc/rpc-types.ts`
   - 契約テストの正本: `tests/contract/process-rpc/process-rpc-validation.test.ts`
 - HTTP API（control-plane）
@@ -710,9 +664,8 @@ classDiagram
       `toolCallId` / `toolName` / `toolStatus` / `toolInput` / `toolOutput` / `toolError` を持つ
   - `GET /api/threads/:threadId/snapshot`
     - `toolEventsByRun[runId][]` は optional で `rawInput` / `rawOutput` / `error` を含む
-  - `POST /api/commands` は `idempotencyKey` を受け付け、同一 payload 再送時は run を再作成せず既存 `runId` を返す
-  - 同一 `idempotencyKey` で payload が異なる場合は `409 INVALID_REQUEST` を返す
-  - heartbeat 実行時は `report_heartbeat_status` を 1 回必須とし、payload は `src/control-plane/heartbeat/schema.ts` で検証する
+  - `POST /api/commands` は session 単位の手動入力として扱う
+  - heartbeat は OpenClaw 寄せの full agent turn とし、専用 structured tool 呼び出しを必須にしない
 
 #### API/SSE 例
 
@@ -745,35 +698,23 @@ data: {"runId":"session:sess_xxx:run:1","update":{"sessionUpdate":"agent_message
 - `OPENAI_API_KEY`: 必須（未設定時は runner が echo fallback に切り替わる）
 - `ADJUTANT_MODEL`: 任意（`provider/model` 形式、例: `openai/gpt-4.1`）
 
-### 14.6 Journal / Cursor / 冪等規約
+### 14.6 Notification / Heartbeat 実行規約
 
-- 各プロセスは自プロセス所有 inbox の cursor のみ commit する。
-- cursor commit は `completed|failed` など最終状態確定後に行い、`accepted` 時点では進めない。
-- `collector/ingest` の受理レコードは `state/journal/control-plane/inbox.jsonl` に append し、対応 cursor は `state/cursor/control-plane.inbox.json` を使用する。
-- control-plane は起動時に `control-plane.inbox` cursor 以降の未処理 `collector/ingest` レコードを replay し、run 実行導線へ再投入する。
-- `collector/ingest` 起点の cursor commit は run の terminal（`completed|failed|cancelled`）でのみ進め、`accepted` 時点では進めない。
-- `collector/ingest` の `payload` は `NormalizedEvent`（`source=slack`）を正本とする。
-- deliver queue 永続化の正本:
-  - journal: `state/journal/control-plane/deliver-queue.jsonl`
-  - cursor: `state/cursor/control-plane.deliver-queue.json`
-  - レコードは enqueue request を含む append-only JSONL とし、terminal 確定で cursor を commit する。
-- `deliver/completed` の冪等更新は `messageId` を主キーとする。
-- `completed` と `failed` が競合した場合、`completed` を最終状態として優先する。
-- deliver completion 永続化の正本:
-  - snapshot: `state/cursor/control-plane.deliver-completion.snapshot.json`
-  - `messageId -> terminal state` の写像を保持し、再起動後の duplicate/out-of-order completion を吸収する。
-- command/ingest idempotency 永続化の正本:
-  - journal: `state/journal/control-plane/idempotency.jsonl`
-  - snapshot: `state/cursor/control-plane.idempotency.snapshot.json`
-  - キーは `scope + logicalKey`（例: `command:sessionKey:idempotencyKey`, `ingest:dedupeKey`）で管理する。
-- proactive / heartbeat 永続化の正本:
-  - timeline: `state/timeline.jsonl`
-  - watermarks: `state/watermarks.json`
-  - heartbeat runs: `state/heartbeat-runs.jsonl`
-- watermark commit 規約:
-  - run terminal が `assistant_final` かつ `timelineOffset` が取得できた場合のみ前進する。
-  - `assistant_aborted|assistant_error` と offset 未取得時は前進しない。
-- backlog 運用指標は `ingest_backlog_count` と `oldest_ingest_age_seconds` を使用し、しきい値・一次対応は `doc/runbook/collector-backlog-monitoring.md` を正本とする。
+- `collector/ingest` は Slack 通知や self activity の流入点として扱うが、vNext の標準経路では durable replay を前提にしない。
+- self-directed `strong` notification のみ即時 AI run を起動する。
+- `medium` / `weak` notification と self activity は record-only とし、即時 AI 起動は行わない。
+- Slack 通知起点 run は `slack-activity` セッションへ集約する。
+- `threadTs` があればそれを優先して Slack thread 文脈取得の anchor とする。
+- `messageTs` しかない場合は `play-slack-search(mode=message)` で親 thread を解決し、失敗時は `needs_review` とする。
+- AI が必要な文脈を欠く場合は `play-slack-search` を通じてその場で Slack から取得する。
+- v1 では Slack への自動送信は行わず、返信が必要な場合は draft reply の生成までに留める。
+- heartbeat は `main` セッション上の full agent turn とする。
+- heartbeat prompt の既定は `Read HEARTBEAT.md if it exists (workspace context). Follow it strictly. Do not infer or repeat old tasks from prior chats. If nothing needs attention, reply HEARTBEAT_OK.` とする。
+- `HEARTBEAT.md` が存在して内容が実質空の場合のみ run 自体を skip する。
+- `HEARTBEAT.md` が存在しない場合は default heartbeat prompt のまま run を継続する。
+- main セッションが busy の場合、heartbeat は割り込まず `skip + 後再試行` とする。
+- heartbeat が `HEARTBEAT_OK` または同等の短い ACK を返した場合、追加の表示や送信は行わず、UI 上も既定でフィルタする。
+- `ActivityFeed` は AI session ではなく UI view であり、Slack 通知を新しい順に全文つきで確認するための lightweight unread surface とする。
 
 ### 14.7 Capability Gate 方針
 
@@ -786,14 +727,10 @@ data: {"runId":"session:sess_xxx:run:1","update":{"sessionUpdate":"agent_message
 
 ### 14.8 エラー分類と回復
 
-- 代表エラー: `UNSUPPORTED_CAPABILITY`, `ACP_PROTOCOL_ERROR`, `JOURNAL_APPEND_FAILED`, `WORKER_TIMEOUT`, `WORKER_CRASHED`, `DOWNSTREAM_ERROR`, `INVALID_RECORD`, `SESSION_BUSY`, `DELIVER_TIMEOUT`, `DELIVER_RETRY_EXHAUSTED`, `CLASSIFIER_TIMEOUT`, `CLASSIFIER_INVALID_OUTPUT`, `TIMELINE_APPEND_FAILED`, `WATERMARK_SAVE_FAILED`, `HEARTBEAT_FAILED`
+- 代表エラー: `UNSUPPORTED_CAPABILITY`, `ACP_PROTOCOL_ERROR`, `WORKER_TIMEOUT`, `WORKER_CRASHED`, `DOWNSTREAM_ERROR`, `INVALID_RECORD`, `SESSION_BUSY`, `SLACK_TOOL_TIMEOUT`, `SLACK_RATE_LIMITED`, `HEARTBEAT_FAILED`
 - worker 異常終了時は supervisor が再起動を試行し、構造化ログへ理由を記録する。
-- process 再起動時は journal + cursor から未処理のみ再開する。
-- deliver プロセス異常終了時は control-plane supervisor が再起動を試行し、`control-plane.deliver-queue` cursor 未満の未完了 enqueue を replay する。
-- restart 後の `/api/commands` duplicate/conflict 判定は idempotency journal/snapshot を復元して継続する。
-- restart 後の `collector/ingest` dedupe 判定は ingest dedupe store を復元し、canonical `messageId` の再利用を継続する。
+- process 再起動後の未処理通知 replay や duplicate 吸収は vNext の標準責務にしない。
 - collector 側障害（CDP 切断、ingest timeout、backlog 増加）は `doc/runbook/collector-backlog-monitoring.md` の一次対応に従う。
-- deliver 側障害（timeout, crash, completion 遅延）は `doc/runbook/deliver-queue-recovery.md` の一次対応に従う。
 - proactive/flusher 側障害は `doc/runbook/proactive-flusher-operations.md` の一次対応に従う。
 - heartbeat 側障害は `doc/runbook/heartbeat-operations.md` の一次対応に従う。
 - 運用ロールバック手順は `doc/runbook/phase-b-rollback.md` を正本とする。
@@ -801,6 +738,6 @@ data: {"runId":"session:sess_xxx:run:1","update":{"sessionUpdate":"agent_message
 ### 14.9 v1 制約
 
 - 単一ホスト実行のみ想定
-- at-least-once 配信（exactly-once ではない）
+- restart 後の replay、duplicate/conflict 吸収、exactly-once delivery は保証しない
 - terminal gateway / FS capability は v1 非スコープ
 - pre-compaction memory flush は s02 では非スコープだったが、s04 で実装済み
