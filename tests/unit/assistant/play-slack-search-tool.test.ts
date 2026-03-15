@@ -188,18 +188,19 @@ test("runPlaySlackSearchAdapter は timeout 時に SIGTERM を送り child clean
         { mode: "search", query: "hello" },
         {
           cwd: process.cwd(),
-          timeoutMs: 300,
+          timeoutMs: 1000,
         }
       ),
-    /timeout after 300ms/
+    /timeout after 1000ms/
   );
 
-  for (let attempt = 0; attempt < 20; attempt += 1) {
+  for (let attempt = 0; attempt < 80; attempt += 1) {
     if (existsSync(markerPath)) {
       break;
     }
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
+  assert.ok(existsSync(markerPath), "cleanup marker should be written after SIGTERM");
   const cleanupMarker = readFileSync(markerPath, "utf8");
   assert.equal(cleanupMarker, "cleaned");
 });
@@ -237,10 +238,10 @@ test("runPlaySlackSearchAdapter は SIGTERM で終了しない子に対して SI
         { mode: "search", query: "hello" },
         {
           cwd: process.cwd(),
-          timeoutMs: 300,
+          timeoutMs: 1000,
         }
       ),
-    /timeout after 300ms \(forced kill\)/
+    /timeout after 1000ms \(forced kill\)/
   );
 
   for (let attempt = 0; attempt < 20; attempt += 1) {

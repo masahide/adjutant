@@ -192,7 +192,7 @@ function createSlackProvider(options: { projectRoot: string }): DynamicProvider 
       descriptor: {
         name: "search",
         description:
-          "Search or resolve Slack message context via play-slack-search. Supports thread, message, search, and permalink modes.",
+          "Search or resolve Slack message context via play-slack-search. For mode=search, pass Slack query syntax like from:me, from:@やまさき after:2026-03-03, or in:#channel. Supports thread, message, search, and permalink modes.",
         requiredArgs: ["mode"],
         argsSchema: {
           type: "object",
@@ -222,7 +222,8 @@ function createSlackProvider(options: { projectRoot: string }): DynamicProvider 
   const actionMap = createActionMap(actions);
   return {
     name: "slack",
-    description: "Resolve Slack thread/message context via play-slack-search.",
+    description:
+      "Search Slack messages and resolve thread/message context. For your own posts use query=from:me.",
     listActions: () => actions.map((action) => action.descriptor),
     getAction: (actionName) => actionMap.get(actionName),
   };

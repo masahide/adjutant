@@ -7,22 +7,51 @@ export async function runSlackSearchInBrowser(
   input: SearchCodeInput,
 ): Promise<SearchPayload> {
   const { limit, query, workspaceUrl } = input;
+  const searchInputSelector = [
+    '[role="dialog"] [role="combobox"]',
+    '[role="dialog"] input[aria-label]',
+    '[role="dialog"] input[type="text"]',
+    '[role="searchbox"]',
+    '[role="combobox"]',
+    'input[aria-label*="Query"]',
+    'input[aria-label*="Search"]',
+    'input[aria-label*="検索"]',
+    'input[placeholder*="Search"]',
+    'input[placeholder*="検索"]',
+    'input[type="search"]',
+    'input[type="text"]',
+  ].join(', ');
+  const noResultsPattern = /No results|Nothing turned up/i;
   const sleep = (ms: number) => page.waitForTimeout(ms);
   const bodyText = async () =>
     await page
       .locator('body')
       .innerText()
       .catch(() => '');
+  const locateSearchInput = () => page.locator(searchInputSelector).first();
+  const locateSearchTrigger = async () => {
+    const topNavSearch = page.locator('button[data-qa="top_nav_search"]').first();
+    if ((await topNavSearch.count().catch(() => 0)) > 0) {
+      return topNavSearch;
+    }
+    return page
+      .locator('button')
+      .filter({ hasText: /^(Search|Search:)/ })
+      .first();
+  };
+  const waitForSearchInput = async () => {
+    const searchInput = locateSearchInput();
+    await searchInput.waitFor({ state: 'visible', timeout: 10000 });
+    return searchInput;
+  };
 
   await page.goto(workspaceUrl, { waitUntil: 'domcontentloaded' });
   await sleep(2000);
 
-  const queryBox = page.getByRole('combobox', { name: 'Query' });
-  const hasVisibleQueryBox = await queryBox.isVisible().catch(() => false);
-  const searchTrigger = page
-    .locator('button')
-    .filter({ hasText: /^(Search|Search:)/ })
-    .first();
+  const hasVisibleQueryBox = await locateSearchInput()
+    .isVisible()
+    .catch(() => false);
+  const searchTrigger = await locateSearchTrigger();
 
   if (!hasVisibleQueryBox && !(await searchTrigger.count())) {
     const text = await bodyText();
@@ -33,9 +62,9 @@ export async function runSlackSearchInBrowser(
 
   if (!hasVisibleQueryBox) {
     await searchTrigger.click();
-    await queryBox.waitFor({ state: 'visible', timeout: 10000 });
   }
 
+  const queryBox = await waitForSearchInput();
   await queryBox.fill('');
   await queryBox.fill(query);
   await queryBox.press('Enter');
@@ -103,30 +132,47 @@ export async function runSlackSearchInBrowser(
 
   const pageText = await bodyText();
   const resultCountText = pageText.match(/\b\d+ results?\b/i)?.[0] ?? null;
-  const noResults = /No results/i.test(pageText);
+  const noResults = noResultsPattern.test(pageText);
 
   const results = await page.evaluate((maxItems: number) => {
-    const textOf = (element: Element, selector: string) => {
-      const node = element.querySelector(selector);
-      if (!node) {
-        return null;
-      }
-      const raw =
-        node instanceof HTMLElement ? node.innerText : node.textContent;
-      const normalized = (raw ?? '').replace(/\s+/g, ' ').trim();
-      return normalized || null;
-    };
-
     const items = Array.from(
       document.querySelectorAll('[data-qa="search_result"]'),
     ).slice(0, maxItems);
 
     return items.map((element, index) => {
+      const senderNode = element.querySelector('[data-qa="message_sender_name"]');
+      const locationNode = element.querySelector(
+        '[data-qa="search_result_channel_name"]',
+      );
+      const channelNameNode = element.querySelector(
+        '[data-qa="inline_channel_entity__name"]',
+      );
+      const messageNode = element.querySelector('[data-qa="message-text"]');
       const timestamp = element.querySelector('a.c-timestamp');
       const messageUrl =
         timestamp instanceof HTMLAnchorElement ? timestamp.href : null;
+      const senderRaw =
+        senderNode instanceof HTMLElement
+          ? senderNode.innerText
+          : senderNode?.textContent;
+      const locationRaw =
+        locationNode instanceof HTMLElement
+          ? locationNode.innerText
+          : locationNode?.textContent;
+      const channelNameRaw =
+        channelNameNode instanceof HTMLElement
+          ? channelNameNode.innerText
+          : channelNameNode?.textContent;
+      const messageRaw =
+        messageNode instanceof HTMLElement
+          ? messageNode.innerText
+          : messageNode?.textContent;
+      const sender = (senderRaw ?? '').replace(/\s+/g, ' ').trim() || null;
+      const location = (locationRaw ?? '').replace(/\s+/g, ' ').trim() || null;
+      const channelName =
+        (channelNameRaw ?? '').replace(/\s+/g, ' ').trim() || null;
       const messageText =
-        textOf(element, '[data-qa="message-text"]')?.replace(
+        ((messageRaw ?? '').replace(/\s+/g, ' ').trim() || null)?.replace(
           /\s*\.\.\.\s*Show more\s*$/i,
           '',
         ) ?? null;
@@ -137,9 +183,9 @@ export async function runSlackSearchInBrowser(
 
       return {
         index: index + 1,
-        sender: textOf(element, '[data-qa="message_sender_name"]'),
-        location: textOf(element, '[data-qa="search_result_channel_name"]'),
-        channelName: textOf(element, '[data-qa="inline_channel_entity__name"]'),
+        sender,
+        location,
+        channelName,
         timestampLabel: timestamp?.getAttribute('aria-label') ?? null,
         slackTs: timestamp?.getAttribute('data-ts') ?? null,
         messageUrl,
