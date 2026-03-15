@@ -13,6 +13,24 @@ import {
   resolveSandboxUser,
 } from "../sandbox/config-helpers.js";
 
+function parseStructuredStringListEnv(value: string | undefined): string[] {
+  const normalized = parseOptionalTrimmedString(value);
+  if (normalized === undefined) {
+    return [];
+  }
+  if (normalized.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(normalized) as unknown;
+      if (Array.isArray(parsed) && parsed.every((entry) => typeof entry === "string")) {
+        return parsed;
+      }
+    } catch {
+      // Fall back to the legacy CSV parser below.
+    }
+  }
+  return parseCsvEnv(normalized);
+}
+
 function buildActiveSandboxConfig(env: NodeJS.ProcessEnv, cwd: string): ActiveSandboxConfig | null {
   const mode = parseWorkerSandboxMode(env.ACP_WORKER_SANDBOX_MODE);
   if (mode === "off") {
@@ -30,7 +48,7 @@ function buildActiveSandboxConfig(env: NodeJS.ProcessEnv, cwd: string): ActiveSa
   const containerHome = resolveSandboxHome(env.ACP_WORKER_SANDBOX_HOME);
   const user = resolveSandboxUser(env.ACP_WORKER_SANDBOX_USER);
   const envAllowlist = parseCsvEnv(env.ACP_WORKER_SANDBOX_ENV_ALLOWLIST);
-  const tmpfs = parseCsvEnv(env.ACP_WORKER_SANDBOX_TMPFS);
+  const tmpfs = parseStructuredStringListEnv(env.ACP_WORKER_SANDBOX_TMPFS);
   const capDrop = parseCsvEnv(env.ACP_WORKER_SANDBOX_CAP_DROP);
 
   return {

@@ -35,7 +35,7 @@ export function applySandboxToWorkerEnv(
   workerEnv.ACP_WORKER_SANDBOX_USER = sandbox.runSpec.user;
   workerEnv.ACP_WORKER_SANDBOX_ENV_ALLOWLIST = (sandbox.runSpec.envAllowlist ?? []).join(",");
   workerEnv.ACP_WORKER_SANDBOX_READ_ONLY_ROOT = sandbox.runSpec.readOnlyRoot === false ? "0" : "1";
-  workerEnv.ACP_WORKER_SANDBOX_TMPFS = (sandbox.runSpec.tmpfs ?? []).join(",");
+  workerEnv.ACP_WORKER_SANDBOX_TMPFS = JSON.stringify(sandbox.runSpec.tmpfs ?? []);
   workerEnv.ACP_WORKER_SANDBOX_CAP_DROP = (sandbox.runSpec.capDrop ?? []).join(",");
   workerEnv.ACP_WORKER_SANDBOX_NETWORK = sandbox.runSpec.network ?? "";
   workerEnv.ACP_WORKER_SANDBOX_MEMORY = sandbox.runSpec.memory ?? "";

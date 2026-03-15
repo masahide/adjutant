@@ -10,6 +10,11 @@ import { configureWorkerSandboxFromEnv } from "../../../src/agent-worker-acp/san
 
 test("configureWorkerSandboxFromEnv enables sandbox bash for spoke scope", async () => {
   configureSandbox(null);
+  const tmpfs = [
+    "/tmp:rw,noexec,nosuid,size=256m,mode=1777",
+    "/run:rw,noexec,nosuid,size=64m,mode=755",
+    "/home/worker-agent:rw,exec,nosuid,size=512m,uid=1234,gid=5678,mode=700",
+  ];
 
   const configured = await configureWorkerSandboxFromEnv(
     {
@@ -20,6 +25,7 @@ test("configureWorkerSandboxFromEnv enables sandbox bash for spoke scope", async
       ACP_WORKER_SANDBOX_HOME: "/home/worker-agent",
       ACP_WORKER_SANDBOX_USER: "1234:5678",
       ACP_WORKER_SANDBOX_ENV_ALLOWLIST: "LANG,TERM",
+      ACP_WORKER_SANDBOX_TMPFS: JSON.stringify(tmpfs),
       ACP_WORKER_SANDBOX_NETWORK: "none",
     },
     process.cwd()
@@ -33,6 +39,7 @@ test("configureWorkerSandboxFromEnv enables sandbox bash for spoke scope", async
   assert.equal(configured.mode, "all");
   assert.equal(getConfiguredSandbox()?.runSpec.containerHome, "/home/worker-agent");
   assert.equal(getConfiguredSandbox()?.runSpec.user, "1234:5678");
+  assert.deepEqual(getConfiguredSandbox()?.runSpec.tmpfs, tmpfs);
   assert.equal(
     tools.some((tool) => tool.name === "bash"),
     true

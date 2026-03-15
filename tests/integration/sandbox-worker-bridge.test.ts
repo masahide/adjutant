@@ -50,6 +50,7 @@ test("sandbox worker env bridge preserves image, home, and user across bootstrap
   assert.equal(runSpec?.image, "custom-sandbox:integration");
   assert.equal(runSpec?.containerHome, "/home/integration-agent");
   assert.equal(runSpec?.user, "501:20");
+  assert.deepEqual(runSpec?.tmpfs, config.docker.tmpfs);
 
   const args = buildDockerRunArgs({
     runSpec: runSpec!,
@@ -59,6 +60,8 @@ test("sandbox worker env bridge preserves image, home, and user across bootstrap
   assert.equal(args.includes("custom-sandbox:integration"), true);
   assert.equal(args.includes("HOME=/home/integration-agent"), true);
   assert.equal(args.includes("501:20"), true);
+  assert.equal(args.includes(config.docker.tmpfs[0]!), true);
+  assert.equal(args.includes(config.docker.tmpfs[2]!), true);
 
   configureSandbox(null);
 });

@@ -45,6 +45,7 @@ test("applySandboxToWorkerEnv propagates sandbox image through config, worker bo
   assert.equal(workerEnv.ACP_WORKER_SANDBOX_IMAGE, "custom-sandbox:node22");
   assert.equal(workerEnv.ACP_WORKER_SANDBOX_HOME, "/home/dev");
   assert.equal(workerEnv.ACP_WORKER_SANDBOX_USER, "501:20");
+  assert.equal(workerEnv.ACP_WORKER_SANDBOX_TMPFS, JSON.stringify(config.docker.tmpfs));
 
   const configured = await configureWorkerSandboxFromEnv(workerEnv, cwd);
   assert.equal(configured.enabled, true);
@@ -54,6 +55,7 @@ test("applySandboxToWorkerEnv propagates sandbox image through config, worker bo
   assert.equal(runSpec?.image, "custom-sandbox:node22");
   assert.equal(runSpec?.containerHome, "/home/dev");
   assert.equal(runSpec?.user, "501:20");
+  assert.deepEqual(runSpec?.tmpfs, config.docker.tmpfs);
 
   const args = buildDockerRunArgs({
     runSpec: runSpec!,
@@ -63,6 +65,8 @@ test("applySandboxToWorkerEnv propagates sandbox image through config, worker bo
   assert.equal(args.includes("custom-sandbox:node22"), true);
   assert.equal(args.includes("HOME=/home/dev"), true);
   assert.equal(args.includes("501:20"), true);
+  assert.equal(args.includes(config.docker.tmpfs[0]!), true);
+  assert.equal(args.includes(config.docker.tmpfs[2]!), true);
 
   configureSandbox(null);
 });
