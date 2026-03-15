@@ -27,6 +27,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
+import { useCurrentThreadListItemState } from "@/lib/use-current-thread-list-item";
 
 type ArchivedThreadToastState = {
   id: string;
@@ -45,9 +46,10 @@ const ARCHIVE_TOAST_DURATION_MS = 8_000;
 export const ThreadListSidebar: FC = () => {
   const aui = useAui();
   const archivedCount = useAuiState((s) => s.threads.archivedThreadIds.length);
-  const selectedThreadStatus = useAuiState((s) => s.threadListItem.status);
-  const selectedThreadId = useAuiState((s) => s.threadListItem.remoteId || s.threadListItem.id);
-  const selectedThreadTitle = useAuiState((s) => s.threadListItem.title);
+  const currentThreadListItem = useCurrentThreadListItemState();
+  const selectedThreadStatus = currentThreadListItem.status;
+  const selectedThreadId = currentThreadListItem.remoteId || currentThreadListItem.id;
+  const selectedThreadTitle = currentThreadListItem.title;
   const selectedThreadIsRunning = useAuiState((s) => s.thread.isRunning);
   const selectedThreadUserMessageCount = useAuiState(
     (s) => s.thread.messages.filter((message) => message.role === "user").length
@@ -237,8 +239,8 @@ const ThreadListItemBase = () => {
   const threadLocalId = useAuiState((s) => s.threadListItem.id);
   const threadStatus = useAuiState((s) => s.threadListItem.status);
   const threadTitle = useAuiState((s) => s.threadListItem.title);
+  const isMainThread = isMainThreadItem(threadRemoteId, threadLocalId);
   const threadId = threadRemoteId || threadLocalId || "main";
-  const isMainThread = threadId === "main";
   const isArchived = threadStatus === "archived";
   const title = resolveThreadTitle(threadTitle, isMainThread);
   const [isEditing, setIsEditing] = useState(false);
@@ -422,8 +424,8 @@ const ThreadListItem = () => {
 const MainOnlyThreadListItem = () => {
   const threadRemoteId = useAuiState((s) => s.threadListItem.remoteId);
   const threadLocalId = useAuiState((s) => s.threadListItem.id);
-  const threadId = threadRemoteId || threadLocalId || "main";
-  if (threadId !== "main") {
+  const isMainThread = isMainThreadItem(threadRemoteId, threadLocalId);
+  if (!isMainThread) {
     return null;
   }
   return <ThreadListItemBase />;
@@ -432,8 +434,8 @@ const MainOnlyThreadListItem = () => {
 const NonMainThreadListItem = () => {
   const threadRemoteId = useAuiState((s) => s.threadListItem.remoteId);
   const threadLocalId = useAuiState((s) => s.threadListItem.id);
-  const threadId = threadRemoteId || threadLocalId || "main";
-  if (threadId === "main") {
+  const isMainThread = isMainThreadItem(threadRemoteId, threadLocalId);
+  if (isMainThread) {
     return null;
   }
   return <ThreadListItemBase />;
@@ -445,6 +447,10 @@ function resolveThreadTitle(title: string | undefined, isMain: boolean): string 
     return trimmed;
   }
   return isMain ? "Main" : "Untitled";
+}
+
+function isMainThreadItem(remoteId: string | undefined, localId: string | undefined): boolean {
+  return remoteId === "main" || (remoteId === undefined && localId === "main");
 }
 
 const THREAD_LIST_ITEM_COMPONENTS = {
