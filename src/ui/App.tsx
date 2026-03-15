@@ -1,8 +1,9 @@
-import { AssistantRuntimeProvider, useAui } from "@assistant-ui/react";
+import { AssistantRuntimeProvider } from "@assistant-ui/react";
 
 import { TooltipProvider } from "./components/ui/tooltip.js";
 import { Thread } from "./components/assistant-ui/thread.js";
 import { ThreadListSidebar } from "./components/assistant-ui/thread-list.js";
+import { useCurrentThreadListItemState } from "./lib/use-current-thread-list-item.js";
 import { useAdjutantAssistantRuntime } from "./runtime-hooks.js";
 
 export default function App() {
@@ -24,25 +25,15 @@ export default function App() {
 }
 
 function MainHeader() {
-  const aui = useAui();
-  let threadLabel = "Main";
-  try {
-    const state = aui.threadListItem().getState() as {
-      id?: string;
-      remoteId?: string;
-      title?: string;
-    };
-    const rawTitle = typeof state.title === "string" ? state.title.trim() : "";
-    if (rawTitle.length > 0) {
-      threadLabel = rawTitle;
-    } else if (state.remoteId === "main" || state.id === "main") {
-      threadLabel = "Main";
-    } else {
-      threadLabel = "Untitled";
-    }
-  } catch {
-    threadLabel = "Main";
-  }
+  const { id: threadLocalId, remoteId: threadRemoteId, title: threadTitle } =
+    useCurrentThreadListItemState();
+  const rawTitle = threadTitle?.trim() ?? "";
+  const threadLabel =
+    rawTitle.length > 0
+      ? rawTitle
+      : threadRemoteId === "main" || threadLocalId === "main"
+        ? "Main"
+        : "Untitled";
 
   return (
     <header className="adj-main-header">
