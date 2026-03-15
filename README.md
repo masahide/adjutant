@@ -154,7 +154,7 @@ pnpm start
 - `non-main`: main 以外（spoke）のみコンテナ実行
 - `all`: heartbeat を除く全セッションで `bash` と標準ファイルツールをコンテナ実行
 - 実行方式は tool 呼び出しごとの `docker run --rm`（常駐コンテナは使わない）
-- sandbox には `--pull=never`, `--init`, `--read-only`, `--network=none`, `--cap-drop=ALL`, `--security-opt no-new-privileges=true`, `--security-opt seccomp=builtin`, `--ipc=private`, `--cgroupns=private`, `--hostname=sandbox` を付与
+- sandbox には `--pull=never`, `--init`, `--read-only`, `--network=bridge` を既定で付与し、`ADJUTANT_SANDBOX_NETWORK=none` 指定時はネットワーク遮断で起動する。加えて `--cap-drop=ALL`, `--security-opt no-new-privileges=true`, `--security-opt seccomp=builtin`, `--ipc=private`, `--cgroupns=private`, `--hostname=sandbox` を付与
 - workspace は `/workspace` に bind mount し、`HOME=/home/agent` は uid/gid を合わせた tmpfs を割り当てる
 - `ADJUTANT_SANDBOX_USER` 未指定時は POSIX でホスト UID/GID を使い、取得できない環境では `1000:1000` に fallback する
 - `read` / `edit` / `write` / `grep` / `find` / `ls` も `SandboxRunSpec` を共有し、workspace 外 path は拒否する

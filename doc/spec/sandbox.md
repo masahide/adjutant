@@ -79,7 +79,7 @@ custom tool の公開面自体は `tool_hub` のみで、sandbox は標準 tool 
 - `--tmpfs /tmp:rw,noexec,nosuid,size=256m,mode=1777`
 - `--tmpfs /run:rw,noexec,nosuid,size=64m,mode=755`
 - `--tmpfs /home/agent:rw,exec,nosuid,size=512m,uid=<uid>,gid=<gid>,mode=700`
-- `--network none`
+- `--network bridge`（既定。`ADJUTANT_SANDBOX_NETWORK=none` で遮断可能）
 - `--cap-drop ALL`
 - `--security-opt no-new-privileges=true`
 - `--security-opt seccomp=builtin`
