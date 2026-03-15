@@ -53,7 +53,7 @@
   - 実装: `src/collector-slack/*`, `src/control-plane/*`, `src/assistant/*`
   - View: `ActivityFeed`（Slack 通知専用の unread-like view。v1 では既読管理なし）
   - テスト: unit / integration / contract
-  - ドキュメント: `doc/spec.md` 必要差分、今回の計画書
+  - ドキュメント: `doc/spec/README.md` 配下の必要差分、今回の計画書
 - 制約
   - v1 は Slack source のみ対象
   - 即時 AI 起動入力は「自分宛メンション通知」と「手動 user message」のみ
@@ -738,7 +738,7 @@ sequenceDiagram
 - [x] unit / integration / contract テストが追加されていること
 - [x] `pnpm check` が通ること
 - [x] replay / idempotency / durable SoT 前提の古い記述が plan から除去されていること
-- [x] `doc/spec.md` に反映すべき差分が洗い出されていること
+- [x] `doc/spec/README.md` 配下の詳細仕様へ反映すべき差分が洗い出されていること
 
 ## 9. 懸念事項と未確定事項 Concerns and Questions
 

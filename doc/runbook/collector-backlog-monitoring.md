@@ -6,8 +6,8 @@
 
 ## 1.1 仕様参照
 
-- `doc/spec.md` 14.6（Journal / Cursor / 冪等規約）
-- `doc/spec.md` 14.8（エラー分類と回復）
+- `doc/spec/storage.md`（Journal / Cursor 保存先）
+- `doc/spec/acp-architecture.md`（境界契約とエラー分類）
 - 主対象永続化:
   - `state/journal/control-plane/inbox.jsonl`
   - `state/cursor/control-plane.inbox.json`

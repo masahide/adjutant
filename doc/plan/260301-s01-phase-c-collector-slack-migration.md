@@ -47,12 +47,12 @@
     - `collector/ingest` handler（受理、dedupe、journal append）
     - ingest payload から `sessionKey` / prompt を解決し、既存 run 実行導線へ接続
     - ingest 起点の SSE 可観測化（`run/accepted|run/update|run/completed|run/failed`）
-  - `doc/spec.md` と運用ドキュメントの更新
+  - `doc/spec/README.md` と運用ドキュメントの更新
 - 成果物
   - 共通型/契約: `src/core/events.ts`, `src/contracts/process-rpc/*`
   - 実装: `src/collector-slack/*`, `src/control-plane/process-rpc/*`, `src/index.ts` ほか
   - テスト: unit/contract/integration（collector と process-rpc 境界を含む）
-  - ドキュメント: `doc/spec.md`、本計画、legacy 移植マッピング
+  - ドキュメント: `doc/spec/README.md`、`doc/spec/collector-runtime.md`、`doc/spec/data-model.md`、`doc/spec/acp-architecture.md`、`doc/spec/storage.md`、本計画、legacy 移植マッピング
 - 制約
   - 単一ホスト・at-least-once 前提
   - `deliver-slack` 実送信は非スコープ（Phase D 以降）
@@ -165,7 +165,7 @@
   - `payload` は `NormalizedEvent`（`schema=adjutant.event.v1.1`）
 - `NormalizedEvent`（payload）
   - `uid`, `source`, `kind`, `ts`, `detail.slack`, `meta.account_id` など
-  - Slack detail の本文フィールド契約は `doc/spec.md` 4.2 を正とし、`post` は `detail.slack.text`、`reaction|notification` は `detail.slack.message_text` を使用する
+  - Slack detail の本文フィールド契約は `doc/spec/data-model.md` を正とし、`post` は `detail.slack.text`、`reaction|notification` は `detail.slack.message_text` を使用する
 - `CollectorIngestResponse`
   - `{ messageId, status: "accepted", acceptedAt }`
 - `IngestProjection`（control-plane internal）
@@ -286,15 +286,15 @@ thread event sessionKey: slack:channel:C123:thread:1730000000.123
 reaction payload contract: detail.slack.message_text
 ```
 
-### 4.5 `doc/spec.md` 境界契約準拠ルール
+### 4.5 詳細仕様準拠ルール
 
 - 準拠元
-  - `doc/spec.md` 14.3 プロセス接続連携図
-  - `doc/spec.md` 14.5 境界契約
-  - `doc/spec.md` 14.6 Journal/Cursor/冪等規約
+  - `doc/spec/system-overview.md` のシステム構成図
+  - `doc/spec/acp-architecture.md` の境界契約
+  - `doc/spec/storage.md` の journal / cursor / 冪等規約
 - 命名規約
   - control-plane の journal/cursor は単一 inbox（`inbox.jsonl`, `control-plane.inbox.json`）を維持する
-  - collector 導入に伴う inbox 運用（source=slack の取り扱い）は `doc/spec.md` 14.6 に追記して固定する
+  - collector 導入に伴う inbox 運用（source=slack の取り扱い）は `doc/spec/storage.md` に追記して固定する
 - cursor commit 規約
   - `accepted` 時点では cursor を進めない
   - `completed|failed` の terminal 確定後にのみ cursor commit する
@@ -438,7 +438,7 @@ sequenceDiagram
 
 - [x] `Task-C-000` legacy 移植マッピング作成（`doc/plan/artifacts/260301-s01-legacy-mapping-phase-c.md`）
 - [x] `Task-C-001` Process RPC 契約確定（`collector/ingest` payload を `NormalizedEvent` に固定）
-- [x] `Task-C-002` `doc/spec.md` の 4.2/14.2/14.5/14.6 と Phase C 計画の整合チェック（4.2 へ `text`/`message_text` 契約を明示、14.6 へ collector ingest 運用と inbox/cursor 命名を追記）
+- [x] `Task-C-002` `doc/spec/data-model.md` / `doc/spec/collector-runtime.md` / `doc/spec/acp-architecture.md` / `doc/spec/storage.md` と Phase C 計画の整合チェック（`text`/`message_text` 契約、collector ingest 運用、inbox/cursor 命名を反映）
 - [x] `Task-C-003` テスト雛形追加（`tests/unit/collector-slack`, `tests/integration/collector-slack`, `tests/contract/process-rpc`）
 - [x] `Task-C-004` collector 環境変数/起動設定の整理（dev/serve スクリプト含む）
 - [x] `Task-C-005` `NormalizedEvent` 共通型を legacy から移植（`src/core/events.ts`）
@@ -476,7 +476,7 @@ sequenceDiagram
 - [x] `Task-CB-REFACTOR-001` Refactor: Process RPC 共通ユーティリティ化（worker supervisor との重複排除）
 - [x] `Task-CB-INTEG-001` Integration: collector -> control-plane -> worker の縦切り E2E
 - [x] `Task-CB-CONTRACT-001` Contract: `collector/ingest` request/response schema 固定テスト
-- [x] `Task-CB-DOCS-001` Docs: `doc/spec.md` に collector 子プロセス実装済み項目を反映
+- [x] `Task-CB-DOCS-001` Docs: `doc/spec/collector-runtime.md` と関連詳細仕様に collector 子プロセス実装済み項目を反映
 
 ### Stage 4 統合と検証
 
@@ -499,7 +499,7 @@ sequenceDiagram
 - [x] 全てのテストがパスしていること
 - [x] Linter/Formatter エラーがないこと
 - [x] collector/process-rpc の契約テストがグリーンであること
-- [x] `doc/spec.md` と実装の境界契約が一致していること
+- [x] `doc/spec/README.md` 配下の詳細仕様と実装の境界契約が一致していること
 
 ## 9. 懸念事項と未確定事項 Concerns and Questions
 

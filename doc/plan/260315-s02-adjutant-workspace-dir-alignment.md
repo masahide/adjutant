@@ -19,7 +19,7 @@
 
 ### Why
 
-- 現行 `src/index.ts` は `resolveProjectRoot()` をそのまま workspace として使っており、レガシー実装および `README.md` / `doc/spec.md` の契約と不一致。
+- 現行 `src/index.ts` は `resolveProjectRoot()` をそのまま workspace として使っており、レガシー実装および `README.md` / `doc/spec/storage.md` / `doc/spec/assistant-runtime.md` の契約と不一致。
 - assistant の読み書き対象とアプリ実装ルートが混在すると、memory、bootstrap、file tools、sandbox bind mount の境界が曖昧になる。
 - `vendor/openclaw` と同じく専用 workspace を持つことで、AI が触るファイルと実装 repo を分離できる。
 - 既存の `workspace-bootstrap` 実装を活かしつつ、起動時 fail-fast と初回 bootstrap を自然に接続できる。
@@ -46,7 +46,7 @@
 - bootstrap template の読み元を `vendor/openclaw/docs/reference/templates` 準拠へ切り替える。
 - sandbox bind mount、file tools の path restriction、ToolHub provider、memory read/write/search、summary batch を resolved workspace 前提に揃える。
 - main session 向け bootstrap/context file allowlist を導入する。
-- `README.md` と `doc/spec.md` の path 契約を現行実装と一致させる。
+- `README.md` と `doc/spec/storage.md` / `doc/spec/assistant-runtime.md` の path 契約を現行実装と一致させる。
 
 成果物:
 
@@ -55,7 +55,7 @@
 - `src/index.ts` の runtime path 初期化更新
 - assistant runtime / sandbox / ToolHub / summary batch の `workspaceDir` 伝播修正
 - workspace bootstrap / path restriction / session bootstrap filter の回帰テスト
-- `README.md`, `doc/spec.md`, 本計画書
+- `README.md`, `doc/spec/storage.md`, `doc/spec/assistant-runtime.md`, 本計画書
 
 制約:
 
@@ -321,7 +321,7 @@ sequenceDiagram
   - main session で Project Context に入るファイル集合が契約どおりであること
   - file tools が workspace 外 path を拒否すること
 - Contract
-  - `README.md` / `doc/spec.md` と config 実装の docs sync
+  - `README.md` / `doc/spec/storage.md` / `doc/spec/assistant-runtime.md` と config 実装の docs sync
   - `ADJUTANT_STATE_DIR` と `ADJUTANT_WORKSPACE_DIR` の優先順位維持
 
 ### 6.2 カバレッジ対象
@@ -358,7 +358,7 @@ sequenceDiagram
 - [x] Impl runtime path resolver を追加し、`stateDir`, `workspaceDir`, `projectRoot` を一元解決する Green
 - [x] Refactor `src/index.ts` の直書き path 解決を resolver 経由へ置き換える
 - [x] Integration 起動時 workspace directory 作成と fail-fast を確認する統合テストを追加する
-- [x] Docs `README.md` と `doc/spec.md` の path 契約と起動説明を resolver 契約に合わせて更新する
+- [x] Docs `README.md` と `doc/spec/storage.md` / `doc/spec/assistant-runtime.md` の path 契約と起動説明を resolver 契約に合わせて更新する
 
 ### Phase 3 Template Loader と Bootstrap Seed 更新
 
@@ -407,7 +407,7 @@ sequenceDiagram
 - [x] 全てのテストがパスしていること
 - [x] `pnpm run typecheck` と `pnpm run format` と `pnpm run verify:config-doc-sync` が成功すること
 - [x] 不要なデバッグコードが削除されていること
-- [x] `README.md` と `doc/spec.md` と計画書が実装と同期していること
+- [x] `README.md` と `doc/spec/storage.md` / `doc/spec/assistant-runtime.md` と計画書が実装と同期していること
 
 ## 9. 懸念事項と未確定事項 Concerns and Questions
 

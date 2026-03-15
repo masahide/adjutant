@@ -6,9 +6,9 @@
 
 ## 1.1 仕様参照
 
-- `doc/spec.md` 13.3（control-plane 責務: heartbeat）
-- `doc/spec.md` 14.5（ACP / Process RPC 境界契約）
-- `doc/spec.md` 14.8（エラー分類と回復）
+- `doc/spec/proactive-routing.md`（heartbeat 実行モデル）
+- `doc/spec/acp-architecture.md`（ACP / Process RPC 境界契約）
+- `doc/spec/acp-architecture.md`（エラー分類と回復）
 - 主対象永続化:
   - `state/heartbeat-runs.jsonl`
 

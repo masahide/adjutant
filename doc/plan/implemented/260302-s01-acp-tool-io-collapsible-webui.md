@@ -368,7 +368,7 @@ sequenceDiagram
 - [ ] `Task-TOOLIO-P4-001` 全体テスト実行（`pnpm check`）
 - [x] `Task-TOOLIO-P4-002` `tests/integration/control-plane-http-sse.test.ts` で tool I/O イベント検証追加
 - [x] `Task-TOOLIO-P4-003` 既存 API 非回帰確認（`/api/commands`, `/api/events/stream`, `/api/chat/*`）
-- [x] `Task-TOOLIO-P4-004` ドキュメント更新（必要なら `doc/spec.md` へ契約追記）
+- [x] `Task-TOOLIO-P4-004` ドキュメント更新（必要なら `doc/spec/assistant-runtime.md` / `doc/spec/acp-architecture.md` へ契約追記）
 - [x] `Task-TOOLIO-P4-005` `playwright-cli` で WebUI E2E 手動検証を実装タスクとして実施（`open` → メッセージ送信 → tool 折りたたみクリック → `snapshot --filename=doc/plan/artifacts/260302-s01-tool-io-collapsible.yml`）し、表示確認結果を記録
 
 補足（2026-03-02 時点）:

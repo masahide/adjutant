@@ -24,7 +24,7 @@
   - `src/proactive/dual-write-coordinator.ts` の戻り値契約更新
   - `src/assistant/main.ts` の terminal path 改修
   - `tests/proactive/dual-write-coordinator.test.ts` / `tests/assistant/*` の追加更新
-  - `doc/spec.md` と本計画書の更新
+  - `doc/spec/proactive-routing.md` / `doc/spec/storage.md` と本計画書の更新
 - 制約
   - 既存公開 API（HTTP エンドポイント）は変更しない
   - 既存 `pnpm run check` が通ること
@@ -258,7 +258,7 @@ sequenceDiagram
 - [x] Impl `assistant/main.ts` で terminal 後に `applyTerminalRecord` 呼び出し Green
 - [x] Refactor warning/log を統一
 - [x] Integration `assistant_final` のみ handled 前進を確認
-- [x] Docs `doc/spec.md` 更新
+- [x] Docs `doc/spec/proactive-routing.md` / `doc/spec/storage.md` 更新
 
 ### Phase 4 統合と検証
 

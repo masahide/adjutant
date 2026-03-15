@@ -45,7 +45,7 @@
   - timeline / memory / snapshot を用いた artifact ベース参照
 - 成果物
   - 本要求仕様書
-  - 後続の `doc/spec.md` / `doc/spec-vnext-draft.md` 反映のための基準契約
+  - 後続の `doc/spec/README.md` 配下詳細仕様 / `doc/spec-vnext-draft.md` 反映のための基準契約
   - 実装フェーズで利用する acceptance criteria
 
 ### 2.2 非スコープ Non Scope

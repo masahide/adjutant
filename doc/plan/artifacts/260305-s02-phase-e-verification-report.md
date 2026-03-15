@@ -49,7 +49,7 @@
    - 監査ログ契約: `tests/integration/control-plane-http-sse.test.ts` (`agent audit logs run/tool events and run audit API returns summary`)
    - ログ出力点は `src/index.ts` で `errorCode` / `reason` / `sessionKey` までを確認（payload 本文の常時出力なし）
 4. `Task-E-VERIFY-005` ドキュメント同期
-   - `doc/spec.md`（13.2/13.3/14.5/14.6/14.8）
+   - `doc/spec/proactive-routing.md` / `doc/spec/acp-architecture.md` / `doc/spec/storage.md`
    - `doc/file-paths.md`（timeline/watermarks/heartbeat-runs の ACP 実装反映）
    - `doc/runbook/proactive-flusher-operations.md`
    - `doc/runbook/heartbeat-operations.md`

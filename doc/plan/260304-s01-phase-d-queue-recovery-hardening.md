@@ -36,7 +36,7 @@
   - 実装: `src/control-plane/process-rpc/*`, `src/deliver-slack/*`, `src/index.ts` ほか
   - 永続化: `state/journal/*`, `state/cursor/*` の追加ストア
   - テスト: unit/contract/integration（deliver + recovery + idempotency）
-  - 文書: `doc/spec.md`, `doc/runbook/*`, 本計画
+  - 文書: `doc/spec/README.md`, `doc/spec/acp-architecture.md`, `doc/spec/storage.md`, `doc/runbook/*`, 本計画
 - 制約
   - 単一ホスト前提、at-least-once 配信
   - 外部送信失敗時は retry with backoff（上限あり）
@@ -316,7 +316,7 @@ sequenceDiagram
 
 ### Phase 1 設計と準備
 
-- [x] `Task-D-000` Phase D 契約を `doc/spec.md` 14.5/14.6/14.8 へ追記（deliver queue/recovery の境界を固定）
+- [x] `Task-D-000` Phase D 契約を `doc/spec/acp-architecture.md` / `doc/spec/storage.md` へ追記（deliver queue/recovery の境界を固定）
 - [x] `Task-D-001` Process RPC 契約拡張（`deliver/enqueue`, `deliver/completed`）の schema/型を確定
 - [x] `Task-D-002` 永続化スキーマ定義（deliver queue / idempotency / completion snapshot）
 - [x] `Task-D-003` Mermaid 図更新（spec と本計画を同期）

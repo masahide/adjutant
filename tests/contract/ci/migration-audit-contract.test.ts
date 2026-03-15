@@ -12,7 +12,7 @@ test("migration audit validator rejects record with missing evidence", () => {
   const records = parseMigrationAuditMarkdown(`
 | legacyPath | acpPath | phase | status | evidence.spec | evidence.tests | evidence.files | note |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| legacy/a.ts | src/a.ts | A/B | done | doc/spec.md#14.5 | - | src/a.ts | sample |
+| legacy/a.ts | src/a.ts | A/B | done | doc/spec/acp-architecture.md | - | src/a.ts | sample |
 `);
 
   const violations = validateMigrationAuditRecords(records);

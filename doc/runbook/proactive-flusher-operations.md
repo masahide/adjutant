@@ -6,9 +6,9 @@
 
 ## 1.1 仕様参照
 
-- `doc/spec.md` 13.2（control-plane 責務: proactive）
-- `doc/spec.md` 14.6（Journal / Cursor / 冪等規約）
-- `doc/spec.md` 14.8（エラー分類と回復）
+- `doc/spec/proactive-routing.md`（control-plane proactive / flusher）
+- `doc/spec/storage.md`（timeline / watermarks 保存先）
+- `doc/spec/acp-architecture.md`（エラー分類と回復）
 - 主対象永続化:
   - `state/timeline.jsonl`
   - `state/watermarks.json`

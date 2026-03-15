@@ -47,7 +47,7 @@
 - `src/assistant/memory-search/config.ts` の DB 既定パス見直し
 - `src/assistant/main.ts` の recovery 対象・初期化導線の調整
 - テスト更新（runtime/session-paths/memory-search）
-- `README.md`, `doc/spec.md` の反映
+- `README.md`, `doc/spec/storage.md` の反映
 
 制約:
 
@@ -312,7 +312,7 @@ sequenceDiagram
 ### Phase 6 ドキュメント更新と検証
 
 - [x] `README.md` 更新（state/workspace と既定値）
-- [x] `doc/spec.md` 更新（保存パス）
+- [x] `doc/spec/storage.md` 更新（保存パス）
 - [x] `pnpm run check` 実行
 - [x] 完了チェックを本計画へ反映
 
@@ -338,5 +338,5 @@ sequenceDiagram
 
 1. `ADJUTANT_STATE_DIR` 既定値は `~/.adjutant` を採用し、`<dataDir>/_assistant` は採用しない。
 2. `timeline.jsonl` / `idempotency.jsonl` は state 側へ移設した。
-3. 旧 `workspace/memory/sessions/*.jsonl` は実装で参照しない方針を `doc/spec.md` に反映済み。
+3. 旧 `workspace/memory/sessions/*.jsonl` は実装で参照しない方針を `doc/spec/storage.md` に反映済み。
 4. 未リリース前提でマイグレーション非対応とし、旧運用スクリプト互換はスコープ外とする。

@@ -13,7 +13,7 @@
   - 棚卸し結果: `doc/plan/artifacts/260305-s03-phase-f-env-inventory.md`
 - 同期対象ドキュメント
   - `README.md`: 起動手順と利用者向け設定表
-  - `doc/spec.md`: 契約・既定値・例外方針
+  - `doc/spec/README.md` と配下詳細仕様: 契約・既定値・例外方針
   - `doc/file-paths.md`: 永続化パスと override 可否
 - 同期検証の責務
   - 実装側に存在する key が docs で未記載なら fail
@@ -21,12 +21,12 @@
 
 ### 1.2 docs 責務分担
 
-| ドキュメント        | 責務                                               | ここに書かないこと                   |
-| ------------------- | -------------------------------------------------- | ------------------------------------ |
-| `README.md`         | 実行に必要な最小設定、主要コマンド、運用上の注意   | 詳細な内部契約、網羅的エラー分類     |
-| `doc/spec.md`       | API/Process RPC/エラー分類/feature gate の正規契約 | 日々の運用手順、インシデント対応手順 |
-| `doc/file-paths.md` | ファイル I/O の正本パスと env override             | API 契約、運用フロー詳細             |
-| `doc/runbook/*.md`  | 障害時一次対応、復旧手順、エスカレーション条件     | 型定義や契約の仕様詳細               |
+| ドキュメント                        | 責務                                               | ここに書かないこと                   |
+| ----------------------------------- | -------------------------------------------------- | ------------------------------------ |
+| `README.md`                         | 実行に必要な最小設定、主要コマンド、運用上の注意   | 詳細な内部契約、網羅的エラー分類     |
+| `doc/spec/README.md` と配下詳細仕様 | API/Process RPC/エラー分類/feature gate の正規契約 | 日々の運用手順、インシデント対応手順 |
+| `doc/file-paths.md`                 | ファイル I/O の正本パスと env override             | API 契約、運用フロー詳細             |
+| `doc/runbook/*.md`                  | 障害時一次対応、復旧手順、エスカレーション条件     | 型定義や契約の仕様詳細               |
 
 ### 1.3 CI gate 方針
 
@@ -37,7 +37,7 @@
 
 ## 2. docs と実装の初期差分（Task-F-000 入力）
 
-`README.md` / `doc/spec.md` / `doc/file-paths.md` と `process.env` 参照の機械比較（prefix: `ADJUTANT_`, `CDP_`, `DATA_DIR`, `OPENAI_API_KEY`, `ACP_ENABLE_LOAD_SESSION`, `ACP_WORKER_*`）で次を確認した。
+`README.md` / `doc/spec/configuration.md` / `doc/file-paths.md` と `process.env` 参照の機械比較（prefix: `ADJUTANT_`, `CDP_`, `DATA_DIR`, `OPENAI_API_KEY`, `ACP_ENABLE_LOAD_SESSION`, `ACP_WORKER_*`）で次を確認した。
 
 - docs-only key: 35
 - code-only key: 36

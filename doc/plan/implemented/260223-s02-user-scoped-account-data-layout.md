@@ -69,7 +69,7 @@
 - `src/assistant/event-reader.ts`
 - `src/assistant/heartbeat-runner.ts`（readEvents 呼び出しへ accountId 伝播）
 - テスト更新（runtime/io/assistant/proactive）
-- `doc/spec.md` / `doc/file-paths.md` 更新
+- `doc/spec/storage.md` / `doc/file-paths.md` 更新
 
 制約:
 
@@ -315,7 +315,7 @@ sequenceDiagram
 - [x] Impl `dataDir` 既定値を `<stateDir>/data` へ変更（Green）
 - [x] Refactor path 解決ロジックを共通化（必要なら `data-paths.ts` 新設）
 - [x] Integration collector/assistant 双方で同じ既定値契約になることを検証
-- [x] Docs `doc/spec.md` / `doc/file-paths.md` のパス表更新
+- [x] Docs `doc/spec/storage.md` / `doc/file-paths.md` のパス表更新
 
 ### Phase 3 account 分離保存と読取の実装
 
@@ -347,7 +347,7 @@ sequenceDiagram
 - [x] `pnpm run check` が成功
 - [x] Linter/Formatter エラーなし
 - [x] テストが新契約を破壊的変更から保護している
-- [x] 主要変更が `doc/spec.md` と `doc/file-paths.md` に反映済み
+- [x] 主要変更が `doc/spec/storage.md` と `doc/file-paths.md` に反映済み
 
 ---
 

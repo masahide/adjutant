@@ -13,7 +13,7 @@ Slack Desktop の Chrome DevTools Protocol (CDP) からイベントを収集し�
 - AI アシスタント: HTTP API + SSE ストリーミング + Web UI (`src/assistant/`, `src/ui/`)
 - Slack通知の一次判定（`TriggerFilter.secondaryClassifier`）に OpenAI 軽量モデルを接続可能
 
-GitHub / ローカル Git 収集は未実装で、仕様メモは `doc/spec.md` にあります。日次 Markdown 要約は `ADJUTANT_MARKDOWN_SUMMARY_BATCH_ENABLED=1` で有効化できます。
+GitHub / ローカル Git 収集は未実装です。仕様の入口は [doc/spec/README.md](/Users/USER/masahide/git/adjutant/doc/spec/README.md) を参照してください。日次 Markdown 要約は `ADJUTANT_MARKDOWN_SUMMARY_BATCH_ENABLED=1` で有効化できます。
 Docker sandbox は既定で有効です（`ADJUTANT_SANDBOX_MODE=all`）。sandbox 対象では `bash` に加えて `read` / `edit` / `write` / `grep` / `find` / `ls` もコンテナ実行されます。custom tool 公開面は `tool_hub` に統一されています。
 
 日次 Markdown 要約バッチの実装挙動（抜粋）は次のとおりです。

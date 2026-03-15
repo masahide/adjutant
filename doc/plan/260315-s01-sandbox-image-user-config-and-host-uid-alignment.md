@@ -34,7 +34,7 @@
   - workspace と home を分離することで、read-only rootfs と capability drop を維持したまま、agent に書き込み可能な home を安全に与えられる。
   - bind mount 上に生成されるファイル所有者をホスト側へ寄せ、権限不整合を減らす。
   - 現在の `ADJUTANT_SANDBOX_IMAGE` 既存実装を、ドキュメントとテストを含めて正式契約化する。
-  - `doc/spec.md` と実装のデフォルト不整合を解消し、未設定時も sandbox 前提で起動できる運用へ揃える。
+  - `doc/spec/configuration.md` と `doc/spec/sandbox.md` と実装のデフォルト不整合を解消し、未設定時も sandbox 前提で起動できる運用へ揃える。
   - default sandbox を有効化しても file tools が host 側に残ると保護境界が不完全なため、標準ツールも含めて sandbox 境界を揃える必要がある。
   - custom tool を個別に `customTools.push(...)` していく現状だと公開契約が散らばるため、sandbox 化と同時に direct custom tool を全廃して拡張境界を戻しておく必要がある。
   - Mac Docker Desktop や Windows WSL2 では一見 root 所有問題が隠れるが、WSL の Linux ネイティブ領域や将来の Linux 実行では露呈するため、最初から一貫した権限モデルに寄せる方が手戻りが少ない。
@@ -77,7 +77,7 @@
 - 成果物
   - 実装コード: `src/sandbox/*`, `src/agent-worker-acp/sandbox-bootstrap.ts`, `src/index.ts`, `src/assistant/agent-session-factory.ts`, `src/assistant/containerized-file-tool-operations.ts`, `src/assistant/dynamic-tool/*`, 必要に応じた workspace path restriction helper
   - テスト: `tests/unit/sandbox/*`, `tests/unit/agent-worker-acp/*`, `tests/unit/assistant/*`, 必要に応じ `tests/integration/*`
-  - ドキュメント: `README.md`, `doc/spec.md`, docs-sync 関連ファイル
+  - ドキュメント: `README.md`, `doc/spec/configuration.md`, `doc/spec/sandbox.md`, docs-sync 関連ファイル
 - 制約
   - sandbox 実行方式は現行どおり `docker run --rm` を維持する。
   - Docker daemon / Docker Desktop 依存は維持する。
@@ -221,7 +221,7 @@
   - `docker run --rm ... --user <uid>:<gid> --workdir /workspace -e HOME=<containerHome> --mount type=bind,src=<workspace>,dst=/workspace --tmpfs /tmp --tmpfs /run --tmpfs <containerHome>:uid=<uid>,gid=<gid> <image> bash -lc "<command>"`
 - ドキュメント同期
   - `README.md`
-  - `doc/spec.md`
+  - `doc/spec/configuration.md`
   - docs-sync catalog / inventory
 
 ### 4.2 データモデルとスキーマ
@@ -612,7 +612,7 @@ sequenceDiagram
 - [x] `Task-SBX-VERIFY-003` ログと例外の確認  
        例: `INVALID_SANDBOX_USER`, Docker unavailable, default sandbox 起動失敗, path guard violation
 - [x] `Task-SBX-VERIFY-004` ドキュメント更新完了確認  
-       対象: `README.md`, `doc/spec.md`, docs-sync, runbook
+       対象: `README.md`, `doc/spec/configuration.md`, `doc/spec/sandbox.md`, docs-sync, runbook
 
 ## 8. 完了の定義 Definition of Done
 

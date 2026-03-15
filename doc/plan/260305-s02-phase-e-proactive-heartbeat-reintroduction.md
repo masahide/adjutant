@@ -46,13 +46,13 @@
     - `report_heartbeat_status` ツール契約（1 回必須、構造化 payload 検証）
     - heartbeat event の SSE 配信（`event: heartbeat`）
   - 仕様同期
-    - `doc/spec.md` 13.2/13.3/14.5/14.6/14.8 の Phase E 契約追記
+    - `doc/spec/proactive-routing.md` / `doc/spec/acp-architecture.md` / `doc/spec/storage.md` の Phase E 契約追記
     - runbook（flusher backlog / heartbeat 運用）追加
 - 成果物
   - 実装: `src/control-plane/proactive/*`, `src/control-plane/heartbeat/*`, `src/index.ts`, `src/control-plane/http/*`, `src/assistant/agent-session-factory.ts`
   - 契約: `src/control-plane/contracts/http-api.ts`, `src/contracts/process-rpc/*`（必要差分のみ）
   - テスト: `tests/unit/proactive/*`, `tests/unit/heartbeat/*`, `tests/integration/*`, `tests/contract/http/*`
-  - ドキュメント: `doc/spec.md`, `doc/file-paths.md`, `doc/runbook/*`, 本計画
+  - ドキュメント: `doc/spec/README.md`, `doc/spec/proactive-routing.md`, `doc/spec/acp-architecture.md`, `doc/spec/storage.md`, `doc/file-paths.md`, `doc/runbook/*`, 本計画
 - 制約
   - 単一ホスト / at-least-once 前提を維持
   - Slack source のみ対象（GitHub/git-local は非対象）
@@ -214,12 +214,12 @@ content-type: application/json
 }
 ```
 
-### 4.5 `doc/spec.md` 境界契約準拠ルール
+### 4.5 詳細仕様準拠ルール
 
 - 準拠元
-  - `doc/spec.md` 13.2（routing pipeline）
-  - `doc/spec.md` 13.3（timeline/watermark/flusher）
-  - `doc/spec.md` 14.5/14.6（境界契約と cursor commit）
+  - `doc/spec/proactive-routing.md`（routing pipeline, timeline/watermark/flusher）
+  - `doc/spec/acp-architecture.md`（境界契約）
+  - `doc/spec/storage.md`（cursor commit / journal）
 - commit 規約
   - ingest inbox cursor は run terminal（completed/failed/cancelled）でのみ commit
   - watermark handled は `assistant_final` の timelineOffset でのみ前進
@@ -360,7 +360,7 @@ sequenceDiagram
 
 ### Phase 1 設計と準備
 
-- [x] `Task-E-000` `doc/spec.md` の Phase E 境界契約（13.2/13.3/14.5/14.6/14.8）を確定
+- [x] `Task-E-000` `doc/spec/proactive-routing.md` / `doc/spec/acp-architecture.md` / `doc/spec/storage.md` の Phase E 境界契約を確定
 - [x] `Task-E-001` legacy -> ACP 移植マッピング（`proactive/*`, `heartbeat-*`）を artifact 化
 - [x] `Task-E-002` proactive / heartbeat の型定義と永続化スキーマを先行追加
 - [x] `Task-E-003` Mermaid 図と runbook の骨子を作成

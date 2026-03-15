@@ -24,7 +24,7 @@
   - `agent-worker-acp` で `runAgent` スタブを廃止し `@mariozechner/pi-coding-agent` へ委譲。
   - `ui` は SSE を購読し run 状態・tool event・audit を表示。
   - memory/sandbox/bootstrap/compaction は既存 legacy 実装を責務単位で移植する。
-  - 移植単位は「機能契約 + テストケース + 実装」の 3 点セットで揃え、差分は `spec.md` に同期する。
+  - 移植単位は「機能契約 + テストケース + 実装」の 3 点セットで揃え、差分は `doc/spec/README.md` 配下の詳細仕様に同期する。
 
 ## 2. 仕様と受け入れ条件 Specification and Acceptance Criteria
 
@@ -49,14 +49,14 @@
 - 成果物
   - 実装コード（`src/control-plane/*`, `src/assistant/*`, `src/ui/*`, `src/agent-worker-acp/*`）
   - 単体/契約/統合テスト
-  - `doc/spec.md` の実装済み項目同期
+  - `doc/spec/README.md` 配下の実装済み項目同期
   - legacy 移植マッピング（移植元ファイルと移植先責務の対応表）
 - 制約
   - 単一ホスト、at-least-once 前提
   - FS capability は v1 非スコープ（無効固定）
   - Phase A/B では collector-slack 本移植を行わない
   - 移植元は `legacy/impl-20260228/src` を正とし、同等機能の契約を維持したうえで現行構成へ再配置する
-  - ACP/Process RPC/HTTP の境界契約は `doc/spec.md` 14.5/14.7/14.8 を正として実装する
+  - ACP/Process RPC/HTTP の境界契約は `doc/spec/acp-architecture.md` を正として実装する
   - `session/list` は unstable method のため、既定無効・feature flag 有効時のみ提供する
 
 ### 2.2 非スコープ Non Scope
@@ -223,7 +223,7 @@
   - HTTP リクエスト自体の自動再試行は行わない（idempotencyKey で重複吸収）
 - タイムアウト方針
   - `session/prompt` は run timeout を設定し、超過時 `failed` へ遷移
-- sandbox 障害方針（`doc/spec.md` 13.7 準拠）
+- sandbox 障害方針（`doc/spec/sandbox.md` 準拠）
   - `ADJUTANT_SANDBOX_MODE=non-main|all` で Docker 初期化不可の場合は fail-closed で起動を中断する
   - sandbox 実行時エラーは当該 tool call を失敗として返し、ホスト実行へフォールバックしない
   - `ADJUTANT_SANDBOX_MODE=off` のときのみ従来のホスト実行を許可する
@@ -259,7 +259,7 @@
   - 更新タイミングは `session/new` 成功時・`session/load` 成功時・run terminal（`completed|failed|cancelled`）確定時とする
   - `session/new` / `session/load` 時点では `lastRunId` を更新せず、既知の run がある場合のみ維持する
   - 破損時復旧は「最終有効 JSONL 行まで truncate + snapshot 再生成」を行い、復旧不能時は空マップで起動して `session/new` フォールバックを許可する
-  - 上記は `doc/spec.md` 14.6（journal/cursor/冪等）に合わせ、cursor commit を terminal 確定後に限定する
+  - 上記は `doc/spec/storage.md`（journal/cursor/冪等）に合わせ、cursor commit を terminal 確定後に限定する
 - ツール通知契約 (`session/update`)
   - `tool_call` / `tool_call_update` を `ToolEventBridge` で集約し、run 単位で重複排除する
   - WebUI 表示と永続履歴に同一レコードを利用し、正本は journal（`tool-events`）へ append する
@@ -277,7 +277,7 @@
 - 最低限の設定契約
   - 必須: `OPENAI_API_KEY`（利用モデル要件に従う）
   - 任意: `ADJUTANT_MODEL`, `ADJUTANT_MEMORY_SEARCH_*`, `ADJUTANT_SANDBOX_MODE`
-  - pre-compaction 閾値の初期値は `doc/spec.md` 既定値を採用（`ADJUTANT_COMPACTION_RESERVE_TOKENS_FLOOR=20000`, `ADJUTANT_MEMORY_FLUSH_SOFT_THRESHOLD_TOKENS=4000`）
+  - pre-compaction 閾値の初期値は `doc/spec/configuration.md` の既定値を採用（`ADJUTANT_COMPACTION_RESERVE_TOKENS_FLOOR=20000`, `ADJUTANT_MEMORY_FLUSH_SOFT_THRESHOLD_TOKENS=4000`）
 - 移植元参照（実装根拠）
   - session factory: `legacy/impl-20260228/src/assistant/agent-session-factory.ts`
   - 実行フロー: `legacy/impl-20260228/src/assistant/agent-runner.ts`
@@ -310,12 +310,12 @@ event: run/update
 data: {"runId":"session:main:run:1","delta":"hello"}
 ```
 
-### 4.6 `doc/spec.md` 境界契約準拠ルール
+### 4.6 詳細仕様準拠ルール
 
 - 準拠元
-  - `doc/spec.md` 14.5 境界契約
-  - `doc/spec.md` 14.7 Capability Gate 方針
-  - `doc/spec.md` 14.8 エラー分類と回復
+  - `doc/spec/acp-architecture.md` 境界契約
+  - `doc/spec/acp-architecture.md` Capability Gate 相当の worker 境界 / method 方針
+  - `doc/spec/acp-architecture.md` エラー分類と回復
 - ACP（control-plane <-> worker）
   - Baseline は `initialize`, `session/new`, `session/prompt`, `session/cancel`, `session/update` を必須実装とする
   - optional stable の `authenticate` は既存実装を維持し、互換性を崩さない
@@ -328,7 +328,7 @@ data: {"runId":"session:main:run:1","delta":"hello"}
   - `UNSUPPORTED_CAPABILITY`, `ACP_PROTOCOL_ERROR`, `JOURNAL_APPEND_FAILED`, `WORKER_TIMEOUT`, `WORKER_CRASHED`, `DOWNSTREAM_ERROR`, `INVALID_RECORD` を識別可能な形で返す
   - worker 異常終了時は supervisor 再起動と構造化ログ記録を必須とする
 - 検証方針
-  - vendor ACP schema と `doc/spec.md` 境界契約の双方に対して contract test を実施し、差分を検知する
+  - vendor ACP schema と `doc/spec/acp-architecture.md` 境界契約の双方に対して contract test を実施し、差分を検知する
 
 ## 5. アーキテクチャと設計図 Architecture and Diagrams
 
@@ -336,7 +336,7 @@ data: {"runId":"session:main:run:1","delta":"hello"}
 
 - 本計画は `control-plane` / `worker` / `ui` / 外部I/O を跨ぐためクラス図を必須とする。
 - 非同期更新（SSE, ACP）が主要なのでシーケンス図を併記する。
-- プロセス境界の基準図は `doc/spec.md` 14.3 を正とする（[プロセス接続連携図](../spec.md#143-プロセス接続連携図)）。
+- プロセス境界の基準図は `doc/spec/system-overview.md` を正とする（[システム構成図](../../spec/system-overview.md)）。
 
 ### 5.2 クラス図 Class Diagram
 
@@ -448,7 +448,7 @@ sequenceDiagram
   - ACP schema validation
   - Process RPC validation
   - HTTP request/response schema
-  - `doc/spec.md` 14.5/14.7/14.8 準拠テスト（baseline methods, capability gate, error taxonomy）
+  - `doc/spec/acp-architecture.md` 準拠テスト（baseline methods, capability gate, error taxonomy）
 
 ### 6.2 カバレッジ対象
 
@@ -480,10 +480,10 @@ sequenceDiagram
 
 - [x] `Task-AB-000` legacy 移植マッピング表の作成（保存先: `doc/plan/artifacts/260228-s04-legacy-mapping.md`、形式: `移植元|移植先|契約ID|差分|テストID|状態` テーブル、完了条件: Phase A/B 対象責務を 100% 網羅）
 - [x] `Task-AB-001` インターフェース契約の確定（HTTP/SSE/ACP 境界、エラーコード、run 状態、イベント命名規約）
-- [x] `Task-AB-002` Mermaid 図を `doc/spec.md` と本計画に同期
+- [x] `Task-AB-002` Mermaid 図を `doc/spec/system-overview.md` と本計画に同期
 - [x] `Task-AB-003` 型定義の追加（`src/control-plane/contracts/*.ts` 予定）
 - [x] `Task-AB-004` テスト基盤確認（`tests/integration`, `tests/contract`, `tests/unit` の雛形更新）
-- [x] `Task-AB-005` `doc/spec.md` 14.5/14.7/14.8 を実装チェックリスト化（必須/任意/非スコープ）
+- [x] `Task-AB-005` `doc/spec/acp-architecture.md` を実装チェックリスト化（必須/任意/非スコープ）
 - [x] `Task-AB-006` 実 API 依存テストの CI 実行方針を確定（default job では skip、secret job で live 実行）
 - [x] `Task-AB-007` `package.json` に `test:live-agent` スクリプトを追加し、`OPENAI_API_KEY` 未設定時は skip で終了する実行ラッパを整備
 
@@ -511,10 +511,10 @@ sequenceDiagram
 - [x] `Task-A-INTEG-003` Integration: `session/load` 復帰と `tool_call` 履歴再取得を検証
 - [x] `Task-A-INTEG-004` Integration: ページリロード相当の再初期化で過去ツール履歴が表示されることを検証
 - [x] `Task-A-INTEG-005` Integration: WebUI コンポーネント smoke test（RTL）で送信・ツール履歴・pending permission 表示を検証
-- [x] `Task-A-CONTRACT-001` Contract: baseline ACP methods と capability gate が `doc/spec.md` 14.5/14.7 と一致することを検証
+- [x] `Task-A-CONTRACT-001` Contract: baseline ACP methods と capability gate が `doc/spec/acp-architecture.md` と一致することを検証
 - [x] `Task-A-CONTRACT-002` Contract: SSE `StreamEvent` 名が ACP 命名規約（`/` 区切り）と完全一致することを検証
 - [x] `Task-A-CONTRACT-003` Contract: Process RPC は schema/型適合のみ検証し、collector/deliver 実経路 E2E を含めないことを固定
-- [x] `Task-A-DOCS-001` Docs: API/SSE 例と `pi-coding-agent` 必須設定を `doc/spec.md` に反映（`src/index.ts`/`src/assistant/main.ts` の役割、§3/§13 の章間整合を含む）
+- [x] `Task-A-DOCS-001` Docs: API/SSE 例と `pi-coding-agent` 必須設定を `doc/spec/assistant-runtime.md` / `doc/spec/acp-architecture.md` / `doc/spec/configuration.md` に反映
 
 ### Stage 3 機能Bの実装（memory/audit/sandbox + bootstrap/compaction）
 
@@ -538,14 +538,14 @@ sequenceDiagram
 - [x] `Task-B-INTEG-001` Integration: memory/sandbox/audit 一連シナリオ E2E
 - [x] `Task-B-INTEG-002` Integration: `memory_get` path traversal/symlink 攻撃が拒否されることを検証
 - [x] `Task-B-INTEG-003` Integration: `memory_write` -> summary batch -> memory_search の一連反映を検証
-- [x] `Task-B-DOCS-001` Docs: `spec.md` 2.2 現在実装済み項目を更新（`spec.md` §14.9 の s02 非スコープ注記を s04 実装済み状態に合わせて更新）
+- [x] `Task-B-DOCS-001` Docs: `doc/spec/feature-catalog.md` の現在実装済み項目を更新
 
 ### Stage 4 統合と検証
 
 - [x] `Task-AB-VERIFY-001` `pnpm check` 実行
 - [x] `Task-AB-VERIFY-002` エッジケース検証（キャンセル、重複 idempotencyKey、long context）
 - [x] `Task-AB-VERIFY-003` ログ/例外確認（timeout、worker crash、sandbox unavailable）
-- [x] `Task-AB-VERIFY-004` `doc/spec.md` 14.5/14.7/14.8 との差分がないことを contract テストで確認
+- [x] `Task-AB-VERIFY-004` `doc/spec/acp-architecture.md` との差分がないことを contract テストで確認
 - [x] `Task-AB-VERIFY-006` `Task-AB-007` で追加した `pnpm run test:live-agent` を `OPENAI_API_KEY` あり環境で実行し、結果を別レポートに記録
 - [x] `Task-AB-VERIFY-005` ドキュメント更新（仕様、契約、図）
 
@@ -563,7 +563,7 @@ sequenceDiagram
 - [x] Linter Formatter のエラーがないこと
 - [x] 不要なデバッグコードが削除されていること
 - [x] 主要な変更点がドキュメントに反映されていること
-- [x] `doc/spec.md` 14.5/14.7/14.8 に対する境界契約テストがグリーンであること
+- [x] `doc/spec/acp-architecture.md` に対する境界契約テストがグリーンであること
 
 ## 9. 懸念事項と未確定事項 Concerns and Questions
 

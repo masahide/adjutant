@@ -2,9 +2,9 @@
 
 - 作成日: 2026-02-28
 - 参照元:
-  - `doc/spec.md` 14.5 (境界契約)
-  - `doc/spec.md` 14.7 (Capability Gate)
-  - `doc/spec.md` 14.8 (エラー分類)
+  - `doc/spec/acp-architecture.md` (境界契約)
+  - `doc/spec/acp-architecture.md` (Capability Gate 相当の worker 境界 / method 制約)
+  - `doc/spec/acp-architecture.md` (エラー分類)
   - `doc/plan/260228-s04-phase-a-b-pi-agent-webui-memory-sandbox.md` 4.1-4.6
 
 ## 1. HTTP/SSE 契約
@@ -47,6 +47,6 @@
 ## 5. 凍結ルール
 
 - ここで定義した契約を変更する場合は、以下を同時更新すること
-  - `doc/spec.md` (14.5/14.7/14.8)
+  - `doc/spec/acp-architecture.md`
   - `doc/plan/260228-s04-phase-a-b-pi-agent-webui-memory-sandbox.md` (4.x)
   - contract test (`tests/contract/*`)

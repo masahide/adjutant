@@ -36,11 +36,11 @@
   - `session/prompt` / `session/cancel` のセッション状態遷移を明文化する。
   - sandbox 実行を `docker exec` 方式から `docker run --rm` 方式へ変更する。
   - 並行実行と sandbox lifecycle のユニット・統合テストを追加する。
-  - `doc/spec.md` と `README.md` の ACP / sandbox 実装プロファイルを更新する。
+  - `doc/spec/acp-architecture.md` / `doc/spec/sandbox.md` と `README.md` の ACP / sandbox 実装プロファイルを更新する。
 - 成果物
   - 実装コード: `src/agent-worker-acp/*`, `src/sandbox/*`, `src/assistant/agent-session-factory.ts`, `src/index.ts`
   - テスト: `tests/unit/agent-worker-acp/*`, `tests/unit/sandbox/*`, `tests/integration/acp-transport.test.ts`（必要に応じ分割）
-  - ドキュメント: `doc/spec.md`, `README.md`
+  - ドキュメント: `doc/spec/acp-architecture.md`, `doc/spec/sandbox.md`, `README.md`
 - 制約
   - stable method セット（`initialize`, `authenticate`, `session/new`, `session/load`, `session/prompt`, `session/cancel`, `session/update`）は維持する。
   - control-plane との接続契約（JSON-RPC over stdio）は維持する。
@@ -321,7 +321,7 @@ sequenceDiagram
 ### Phase 1 設計と準備
 
 - [x] `Task-MSC-DESIGN-001` インターフェース契約確定（`SESSION_BUSY` / `INVALID_RECORD` / sandbox 実行契約の明文化）
-- [x] `Task-MSC-DESIGN-002` Mermaid 図を `doc/spec.md` に反映
+- [x] `Task-MSC-DESIGN-002` Mermaid 図を `doc/spec/system-overview.md` / `doc/spec/acp-architecture.md` に反映
 - [x] `Task-MSC-DESIGN-003` `SessionExecutionRegistry` と `SandboxRunSpec` の型定義を確定
 - [x] `Task-MSC-DESIGN-004` テスト基盤確認（既存 `acp-transport` / sandbox unit 拡張方針）
 
@@ -347,14 +347,14 @@ sequenceDiagram
 - [x] `Task-MSC-SBX-GREEN-001` Impl: `DockerBashOperations` を `docker exec` から `docker run --rm` へ置換 Green
 - [x] `Task-MSC-SBX-REFACTOR-001` Refactor: `sandbox/runtime` と worker bootstrap の `containerName` 依存を削除
 - [x] `Task-MSC-SBX-INTEG-001` Integration: 並行 tool 実行時にコンテナ残存がないことを検証
-- [x] `Task-MSC-SBX-DOC-001` Docs: sandbox lifecycle（per-tool）を `README.md` / `doc/spec.md` に追記
+- [x] `Task-MSC-SBX-DOC-001` Docs: sandbox lifecycle（per-tool）を `README.md` / `doc/spec/sandbox.md` に追記
 
 ### Phase 5 統合と検証
 
 - [x] `Task-MSC-VERIFY-001` 全体テスト実行（対象 unit/integration + `pnpm check`）
 - [x] `Task-MSC-VERIFY-002` エッジケース確認（完了直前 cancel, unknown session, docker fail）
 - [x] `Task-MSC-VERIFY-003` ログ確認（error code と sessionId 相関）
-- [x] `Task-MSC-VERIFY-004` 最終ドキュメント同期（`doc/spec.md`, `README.md`）
+- [x] `Task-MSC-VERIFY-004` 最終ドキュメント同期（`doc/spec/acp-architecture.md`, `doc/spec/sandbox.md`, `README.md`）
 
 # 8. 完了の定義 Definition of Done
 
@@ -371,7 +371,7 @@ sequenceDiagram
 - [x] 追加/変更テストが全てパスする
 - [x] `pnpm check` が成功する
 - [x] デバッグ用コードや一時ログが残っていない
-- [x] 主要変更が `README.md` と `doc/spec.md` に反映される
+- [x] 主要変更が `README.md` と `doc/spec/acp-architecture.md` / `doc/spec/sandbox.md` に反映される
 
 # 9. 懸念事項と未確定事項 Concerns and Questions
 

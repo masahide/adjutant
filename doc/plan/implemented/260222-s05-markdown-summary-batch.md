@@ -3,7 +3,7 @@
 ## 1. 概要と目的 Overview and Purpose
 
 - What  
-  `doc/spec.md` の未実装項目「日次 Markdown 要約バッチ」を実装する。workspace 外の state 配下 `agents/<agentId>/sessions/*.jsonl` を日次で集約し、`memory/YYYY-MM-DD.md` へ要約追記する内部バッチを追加する。あわせてセッション保存ディレクトリ運用を OpenClaw 構造へ寄せる。
+  `doc/spec/assistant-runtime.md` と `doc/spec/memory.md` の未実装項目だった「日次 Markdown 要約バッチ」を実装する。workspace 外の state 配下 `agents/<agentId>/sessions/*.jsonl` を日次で集約し、`memory/YYYY-MM-DD.md` へ要約追記する内部バッチを追加する。あわせてセッション保存ディレクトリ運用を OpenClaw 構造へ寄せる。
 - Why  
   現状は `memory_write` による都度保存しかなく、日単位での運用ログ要約が欠落している。次回セッションの文脈注入（Today/Yesterday）と検索再利用性を高めるため、定期的な Markdown 化が必要。
 - How  
@@ -23,7 +23,7 @@
   - 進捗管理用チェックポイントを state 配下（`<stateDir>/agents/<agentId>/summary-batch-watermark.json`）に保存する
   - 出力を `memory/YYYY-MM-DD.md` に追記する
   - 単体テストと統合テストを追加する
-  - `doc/spec.md` を更新する
+  - `doc/spec/assistant-runtime.md` / `doc/spec/memory.md` を更新する
 - 成果物
   - `src/assistant/markdown-summary-batch.ts`（新規）
   - `src/assistant/main.ts`（バッチタイマー配線）
@@ -31,7 +31,7 @@
   - `src/assistant/session-paths.ts`（新規、state 配下パス解決）
   - `tests/assistant/markdown-summary-batch.test.ts`（新規）
   - `tests/assistant/main-adapter.test.ts` または同等の統合観点テスト更新
-  - `doc/spec.md`（実装済み項目更新）
+  - `doc/spec/assistant-runtime.md` / `doc/spec/memory.md`（実装済み項目更新）
 - 制約
   - 既存 API 互換を維持する（HTTP/SSE 契約は不変更）
   - 既存 `memory/YYYY-MM-DD.md` 運用を維持する（ファイル命名は既存優先）
@@ -298,7 +298,7 @@ sequenceDiagram
   - state 配下セッション保存と要約バッチ入力の整合性（旧 `workspace/memory/sessions` 互換含む）
 - Contract
   - `summary-batch-watermark.json` スキーマ互換
-  - `doc/spec.md` 記載契約に対する回帰テスト
+  - `doc/spec/assistant-runtime.md` / `doc/spec/memory.md` 記載契約に対する回帰テスト
 
 ### 6.2 カバレッジ対象
 
@@ -316,7 +316,7 @@ sequenceDiagram
 
 ### Phase 1 設計と準備
 
-- [x] OpenClaw 準拠仕様を `doc/spec.md` の「日次 Markdown 要約バッチ」節へ具体化
+- [x] OpenClaw 準拠仕様を `doc/spec/assistant-runtime.md` / `doc/spec/memory.md` の「日次 Markdown 要約バッチ」節へ具体化
 - [x] 新規設定値（enabled/interval/messages/maxSessions）の契約を runtime config に追加
 - [x] セッション保存先を workspace から state 配下へ寄せるパス契約を追加（`<stateDir>/agents/<agentId>/sessions`）
 - [x] watermark スキーマ `adjutant.summary.batch.watermark.v1` を定義
@@ -346,7 +346,7 @@ sequenceDiagram
 - [x] dual-write session 出力先を state 配下に切替し、バッチ入力と一致させる
 - [x] バッチ失敗時 warning ログのみで継続することを確認
 - [x] `pnpm run check` 実行
-- [x] `doc/spec.md` の未実装項目更新
+- [x] `doc/spec/assistant-runtime.md` / `doc/spec/memory.md` の未実装項目更新
 
 ## 8. 完了の定義 Definition of Done
 
@@ -362,7 +362,7 @@ sequenceDiagram
 - [x] 追加テストが全て成功する
 - [x] `pnpm run check` が成功する
 - [x] warning ログが本文を出力しない
-- [x] `doc/spec.md` と本計画が実装内容に一致する
+- [x] `doc/spec/assistant-runtime.md` / `doc/spec/memory.md` と本計画が実装内容に一致する
 
 ## 9. 懸念事項と未確定事項 Concerns and Questions
 

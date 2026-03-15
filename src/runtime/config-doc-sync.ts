@@ -85,7 +85,11 @@ export async function verifyConfigDocSyncInWorkspace(
 ): Promise<VerifyConfigDocSyncResult> {
   const rootDir = resolve(options.rootDir ?? process.cwd());
   const sourceRoots = options.sourceRoots ?? ["src", "scripts"];
-  const docPaths = options.docPaths ?? ["README.md", "doc/spec.md", "doc/file-paths.md"];
+  const docPaths = options.docPaths ?? [
+    "README.md",
+    "doc/spec/configuration.md",
+    "doc/file-paths.md",
+  ];
 
   const sourceFiles = await loadSourceFiles(rootDir, sourceRoots);
   const docFiles = await loadDocFiles(rootDir, docPaths);

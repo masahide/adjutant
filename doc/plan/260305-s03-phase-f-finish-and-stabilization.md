@@ -6,7 +6,7 @@
 - SOLID: 設定管理、ドキュメント同期、CI、移植監査を独立責務として分割し、相互依存を最小化する。
 - KISS: 「検証可能な最小セット」を優先し、複雑な自動化基盤は導入しない。
 - YAGNI: 分散実行・高度メトリクス基盤・新 UI 追加は行わない。
-- DRY: 既存の `spec.md` / `README.md` / `file-paths.md` / runbook / verification artifact の重複記述を統制し、同一事実の二重管理を減らす。
+- DRY: 既存の `doc/spec/README.md` / `README.md` / `doc/file-paths.md` / runbook / verification artifact の重複記述を統制し、同一事実の二重管理を減らす。
 
 ## 1. 概要と目的 Overview and Purpose
 
@@ -18,7 +18,7 @@
   - 継続開発での回帰抑止には、コードと文書を同時に壊せない仕組みが必要。
 - How
   - 設定値の定義源を整理し、docs との差分検出を自動化する。
-  - `spec.md` / `README.md` / `doc/file-paths.md` / runbook の境界を整理し、責務と参照関係を固定する。
+  - `doc/spec/README.md` と配下詳細仕様 / `README.md` / `doc/file-paths.md` / runbook の境界を整理し、責務と参照関係を固定する。
   - `qa.yml` とローカル `pnpm check` の再現性を揃え、失敗時に原因が追跡可能な CI を構築する。
   - legacy -> ACP の最終移植監査表を作成し、未移植・意図的非スコープを明文化する。
 
@@ -30,7 +30,7 @@
   - 設定整理
     - `process.env` 参照点の棚卸しと分類（collector/control-plane/worker/deliver/test）
     - 既定値・型・説明の単一参照源（catalog）を定義
-    - docs 側（`README.md`, `doc/spec.md`, `doc/file-paths.md`）との同期検証導線を追加
+    - docs 側（`README.md`, `doc/spec/configuration.md`, `doc/file-paths.md`）との同期検証導線を追加
   - ドキュメント同期
     - API/永続化/運用手順の責務分担を確定
     - runbook（collector backlog, deliver recovery, proactive flusher, heartbeat）の参照導線統一
@@ -49,7 +49,7 @@
   - テスト: `tests/unit/docs-sync/*`, `tests/contract/ci/*`, `tests/integration/phase-f-*`（必要分）
   - ドキュメント:
     - `README.md`
-    - `doc/spec.md`
+    - `doc/spec/README.md`
     - `doc/file-paths.md`
     - `doc/runbook/*.md`
     - `doc/plan/artifacts/260305-s03-phase-f-migration-audit.md`
@@ -87,7 +87,7 @@
 1. Given 新しい環境変数を `src/*` に追加し docs を更新していない  
    When config/docs 同期検証を実行する  
    Then `DOC_SYNC_MISMATCH` で失敗し、未同期項目が列挙される
-2. Given `README.md` / `doc/spec.md` / `doc/file-paths.md` が実装と整合している  
+2. Given `README.md` / `doc/spec/configuration.md` / `doc/file-paths.md` が実装と整合している  
    When 同期検証を実行する  
    Then 0 差分で成功し、`pnpm check` と同時実行しても green となる
 3. Given Pull Request で `qa.yml` が実行される  
@@ -141,7 +141,7 @@
   - job: `qa`（必須）, `live-agent`（条件付き）
 - ドキュメント I/O
   - `README.md`
-  - `doc/spec.md`
+  - `doc/spec/README.md`
   - `doc/file-paths.md`
   - `doc/runbook/*.md`
 - 監査 artifact
@@ -195,7 +195,7 @@
   "acpPath": "src/control-plane/proactive/pending-flusher.ts",
   "status": "done",
   "evidence": {
-    "spec": ["doc/spec.md#133-pending-flusher"],
+    "spec": ["doc/spec/proactive-routing.md"],
     "tests": ["tests/unit/control-plane/proactive/pending-flusher.test.ts"],
     "files": ["src/control-plane/proactive/pending-flusher.ts"]
   }
@@ -320,8 +320,8 @@ sequenceDiagram
        成果物: `tests/unit/docs-sync/config-doc-sync.test.ts`（default_mismatch ケース）
 - [x] `Task-FA-GREEN-001` Impl: config catalog 抽出と docs 同期検証スクリプトを実装  
        成果物: `src/runtime/config-doc-sync.ts`, `scripts/verify-config-doc-sync.ts`, `package.json` (`verify:config-doc-sync`)
-- [x] `Task-FA-GREEN-002` Impl: `README.md` / `doc/spec.md` / `doc/file-paths.md` の同期更新  
-       成果物: `README.md`, `doc/spec.md`, `doc/file-paths.md`
+- [x] `Task-FA-GREEN-002` Impl: `README.md` / `doc/spec/README.md` / `doc/spec/configuration.md` / `doc/file-paths.md` の同期更新  
+       成果物: `README.md`, `doc/spec/README.md`, `doc/spec/configuration.md`, `doc/file-paths.md`
 - [x] `Task-FA-REFACTOR-001` Refactor: 設定説明の重複を削減し参照リンクを統一  
        成果物: env 名称の `ADJUTANT_API_*` -> `ADJUTANT_CONTROL_PLANE_*` 整理（README/spec）
 - [x] `Task-FA-CONTRACT-001` Contract: 同期検証結果の出力形式を固定  
@@ -377,6 +377,6 @@ sequenceDiagram
 
 - docs 同期検証の「正本」をどこに置くか（コード起点か docs 起点か）の最終決定が必要。
 - `OPENAI_API_KEY` 依存の live-agent を必須品質ゲートにするか、参考指標に留めるかの合意が必要。
-- 未実装項目（`doc/spec.md` 2.3）を `deferred` として固定する粒度をどこまで厳密にするか。
+- 未実装項目（`doc/spec/feature-catalog.md` の未実装一覧）を `deferred` として固定する粒度をどこまで厳密にするか。
 - runbook の監視指標を将来どの運用基盤へ接続するか（現時点は手順書ベース）。
 - Docker なしローカル環境では `ADJUTANT_TEST_NO_DOCKER=1` を付与して `pnpm check` を実行する運用が必要。
