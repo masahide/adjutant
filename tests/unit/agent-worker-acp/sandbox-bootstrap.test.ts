@@ -85,6 +85,16 @@ test("configureWorkerSandboxFromEnv disables sandbox when image is missing", asy
   );
 });
 
+test("configureWorkerSandboxFromEnv defaults worker sandbox mode to off when bridge env is missing", async () => {
+  configureSandbox(null);
+
+  const configured = await configureWorkerSandboxFromEnv({}, process.cwd());
+
+  assert.equal(configured.enabled, false);
+  assert.equal(configured.mode, "off");
+  assert.equal(getConfiguredSandbox(), null);
+});
+
 test("configureWorkerSandboxFromEnv falls back to default home and host user", async () => {
   configureSandbox(null);
 

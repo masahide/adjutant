@@ -530,10 +530,10 @@ sequenceDiagram
 
 ### Phase 2 Image 設定契約の固定
 
-- [ ] `Task-SBX-IMG-RED-001` Test: `ADJUTANT_SANDBOX_IMAGE` が config / worker bridge / docker args に反映される失敗テストを追加
+- [x] `Task-SBX-IMG-RED-001` Test: `ADJUTANT_SANDBOX_IMAGE` が config / worker bridge / docker args に反映される失敗テストを追加
 - [x] `Task-SBX-IMG-GREEN-001` Impl: 既存 image 契約を docs-sync と worker bridge 含めて明示化
 - [x] `Task-SBX-IMG-GREEN-002` Impl: `Dockerfile.sandbox` をツール専用のシンプルな image 契約へ更新し、`/workspace` と `/home/agent` の枠組みを整備
-- [ ] `Task-SBX-IMG-REFACTOR-001` Refactor: image 関連の説明とテスト重複を削減
+- [x] `Task-SBX-IMG-REFACTOR-001` Refactor: image 関連の説明とテスト重複を削減
 - [x] `Task-SBX-IMG-CONTRACT-001` Contract: README / spec / env inventory を同期更新
 - [x] `Task-SBX-IMG-DOC-001` Docs: custom image の責務範囲と `--user` / `/workspace` / tmpfs home 契約を明記
 
@@ -544,7 +544,7 @@ sequenceDiagram
 - [x] `Task-SBX-HOME-GREEN-001` Impl: `SandboxDockerConfig` / `SandboxRunSpec` に home を追加
 - [x] `Task-SBX-HOME-GREEN-002` Impl: `HOME` は tmpfs, workspace は `/workspace`, `workdir` は `/workspace` に揃える
 - [x] `Task-SBX-HOME-GREEN-003` Impl: home tmpfs の uid/gid/mode 構築を docker 引数へ反映する
-- [ ] `Task-SBX-HOME-REFACTOR-001` Refactor: home/workdir の既定値決定ロジックを整理
+- [x] `Task-SBX-HOME-REFACTOR-001` Refactor: home/workdir の既定値決定ロジックを整理
 - [x] `Task-SBX-HOME-CONTRACT-001` Contract: README / spec / docs-sync / examples を home tmpfs + workspace bind mount 契約へ同期更新
 
 ### Phase 4 Default Sandbox 化
@@ -552,8 +552,8 @@ sequenceDiagram
 - [x] `Task-SBX-MODE-RED-001` Test: `ADJUTANT_SANDBOX_MODE` 未指定時に default=`all` を期待する失敗テストを追加
 - [x] `Task-SBX-MODE-RED-002` Test: Docker unavailable で未指定起動が fail-closed になる失敗テストを追加
 - [x] `Task-SBX-MODE-GREEN-001` Impl: sandbox mode の既定値を `all` に変更
-- [ ] `Task-SBX-MODE-GREEN-002` Impl: no-Docker テスト逃げ道と bootstrap の分岐を既定変更に合わせて調整
-- [ ] `Task-SBX-MODE-REFACTOR-001` Refactor: mode default の説明と helper の重複を削減
+- [x] `Task-SBX-MODE-GREEN-002` Impl: no-Docker テスト逃げ道と bootstrap の分岐を既定変更に合わせて調整
+- [x] `Task-SBX-MODE-REFACTOR-001` Refactor: mode default の説明と helper の重複を削減
 - [x] `Task-SBX-MODE-CONTRACT-001` Contract: README / spec / docs-sync / runbook の default mode 記述を同期更新
 
 ### Phase 5 Host UID/GID 追従の実装
@@ -566,15 +566,15 @@ sequenceDiagram
 - [x] `Task-SBX-USER-GREEN-003` Impl: control-plane から worker への `ACP_WORKER_SANDBOX_USER` 伝播を追加
 - [x] `Task-SBX-USER-GREEN-004` Impl: `docker run --user <uid>:<gid>` へ切り替え、tmpfs home の uid/gid も同期させる
 - [x] `Task-SBX-USER-REFACTOR-001` Refactor: user 解決ロジックを utility へ抽出し、platform 分岐を局所化
-- [ ] `Task-SBX-USER-INTEG-001` Integration: worker bootstrap と docker args の end-to-end テストを追加
-- [ ] `Task-SBX-USER-INTEG-002` Integration: WSL Linux ネイティブ領域相当の bind mount でも所有者が一致することを検証
+- [x] `Task-SBX-USER-INTEG-001` Integration: worker bootstrap と docker args の end-to-end テストを追加
+- [x] `Task-SBX-USER-INTEG-002` Integration: WSL Linux ネイティブ領域相当の bind mount でも所有者が一致することを検証
 - [x] `Task-SBX-USER-DOC-001` Docs: 既知制約と fallback を README / spec に追記
 
 ### Phase 5.5 Hardening 契約の固定
 
 - [x] `Task-SBX-HARDEN-RED-001` Test: `docker run` に read-only rootfs と security flags が付与される失敗テストを追加
 - [x] `Task-SBX-HARDEN-GREEN-001` Impl: `--pull=never`, `--init`, `--read-only`, `--mount`, `--tmpfs /tmp`, `--tmpfs /run`, `--tmpfs <home>`, `--network=none`, `--cap-drop=ALL`, `--security-opt`, `--ipc=private`, `--cgroupns=private`, `--pids-limit`, `--memory`, `--memory-swap`, `--hostname=sandbox` を導入
-- [ ] `Task-SBX-HARDEN-REFACTOR-001` Refactor: hardening flags 構築を helper 化する
+- [x] `Task-SBX-HARDEN-REFACTOR-001` Refactor: hardening flags 構築を helper 化する
 - [x] `Task-SBX-HARDEN-DOC-001` Docs: Mac / WSL / Linux の挙動差と hardening 契約を README / spec に追記
 
 ### Phase 6 標準ツール sandbox 復元

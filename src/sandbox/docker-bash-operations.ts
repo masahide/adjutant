@@ -4,10 +4,10 @@ import { resolve } from "node:path";
 import type { BashOperations } from "@mariozechner/pi-coding-agent";
 
 import {
-  buildSandboxTmpfs,
+  buildSandboxHardeningArgs,
   DEFAULT_SANDBOX_CAP_DROP,
-  DEFAULT_SANDBOX_NETWORK,
   DEFAULT_SANDBOX_HOME,
+  parseOptionalTrimmedString,
   resolveSandboxUser,
 } from "./config-helpers.js";
 import { createPathMapper } from "./path-mapper.js";
@@ -48,11 +48,6 @@ function resolveEnvAllowlist(customAllowlist: readonly string[] | undefined): Se
   return resolved;
 }
 
-function parseOptionalLimit(value: string | undefined): string | undefined {
-  const normalized = value?.trim();
-  return normalized ? normalized : undefined;
-}
-
 export function buildDockerRunArgs(params: {
   runSpec: SandboxRunSpec;
   containerCwd: string;
@@ -64,27 +59,18 @@ export function buildDockerRunArgs(params: {
   const sandboxUser = runSpec.user?.trim() || resolveSandboxUser(undefined);
   const containerHome = runSpec.containerHome?.trim() || DEFAULT_SANDBOX_HOME;
 
-  if (runSpec.readOnlyRoot !== false) {
-    args.push("--read-only");
-  }
-  for (const entry of runSpec.tmpfs ?? buildSandboxTmpfs(containerHome, sandboxUser)) {
-    args.push("--tmpfs", entry);
-  }
-  args.push("--network", runSpec.network?.trim() || DEFAULT_SANDBOX_NETWORK);
-  for (const cap of runSpec.capDrop ?? DEFAULT_SANDBOX_CAP_DROP) {
-    args.push("--cap-drop", cap);
-  }
-  args.push("--security-opt", "no-new-privileges=true");
-  args.push("--security-opt", "seccomp=builtin");
-  args.push("--ipc=private", "--cgroupns=private", "--hostname=sandbox");
-  if (typeof runSpec.pidsLimit === "number" && runSpec.pidsLimit > 0) {
-    args.push("--pids-limit", String(runSpec.pidsLimit));
-  }
-  const memoryLimit = parseOptionalLimit(runSpec.memory);
-  if (memoryLimit !== undefined) {
-    args.push("--memory", memoryLimit);
-    args.push("--memory-swap", memoryLimit);
-  }
+  args.push(
+    ...buildSandboxHardeningArgs({
+      readOnlyRoot: runSpec.readOnlyRoot,
+      tmpfs: runSpec.tmpfs,
+      containerHome,
+      user: sandboxUser,
+      network: runSpec.network,
+      capDrop: runSpec.capDrop ?? DEFAULT_SANDBOX_CAP_DROP,
+      pidsLimit: runSpec.pidsLimit,
+      memory: parseOptionalTrimmedString(runSpec.memory),
+    })
+  );
 
   args.push("--user", sandboxUser);
   args.push("-e", `HOME=${containerHome}`);

@@ -8,6 +8,7 @@ import {
   createDockerBashOperations,
   shouldSandbox,
 } from "../../../src/sandbox/docker-bash-operations.js";
+import { buildSandboxHardeningArgs } from "../../../src/sandbox/config-helpers.js";
 
 function createMockSpawn(params?: { autoCloseMs?: number }) {
   const calls: Array<{ command: string; args: string[] }> = [];
@@ -105,6 +106,50 @@ test("buildDockerRunArgs builds docker run --rm and keeps only allowlisted env v
   assert.equal(args.includes("LANG=ja_JP.UTF-8"), true);
   assert.equal(args.includes("OPENAI_API_KEY=secret"), false);
   assert.equal(args.includes("adjutant-sandbox:test"), true);
+});
+
+test("buildSandboxHardeningArgs centralizes read-only and isolation flags", () => {
+  const args = buildSandboxHardeningArgs({
+    containerHome: "/home/agent",
+    user: "2001:3001",
+    network: "none",
+    pidsLimit: 64,
+    memory: "512m",
+  });
+
+  assert.equal(args.includes("--read-only"), true);
+  assert.equal(args.includes("--tmpfs"), true);
+  assert.equal(args.includes("/tmp:rw,noexec,nosuid,size=256m,mode=1777"), true);
+  assert.equal(
+    args.includes("/home/agent:rw,exec,nosuid,size=512m,uid=2001,gid=3001,mode=700"),
+    true
+  );
+  assert.equal(args.includes("--network"), true);
+  assert.equal(args.includes("none"), true);
+  assert.equal(args.includes("--cap-drop"), true);
+  assert.equal(args.includes("ALL"), true);
+  assert.equal(args.includes("--hostname=sandbox"), true);
+  assert.equal(args.includes("--memory"), true);
+  assert.equal(args.includes("--memory-swap"), true);
+});
+
+test("buildDockerRunArgs keeps host home-style workspace mounts and uid aligned tmpfs", () => {
+  const args = buildDockerRunArgs({
+    runSpec: {
+      image: "adjutant-sandbox:test",
+      hostWorkspaceDir: "/home/tester/project",
+      containerWorkdir: "/workspace",
+      containerHome: "/home/agent",
+      user: "501:20",
+    },
+    containerCwd: "/workspace",
+    command: "pwd",
+  });
+
+  assert.equal(args.includes("type=bind,src=/home/tester/project,dst=/workspace"), true);
+  assert.equal(args.includes("--user"), true);
+  assert.equal(args.includes("501:20"), true);
+  assert.equal(args.includes("/home/agent:rw,exec,nosuid,size=512m,uid=501,gid=20,mode=700"), true);
 });
 
 test("createDockerBashOperations.exec aborts active docker run", async () => {

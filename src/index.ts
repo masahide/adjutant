@@ -56,6 +56,7 @@ import { ProcessRpcServer } from "./control-plane/process-rpc/server.js";
 import { IdempotencyStore } from "./control-plane/idempotency-store.js";
 import type { Cursor } from "./runtime/journal-store.js";
 import { initializeSandboxRuntime } from "./sandbox/runtime.js";
+import { applySandboxToWorkerEnv } from "./sandbox/worker-env-bridge.js";
 import { buildCollectorDispatchPayload } from "./control-plane/proactive/dispatch-payload.js";
 import { createGlobalConcurrencyQueue } from "./control-plane/proactive/global-concurrency-queue.js";
 import { createProactiveIngressService } from "./control-plane/proactive/ingress-service.js";
@@ -86,6 +87,8 @@ function createWorkerSupervisor(
       image: string;
       hostWorkspaceDir: string;
       containerWorkdir: string;
+      containerHome: string;
+      user: string;
       envAllowlist?: string[];
       readOnlyRoot?: boolean;
       tmpfs?: string[];
@@ -104,31 +107,16 @@ function createWorkerSupervisor(
   };
 
   if (sandbox.enabled && sandbox.runSpec !== undefined) {
-    workerEnv.ACP_WORKER_SANDBOX_MODE = sandbox.mode;
-    workerEnv.ACP_WORKER_SANDBOX_IMAGE = sandbox.runSpec.image;
-    workerEnv.ACP_WORKER_SANDBOX_HOST_WORKSPACE_DIR = sandbox.runSpec.hostWorkspaceDir;
-    workerEnv.ACP_WORKER_SANDBOX_WORKDIR = sandbox.runSpec.containerWorkdir;
-    workerEnv.ACP_WORKER_SANDBOX_ENV_ALLOWLIST = (sandbox.runSpec.envAllowlist ?? []).join(",");
-    workerEnv.ACP_WORKER_SANDBOX_READ_ONLY_ROOT =
-      sandbox.runSpec.readOnlyRoot === false ? "0" : "1";
-    workerEnv.ACP_WORKER_SANDBOX_TMPFS = (sandbox.runSpec.tmpfs ?? []).join(",");
-    workerEnv.ACP_WORKER_SANDBOX_CAP_DROP = (sandbox.runSpec.capDrop ?? []).join(",");
-    workerEnv.ACP_WORKER_SANDBOX_NETWORK = sandbox.runSpec.network ?? "";
-    workerEnv.ACP_WORKER_SANDBOX_MEMORY = sandbox.runSpec.memory ?? "";
-    workerEnv.ACP_WORKER_SANDBOX_PIDS_LIMIT =
-      typeof sandbox.runSpec.pidsLimit === "number" ? String(sandbox.runSpec.pidsLimit) : "";
+    applySandboxToWorkerEnv(workerEnv, {
+      enabled: true,
+      mode: sandbox.mode,
+      runSpec: sandbox.runSpec,
+    });
   } else {
-    workerEnv.ACP_WORKER_SANDBOX_MODE = "off";
-    delete workerEnv.ACP_WORKER_SANDBOX_IMAGE;
-    delete workerEnv.ACP_WORKER_SANDBOX_HOST_WORKSPACE_DIR;
-    delete workerEnv.ACP_WORKER_SANDBOX_WORKDIR;
-    delete workerEnv.ACP_WORKER_SANDBOX_ENV_ALLOWLIST;
-    delete workerEnv.ACP_WORKER_SANDBOX_READ_ONLY_ROOT;
-    delete workerEnv.ACP_WORKER_SANDBOX_TMPFS;
-    delete workerEnv.ACP_WORKER_SANDBOX_CAP_DROP;
-    delete workerEnv.ACP_WORKER_SANDBOX_NETWORK;
-    delete workerEnv.ACP_WORKER_SANDBOX_MEMORY;
-    delete workerEnv.ACP_WORKER_SANDBOX_PIDS_LIMIT;
+    applySandboxToWorkerEnv(workerEnv, {
+      enabled: false,
+      mode: sandbox.mode,
+    });
   }
 
   return new WorkerSupervisor({

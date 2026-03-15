@@ -35,8 +35,17 @@ test("resolveSandboxConfig defaults sandbox mode to all", () => {
   const config = resolveSandboxConfig({});
   assert.equal(config.mode, "all");
   assert.equal(config.docker.home, "/home/agent");
+  assert.equal(config.docker.workdir, "/workspace");
   assert.match(config.docker.user, /^\d+:\d+$/);
   assert.equal(config.docker.network, "none");
+});
+
+test("resolveSandboxConfig reflects sandbox image override", () => {
+  const config = resolveSandboxConfig({
+    ADJUTANT_SANDBOX_IMAGE: "custom-sandbox:node22",
+  } as NodeJS.ProcessEnv);
+
+  assert.equal(config.docker.image, "custom-sandbox:node22");
 });
 
 test("resolveSandboxConfig falls back to off for invalid sandbox mode", () => {
@@ -69,6 +78,16 @@ test("resolveSandboxConfig rejects relative sandbox home", () => {
         ADJUTANT_SANDBOX_HOME: "relative/home",
       } as NodeJS.ProcessEnv),
     /sandbox home must be absolute/
+  );
+});
+
+test("resolveSandboxConfig rejects relative sandbox workdir", () => {
+  assert.throws(
+    () =>
+      resolveSandboxConfig({
+        ADJUTANT_SANDBOX_WORKDIR: "relative/workdir",
+      } as NodeJS.ProcessEnv),
+    /sandbox workdir must be absolute/
   );
 });
 
