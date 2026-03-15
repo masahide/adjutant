@@ -19,6 +19,7 @@ import {
 
 export interface CreateAssistantProviderRegistryOptions {
   workspaceDir: string;
+  projectRoot?: string;
   stateDir?: string;
   includeMemoryRead: boolean;
   includeMemoryWrite: boolean;
@@ -185,7 +186,7 @@ function createMemoryProvider(options: {
   };
 }
 
-function createSlackProvider(options: { workspaceDir: string }): DynamicProvider {
+function createSlackProvider(options: { projectRoot: string }): DynamicProvider {
   const actions: DynamicAction[] = [
     {
       descriptor: {
@@ -214,7 +215,7 @@ function createSlackProvider(options: { workspaceDir: string }): DynamicProvider
       },
       execute: async (args) => {
         const request = validatePlaySlackSearchRequest(args);
-        return await executePlaySlackSearchRequest(request, { cwd: options.workspaceDir });
+        return await executePlaySlackSearchRequest(request, { cwd: options.projectRoot });
       },
     },
   ];
@@ -231,7 +232,7 @@ export function createAssistantProviderRegistry(
   options: CreateAssistantProviderRegistryOptions
 ): ProviderRegistry {
   const providers: DynamicProvider[] = [
-    createSlackProvider({ workspaceDir: options.workspaceDir }),
+    createSlackProvider({ projectRoot: options.projectRoot ?? process.cwd() }),
   ];
   const memoryProvider = createMemoryProvider({
     workspaceDir: options.workspaceDir,

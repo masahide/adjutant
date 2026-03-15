@@ -1,6 +1,5 @@
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer as createViteServer, type ViteDevServer } from "vite";
@@ -67,19 +66,17 @@ import { createHeartbeatRunner } from "./control-plane/heartbeat/heartbeat-runne
 import { HeartbeatResultStore } from "./control-plane/heartbeat/result-store.js";
 import { buildSnapshotResponse } from "./control-plane/http/snapshot-builder.js";
 import { loadProjectEnv } from "./runtime/load-project-env.js";
+import { ensureWorkspaceReady, resolveRuntimeDirectories } from "./runtime/runtime-directories.js";
 import { renderMinimalUiPage } from "./ui/minimal-page.js";
 import { UiRuntime } from "./ui/runtime.js";
 import { parseNotificationDecision } from "./control-plane/notification-decision.js";
 
 loadProjectEnv();
 
-function resolveProjectRoot(): string {
-  return resolve(dirname(fileURLToPath(import.meta.url)), "..");
-}
-
 function createWorkerSupervisor(
   cwd: string,
   stateDir: string,
+  workspaceDir: string,
   sandbox: {
     mode: "off" | "non-main" | "all";
     enabled: boolean;
@@ -103,6 +100,8 @@ function createWorkerSupervisor(
 ): WorkerSupervisor {
   const workerEnv: NodeJS.ProcessEnv = {
     ...process.env,
+    ADJUTANT_STATE_DIR: stateDir,
+    ADJUTANT_WORKSPACE_DIR: workspaceDir,
     ACP_WORKER_SESSION_STORE_PATH: join(stateDir, "worker", "session-store.json"),
   };
 
@@ -194,7 +193,14 @@ type SubmitPromptResult = {
 };
 
 export async function main(): Promise<void> {
-  const cwd = resolveProjectRoot();
+  const runtimeDirectories = resolveRuntimeDirectories({
+    env: process.env,
+    projectRoot: resolve(dirname(fileURLToPath(import.meta.url)), ".."),
+  });
+  const projectRoot = runtimeDirectories.projectRoot;
+  const stateDir = runtimeDirectories.stateDir;
+  const workspaceDir = runtimeDirectories.workspaceDir;
+  await ensureWorkspaceReady(workspaceDir);
   const logControlPlane = (input: {
     level?: "debug" | "info" | "warn" | "error";
     event: string;
@@ -213,14 +219,14 @@ export async function main(): Promise<void> {
     true
   );
   const sandboxRuntime = await initializeSandboxRuntime({
-    workspaceDir: cwd,
+    projectRoot,
+    workspaceDir,
   });
-  const stateDirEnv = process.env.ADJUTANT_STATE_DIR?.trim();
-  const stateDir =
-    stateDirEnv !== undefined && stateDirEnv.length > 0
-      ? resolve(stateDirEnv)
-      : resolve(homedir(), ".adjutant");
-  const collectorConfig = loadCollectorSlackConfig({ env: process.env, cwd, stateDir });
+  const collectorConfig = loadCollectorSlackConfig({
+    env: process.env,
+    cwd: projectRoot,
+    stateDir,
+  });
   const deliverConfig = loadDeliverSlackConfig({ env: process.env });
   const recoveryStore = SessionRecoveryStore.fromStateDir(stateDir, {
     onWarn: (message, meta) => {
@@ -265,7 +271,7 @@ export async function main(): Promise<void> {
   });
   const summaryBatchService = summaryBatchEnabled
     ? createMarkdownSummaryBatchService({
-        workspaceDir: cwd,
+        workspaceDir,
         timezone: process.env.ADJUTANT_MARKDOWN_SUMMARY_BATCH_TIMEZONE ?? "UTC",
         sessionTranscriptsDir:
           process.env.ADJUTANT_SESSION_TRANSCRIPTS_DIR?.trim() ||
@@ -292,7 +298,7 @@ export async function main(): Promise<void> {
   if (uiMiddlewareEnabled) {
     try {
       viteDevServer = await createViteServer({
-        configFile: resolve(cwd, "vite.config.ts"),
+        configFile: resolve(projectRoot, "vite.config.ts"),
         server: {
           middlewareMode: true,
           hmr: false,
@@ -505,8 +511,9 @@ export async function main(): Promise<void> {
   });
 
   const supervisor = createWorkerSupervisor(
-    cwd,
+    projectRoot,
     stateDir,
+    workspaceDir,
     sandboxRuntime,
     (entry) => {
       logControlPlane({
@@ -1054,7 +1061,7 @@ export async function main(): Promise<void> {
     ? new DeliverSupervisor({
         command: process.execPath,
         args: ["--import", "tsx", deliverConfig.deliverEntry],
-        cwd,
+        cwd: projectRoot,
         env: process.env,
         maxRestarts: 3,
         restartDelayMs: 100,
@@ -1090,7 +1097,7 @@ export async function main(): Promise<void> {
     ? new CollectorSupervisor({
         command: process.execPath,
         args: ["--import", "tsx", collectorConfig.collectorEntry],
-        cwd,
+        cwd: projectRoot,
         env: process.env,
         processRpcServer,
         maxRestarts: 3,
@@ -1225,7 +1232,8 @@ export async function main(): Promise<void> {
       recoveryStore,
       isLoadSessionEnabled: loadSessionCapability,
       requestWorker: async (method, params) => {
-        return await supervisor.request(method, params, { timeoutMs: 5000 });
+        const requestParams = method === "session/new" ? { cwd: workspaceDir, ...params } : params;
+        return await supervisor.request(method, requestParams, { timeoutMs: 5000 });
       },
     });
 
@@ -1596,7 +1604,7 @@ export async function main(): Promise<void> {
   );
   const heartbeatTimeoutMs = parsePositiveInt(process.env.ADJUTANT_HEARTBEAT_TIMEOUT_MS, 30_000);
   const heartbeatPromptPath =
-    process.env.ADJUTANT_HEARTBEAT_FILE_PATH?.trim() || join(cwd, "HEARTBEAT.md");
+    process.env.ADJUTANT_HEARTBEAT_FILE_PATH?.trim() || join(workspaceDir, "HEARTBEAT.md");
   const heartbeatRunner = createHeartbeatRunner({
     intervalMs: heartbeatIntervalMs,
     timeoutMs: heartbeatTimeoutMs,
@@ -1618,7 +1626,9 @@ export async function main(): Promise<void> {
         recoveryStore,
         isLoadSessionEnabled: loadSessionCapability,
         requestWorker: async (method, params) => {
-          return await supervisor.request(method, params, { timeoutMs: 5_000 });
+          const requestParams =
+            method === "session/new" ? { cwd: workspaceDir, ...params } : params;
+          return await supervisor.request(method, requestParams, { timeoutMs: 5_000 });
         },
       });
       const observedToolCalls = new Map<string, Record<string, unknown>>();

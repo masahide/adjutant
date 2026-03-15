@@ -29,6 +29,7 @@ export interface PiAgentSessionLike {
 
 export interface CreatePiAgentSessionOptions {
   cwd: string;
+  projectRoot?: string;
   model?: string;
   memoryScope?: MemoryScope;
   memoryWriteEnabled?: boolean;
@@ -138,6 +139,7 @@ export function buildCustomToolDefinitions(options: CreatePiAgentSessionOptions)
   }
   const providerRegistry = createAssistantProviderRegistry({
     workspaceDir: options.cwd,
+    projectRoot: options.projectRoot,
     stateDir: options.stateDir,
     includeMemoryRead: options.memoryScope === "main",
     includeMemoryWrite: options.memoryWriteEnabled === true && phaseBEnabled,

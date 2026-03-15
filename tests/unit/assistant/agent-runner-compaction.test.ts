@@ -18,7 +18,7 @@ test("runAgent performs pre-compaction memory flush and retries after compact on
 
   setAgentRunnerRuntimeForTest({
     isExternalRunnerEnabled: () => true,
-    cwd: () => workspaceDir,
+    workspaceDir: () => workspaceDir,
     createSession: async () => {
       return {
         session: {

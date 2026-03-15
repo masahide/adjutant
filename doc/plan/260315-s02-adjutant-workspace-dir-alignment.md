@@ -346,68 +346,68 @@ sequenceDiagram
 
 ### Phase 1 設計と準備
 
-- [ ] インターフェース契約を確定し、`RuntimeDirectories` と path 解決規則を plan / docs に明記する
-- [ ] `projectRoot` と `workspaceDir` の利用箇所を棚卸しし、workspace に寄せるものと projectRoot のまま維持するものを分類する
-- [ ] openclaw の `docs/reference/templates` と main session 向け context 注入契約を棚卸しし、Adjutant へ持ち込む差分を確定する
-- [ ] Mermaid 図を作成し、path 解決から assistant 実行までの伝播を可視化する
-- [ ] 既存テストのうち workspace 前提に依存する箇所を洗い出し、追加対象を確定する
+- [x] インターフェース契約を確定し、`RuntimeDirectories` と path 解決規則を plan / docs に明記する
+- [x] `projectRoot` と `workspaceDir` の利用箇所を棚卸しし、workspace に寄せるものと projectRoot のまま維持するものを分類する
+- [x] openclaw の `docs/reference/templates` と main session 向け context 注入契約を棚卸しし、Adjutant へ持ち込む差分を確定する
+- [x] Mermaid 図を作成し、path 解決から assistant 実行までの伝播を可視化する
+- [x] 既存テストのうち workspace 前提に依存する箇所を洗い出し、追加対象を確定する
 
 ### Phase 2 Workspace Path Resolver 導入
 
-- [ ] Test `ADJUTANT_WORKSPACE_DIR` の default / override / `<stateDir>/workspace` 解決を検証する失敗テストを追加する Red
-- [ ] Impl runtime path resolver を追加し、`stateDir`, `workspaceDir`, `projectRoot` を一元解決する Green
-- [ ] Refactor `src/index.ts` の直書き path 解決を resolver 経由へ置き換える
-- [ ] Integration 起動時 workspace directory 作成と fail-fast を確認する統合テストを追加する
-- [ ] Docs `README.md` と `doc/spec.md` の path 契約と起動説明を resolver 契約に合わせて更新する
+- [x] Test `ADJUTANT_WORKSPACE_DIR` の default / override / `<stateDir>/workspace` 解決を検証する失敗テストを追加する Red
+- [x] Impl runtime path resolver を追加し、`stateDir`, `workspaceDir`, `projectRoot` を一元解決する Green
+- [x] Refactor `src/index.ts` の直書き path 解決を resolver 経由へ置き換える
+- [x] Integration 起動時 workspace directory 作成と fail-fast を確認する統合テストを追加する
+- [x] Docs `README.md` と `doc/spec.md` の path 契約と起動説明を resolver 契約に合わせて更新する
 
 ### Phase 3 Template Loader と Bootstrap Seed 更新
 
-- [ ] Test template loader の既定パス、front matter 除去、欠落時エラーを検証する失敗テストを追加する Red
-- [ ] Impl `vendor/openclaw/docs/reference/templates` を読む template resolver を追加し、bootstrap seed を切り替える Green
-- [ ] Refactor `assistant/prompts` 依存を削減し、workspace bootstrap 周辺の template 読み込み責務を整理する
-- [ ] Integration brand-new workspace で openclaw 準拠 template から bootstrap file が `~/.adjutant/workspace` 側に生成されることを確認する
-- [ ] Docs bootstrap template source と初回 seed の説明を更新する
+- [x] Test template loader の既定パス、front matter 除去、欠落時エラーを検証する失敗テストを追加する Red
+- [x] Impl `vendor/openclaw/docs/reference/templates` を読む template resolver を追加し、bootstrap seed を切り替える Green
+- [x] Refactor `assistant/prompts` 依存を削減し、workspace bootstrap 周辺の template 読み込み責務を整理する
+- [x] Integration brand-new workspace で openclaw 準拠 template から bootstrap file が `~/.adjutant/workspace` 側に生成されることを確認する
+- [x] Docs bootstrap template source と初回 seed の説明を更新する
 
 ### Phase 4 Assistant Workspace 伝播と Main Context Filter
 
-- [ ] Test `agent-runner`, `ToolHub`, `memory`, `summary batch` が resolved workspaceDir を受け取り、main session 用 bootstrap files を絞る失敗テストを追加する Red
-- [ ] Impl assistant 実行系へ repo root ではなく workspaceDir を伝播し、main session の Project Context filter を導入する Green
-- [ ] Refactor `cwd` という曖昧な名称を必要に応じて `workspaceDir` / `projectRoot` へ整理する
-- [ ] Integration main session で注入ファイル集合が契約どおりであることを確認する
-- [ ] Docs bootstrap / memory / summary batch / main session context の記述を workspace 契約に合わせて更新する
+- [x] Test `agent-runner`, `ToolHub`, `memory`, `summary batch` が resolved workspaceDir を受け取り、main session 用 bootstrap files を絞る失敗テストを追加する Red
+- [x] Impl assistant 実行系へ repo root ではなく workspaceDir を伝播し、main session の Project Context filter を導入する Green
+- [x] Refactor `cwd` という曖昧な名称を必要に応じて `workspaceDir` / `projectRoot` へ整理する
+- [x] Integration main session で注入ファイル集合が契約どおりであることを確認する
+- [x] Docs bootstrap / memory / summary batch / main session context の記述を workspace 契約に合わせて更新する
 
 ### Phase 5 Sandbox と File Tool 境界更新
 
-- [ ] Test sandbox runSpec と file tool path restriction が resolved workspaceDir を使う失敗テストを追加する Red
-- [ ] Impl sandbox bind mount、ToolHub provider cwd、workspace path restriction を workspaceDir 基準へ揃える Green
-- [ ] Refactor workspace path validation helper を共通責務として整理し、重複を排除する
-- [ ] Integration sandbox 有効時に workspace 外 path が拒否され、workspace 内 path は許可されることを確認する
-- [ ] Docs sandbox workspace mount の説明と例を更新する
+- [x] Test sandbox runSpec と file tool path restriction が resolved workspaceDir を使う失敗テストを追加する Red
+- [x] Impl sandbox bind mount、ToolHub provider cwd、workspace path restriction を workspaceDir 基準へ揃える Green
+- [x] Refactor workspace path validation helper を共通責務として整理し、重複を排除する
+- [x] Integration sandbox 有効時に workspace 外 path が拒否され、workspace 内 path は許可されることを確認する
+- [x] Docs sandbox workspace mount の説明と例を更新する
 
 ### Phase 6 統合と検証
 
-- [ ] 全体テストの実行
-- [ ] エッジケース確認 `ADJUTANT_STATE_DIR` のみ override、`ADJUTANT_WORKSPACE_DIR` 明示 override、書き込み不可 workspace、template 欠落
-- [ ] ログと例外の確認 起動時 fail-fast と tool path rejection
-- [ ] ドキュメント更新 仕様 契約 図の最終同期
+- [x] 全体テストの実行
+- [x] エッジケース確認 `ADJUTANT_STATE_DIR` のみ override、`ADJUTANT_WORKSPACE_DIR` 明示 override、書き込み不可 workspace、template 欠落
+- [x] ログと例外の確認 起動時 fail-fast と tool path rejection
+- [x] ドキュメント更新 仕様 契約 図の最終同期
 
 ## 8. 完了の定義 Definition of Done
 
 ### 8.1 機能DoD Functional DoD
 
-- [ ] 受け入れ条件がすべて満たされていること
-- [ ] assistant の既定 workspace が `~/.adjutant/workspace` 相当に変更されていること
-- [ ] bootstrap template が `vendor/openclaw/docs/reference/templates` 由来で読み込まれること
-- [ ] main session で Project Context 注入ファイルが契約どおりであること
-- [ ] sandbox / ToolHub / memory / bootstrap / summary batch が同じ resolved workspaceDir を利用していること
-- [ ] 既知の制約が明文化され、repo root からのクリーンブレイクが説明されていること
+- [x] 受け入れ条件がすべて満たされていること
+- [x] assistant の既定 workspace が `~/.adjutant/workspace` 相当に変更されていること
+- [x] bootstrap template が `vendor/openclaw/docs/reference/templates` 由来で読み込まれること
+- [x] main session で Project Context 注入ファイルが契約どおりであること
+- [x] sandbox / ToolHub / memory / bootstrap / summary batch が同じ resolved workspaceDir を利用していること
+- [x] 既知の制約が明文化され、repo root からのクリーンブレイクが説明されていること
 
 ### 8.2 品質DoD Quality DoD
 
-- [ ] 全てのテストがパスしていること
-- [ ] `pnpm run typecheck` と `pnpm run format` と `pnpm run verify:config-doc-sync` が成功すること
-- [ ] 不要なデバッグコードが削除されていること
-- [ ] `README.md` と `doc/spec.md` と計画書が実装と同期していること
+- [x] 全てのテストがパスしていること
+- [x] `pnpm run typecheck` と `pnpm run format` と `pnpm run verify:config-doc-sync` が成功すること
+- [x] 不要なデバッグコードが削除されていること
+- [x] `README.md` と `doc/spec.md` と計画書が実装と同期していること
 
 ## 9. 懸念事項と未確定事項 Concerns and Questions
 

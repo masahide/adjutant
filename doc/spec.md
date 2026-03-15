@@ -367,7 +367,7 @@ vNext では notification について、collector 調整により以下の opti
 | `ADJUTANT_HEARTBEAT_ENABLED`                  | `true`                                | heartbeat periodic tick を有効化するか          |
 | `ADJUTANT_HEARTBEAT_INTERVAL_MS`              | `1800000`                             | heartbeat periodic tick 間隔（ms）              |
 | `ADJUTANT_HEARTBEAT_TIMEOUT_MS`               | `30000`                               | heartbeat run timeout（ms）                     |
-| `ADJUTANT_HEARTBEAT_FILE_PATH`                | `<cwd>/HEARTBEAT.md`                  | heartbeat prompt 読み込み先                     |
+| `ADJUTANT_HEARTBEAT_FILE_PATH`                | `<workspaceDir>/HEARTBEAT.md`         | heartbeat prompt 読み込み先                     |
 | `ADJUTANT_COMPACTION_ENABLED`                 | `true`                                | overflow 時 compaction 優先                     |
 | `ADJUTANT_MEMORY_FLUSH_ENABLED`               | `true`                                | pre-compaction flush 有効化                     |
 | `ADJUTANT_COMPACTION_RESERVE_TOKENS_FLOOR`    | `20000`                               | flush 閾値計算の reserve                        |
@@ -504,6 +504,7 @@ vNext では notification について、collector 調整により以下の opti
 ### 13.4 初回実行リチュアル（BOOTSTRAP 注入）
 
 - `origin=user` の実行前に workspace bootstrap を保証する。
+- bootstrap template source は `vendor/openclaw/docs/reference/templates` とし、template の front matter は seed 時に除去する。
 - 初期化で `AGENTS.md`, `SOUL.md`, `TOOLS.md`, `IDENTITY.md`, `USER.md`, `HEARTBEAT.md` を不足時のみ作成する。
 - brand-new workspace の場合のみ `BOOTSTRAP.md` を作成する。
 - prompt 注入条件:
@@ -512,6 +513,7 @@ vNext では notification について、collector 調整により以下の opti
   - `sessionKey=main`
   - `memoryScope=main`
 - 注入対象は bootstrap 7 ファイル + 存在時のみ `MEMORY.md` / `memory.md`。
+- `memory/YYYY-MM-DD.md` は Project Context へ自動注入しない。
 - `BOOTSTRAP.md` が missing のときは context へ含めない（削除後に自然停止）。
 - 各ファイルは既定 20000 文字で head/tail トリミング（70% / 20%）される。
 

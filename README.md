@@ -121,7 +121,7 @@ pnpm check               # format -> typecheck -> test
 | `ADJUTANT_HEARTBEAT_ENABLED`                   | `1`                                                  | heartbeat 定期実行の有効化                                                            |
 | `ADJUTANT_HEARTBEAT_INTERVAL_MS`               | `1800000`                                            | heartbeat 実行間隔（ミリ秒）                                                          |
 | `ADJUTANT_HEARTBEAT_TIMEOUT_MS`                | `30000`                                              | heartbeat run のタイムアウト（ミリ秒）                                                |
-| `ADJUTANT_HEARTBEAT_FILE_PATH`                 | `<cwd>/HEARTBEAT.md`                                 | heartbeat prompt の読み込みパス                                                       |
+| `ADJUTANT_HEARTBEAT_FILE_PATH`                 | `<workspaceDir>/HEARTBEAT.md`                        | heartbeat prompt の読み込みパス                                                       |
 | `ADJUTANT_ROUTE_LLM_ENABLED`                   | `0`                                                  | Slack通知の一次判定に OpenAI route LLM を使うかどうか                                 |
 | `ADJUTANT_ROUTE_LLM_MODEL`                     | `gpt-5-mini`                                         | route LLM に使用する OpenAI モデル名                                                  |
 | `ADJUTANT_ROUTE_LLM_TIMEOUT_MS`                | `1000`                                               | route LLM 判定のタイムアウト（ミリ秒）                                                |
@@ -166,6 +166,9 @@ pnpm start
 
 ## AI セッションコンテキスト方針
 
+- assistant workspace の既定値は `~/.adjutant/workspace` です。`ADJUTANT_WORKSPACE_DIR` 未指定時は `<stateDir>/workspace` に解決されます
+- bootstrap seed は `vendor/openclaw/docs/reference/templates` の `AGENTS.md`, `SOUL.md`, `TOOLS.md`, `IDENTITY.md`, `USER.md`, `HEARTBEAT.md`, `BOOTSTRAP.md` を使います
+- main session の Project Context には `AGENTS.md`, `SOUL.md`, `TOOLS.md`, `IDENTITY.md`, `USER.md`, `HEARTBEAT.md`, `BOOTSTRAP.md`, `MEMORY.md` を注入し、`memory/YYYY-MM-DD.md` は自動注入しません
 - 会話履歴の復元は `SessionManager.buildSessionContext()` に委譲します。
 - `ChatHandler` は transcript/memory を再注入せず、`system event`（ある場合）+ `## User Message` のみを送信します。
 - `/api/chat/history` は UI 表示用途として transcript-reader の読み出し結果を返します。

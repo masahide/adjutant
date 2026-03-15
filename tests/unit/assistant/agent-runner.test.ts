@@ -37,7 +37,7 @@ test("runAgent uses external runner path when enabled (non-echo)", async () => {
         },
       };
     },
-    cwd: () => process.cwd(),
+    workspaceDir: () => process.cwd(),
   });
 
   try {
@@ -122,7 +122,7 @@ test("runAgent reuses agent session when sessionId is provided", async () => {
       };
       return { session };
     },
-    cwd: () => process.cwd(),
+    workspaceDir: () => process.cwd(),
   });
 
   try {

@@ -245,6 +245,7 @@ async function startControlPlane(options?: { env?: Record<string, string | undef
   const childEnv: NodeJS.ProcessEnv = {
     ...process.env,
     ...(options?.env ?? {}),
+    OPENAI_API_KEY: options?.env?.OPENAI_API_KEY ?? "",
     ADJUTANT_CONTROL_PLANE_HOST: "127.0.0.1",
     ADJUTANT_CONTROL_PLANE_PORT: String(port),
     ADJUTANT_UI_VITE_MIDDLEWARE: "0",

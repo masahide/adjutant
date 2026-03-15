@@ -12,10 +12,12 @@ import {
 import { SessionCompactionStore, type SessionCompactionEntry } from "./session-compaction-store.js";
 import {
   ensureWorkspaceBootstrapFiles,
+  filterBootstrapFilesForMainSession,
   loadWorkspaceBootstrapFiles,
   type WorkspaceBootstrapFile,
 } from "./workspace-bootstrap.js";
 import type { PiAgentSessionLike } from "./agent-session-factory.js";
+import { resolveWorkspaceDir } from "../runtime/runtime-directories.js";
 
 export type LegacyToolCallEvent =
   | {
@@ -96,7 +98,7 @@ type AgentRunnerRuntime = {
     stateDir?: string;
     entry: Partial<SessionCompactionEntry>;
   }) => Promise<void>;
-  cwd: () => string;
+  workspaceDir: () => string;
 };
 
 const compactionStoreCache = new Map<string, SessionCompactionStore>();
@@ -159,7 +161,7 @@ const defaultRuntime: AgentRunnerRuntime = {
     const store = await resolveCompactionStore(stateDir);
     await store.upsert(sessionKey, entry);
   },
-  cwd: () => process.cwd(),
+  workspaceDir: () => resolveWorkspaceDir({ env: process.env }),
 };
 
 let runtimeOverride: Partial<AgentRunnerRuntime> | null = null;
@@ -175,7 +177,7 @@ function getRuntime(): AgentRunnerRuntime {
 async function resolveAgentSession(params: {
   runtime: AgentRunnerRuntime;
   options: AgentRunOptions;
-  cwd: string;
+  workspaceDir: string;
   memoryScope: "main" | "spoke";
   stateDir: string | undefined;
 }): Promise<{ session: PiAgentSessionLike; reusable: boolean }> {
@@ -188,7 +190,7 @@ async function resolveAgentSession(params: {
   }
 
   const created = await params.runtime.createSession({
-    cwd: params.cwd,
+    cwd: params.workspaceDir,
     model: process.env.ADJUTANT_MODEL,
     memoryScope: params.memoryScope,
     memoryWriteEnabled: params.options.memoryWriteEnabled,
@@ -477,14 +479,16 @@ export async function runAgent(options: AgentRunOptions): Promise<AgentRunResult
     };
   }
 
-  const cwd = runtime.cwd();
+  const workspaceDir = runtime.workspaceDir();
   const memoryScope = resolveMemoryScope(options);
   const stateDir = process.env.ADJUTANT_STATE_DIR;
 
   let bootstrapFiles: WorkspaceBootstrapFile[] | undefined;
   if (shouldInjectBootstrapContext(options, memoryScope)) {
-    await runtime.ensureWorkspaceBootstrapFiles(cwd);
-    bootstrapFiles = await runtime.loadWorkspaceBootstrapFiles(cwd);
+    await runtime.ensureWorkspaceBootstrapFiles(workspaceDir);
+    bootstrapFiles = filterBootstrapFilesForMainSession(
+      await runtime.loadWorkspaceBootstrapFiles(workspaceDir)
+    );
   }
 
   const preparedPrompt = maybeBuildPromptWithBootstrap(options.prompt, bootstrapFiles);
@@ -492,7 +496,7 @@ export async function runAgent(options: AgentRunOptions): Promise<AgentRunResult
   const { session, reusable } = await resolveAgentSession({
     runtime,
     options,
-    cwd,
+    workspaceDir,
     memoryScope,
     stateDir,
   });
@@ -588,7 +592,7 @@ export async function runAgent(options: AgentRunOptions): Promise<AgentRunResult
 
   try {
     compactionTracker.setContextUsage(session.getContextUsage?.());
-    const workspaceWritable = await runtime.isWorkspaceWritable(cwd);
+    const workspaceWritable = await runtime.isWorkspaceWritable(workspaceDir);
     const flushDecision = shouldRunPreCompactionMemoryFlush({
       settings: compactionSettings.memoryFlush,
       metadata: compactionMetadata,

@@ -17,6 +17,7 @@ export interface SandboxRuntime {
 }
 
 export async function initializeSandboxRuntime(params: {
+  projectRoot: string;
   workspaceDir: string;
   env?: NodeJS.ProcessEnv;
   runner?: DockerCommandRunner;
@@ -44,7 +45,7 @@ export async function initializeSandboxRuntime(params: {
   await ensureDockerImage(config.docker.image, {
     runner,
     autoBuild: config.docker.autoBuildImage,
-    buildContextDir: params.workspaceDir,
+    buildContextDir: params.projectRoot,
     dockerfilePath: "Dockerfile.sandbox",
   });
 

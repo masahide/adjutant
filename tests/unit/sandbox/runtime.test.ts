@@ -18,6 +18,7 @@ test("initializeSandboxRuntime keeps sandbox disabled when mode=off", async () =
   });
 
   const runtime = await initializeSandboxRuntime({
+    projectRoot: process.cwd(),
     workspaceDir: process.cwd(),
     env: {
       ...process.env,
@@ -43,6 +44,7 @@ test("initializeSandboxRuntime fails closed when docker is unavailable under def
   await assert.rejects(
     async () =>
       await initializeSandboxRuntime({
+        projectRoot: process.cwd(),
         workspaceDir: process.cwd(),
         env: {},
         runner,
@@ -65,6 +67,7 @@ test("initializeSandboxRuntime prepares per-tool runSpec without creating contai
   });
 
   const runtime = await initializeSandboxRuntime({
+    projectRoot: process.cwd(),
     workspaceDir: process.cwd(),
     env: {
       ...process.env,
