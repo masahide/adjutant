@@ -28,6 +28,22 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
+async function executeToolHub(
+  tools: ReturnType<typeof buildCustomToolDefinitions>,
+  params?: Record<string, unknown>
+): Promise<Record<string, unknown>> {
+  const tool = tools.find((entry) => entry.name === "tool_hub");
+  assert.ok(tool);
+  const result = (await tool.execute(
+    "tool_hub_call",
+    params,
+    undefined,
+    undefined,
+    undefined as never
+  )) as ToolResult;
+  return asRecord(result.details);
+}
+
 test("Phase B integration: memory/sandbox tool wiring and audit summary", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "adjutant-phase-b-int-"));
   t.after(async () => {
@@ -42,6 +58,8 @@ test("Phase B integration: memory/sandbox tool wiring and audit summary", async 
       image: "adjutant-sandbox:test",
       hostWorkspaceDir: root,
       containerWorkdir: "/workspace",
+      containerHome: "/home/agent",
+      user: "1000:1000",
       envAllowlist: ["LANG"],
     },
   });
@@ -54,20 +72,26 @@ test("Phase B integration: memory/sandbox tool wiring and audit summary", async 
     phaseBRolloutScope: "all",
   });
   assert.equal(
-    mainTools.some((tool) => tool.name === "memory_search"),
-    true
-  );
-  assert.equal(
-    mainTools.some((tool) => tool.name === "memory_get"),
-    true
-  );
-  assert.equal(
-    mainTools.some((tool) => tool.name === "memory_write"),
+    mainTools.some((tool) => tool.name === "tool_hub"),
     true
   );
   assert.equal(
     mainTools.some((tool) => tool.name === "bash"),
     false
+  );
+  const mainProviderHelp = await executeToolHub(mainTools, { provider: "memory" });
+  const mainActions = asRecord(mainProviderHelp.data).actions as Array<{ name?: string }>;
+  assert.equal(
+    mainActions.some((entry) => entry.name === "search"),
+    true
+  );
+  assert.equal(
+    mainActions.some((entry) => entry.name === "get"),
+    true
+  );
+  assert.equal(
+    mainActions.some((entry) => entry.name === "write"),
+    true
   );
 
   const spokeTools = buildCustomToolDefinitions({
@@ -79,6 +103,12 @@ test("Phase B integration: memory/sandbox tool wiring and audit summary", async 
   });
   assert.equal(
     spokeTools.some((tool) => tool.name === "bash"),
+    true
+  );
+  assert.equal(
+    ["read", "edit", "write", "grep", "find", "ls"].every((name) =>
+      spokeTools.some((tool) => tool.name === name)
+    ),
     true
   );
 
@@ -137,28 +167,21 @@ test("Phase B integration: memory_get rejects traversal and symlink paths", asyn
     memoryScope: "main",
     stateDir: join(root, "state"),
   });
-  const memoryGet = tools.find((tool) => tool.name === "memory_get");
-  assert.ok(memoryGet);
-
-  const traversal = (await memoryGet.execute(
-    "tool_get_1",
-    { path: "../outside-secret.md" },
-    undefined,
-    undefined,
-    undefined as never
-  )) as ToolResult;
-  assert.equal(asRecord(traversal.details).disabled, true);
+  const traversal = await executeToolHub(tools, {
+    provider: "memory",
+    action: "get",
+    args: { path: "../outside-secret.md" },
+  });
+  assert.equal(asRecord(traversal.data).disabled, true);
 
   try {
     await symlink(outsidePath, join(memoryDir, "linked.md"));
-    const bySymlink = (await memoryGet.execute(
-      "tool_get_2",
-      { path: "memory/linked.md" },
-      undefined,
-      undefined,
-      undefined as never
-    )) as ToolResult;
-    assert.equal(asRecord(bySymlink.details).disabled, true);
+    const bySymlink = await executeToolHub(tools, {
+      provider: "memory",
+      action: "get",
+      args: { path: "memory/linked.md" },
+    });
+    assert.equal(asRecord(bySymlink.data).disabled, true);
   } catch {
     // symlink unsupported in this environment
   }
@@ -178,21 +201,15 @@ test("Phase B integration: memory_write -> summary batch -> memory_search", asyn
     stateDir: join(root, "state"),
     phaseBRolloutScope: "all",
   });
-  const memoryWrite = tools.find((tool) => tool.name === "memory_write");
-  const memorySearch = tools.find((tool) => tool.name === "memory_search");
-  assert.ok(memoryWrite);
-  assert.ok(memorySearch);
 
-  await memoryWrite.execute(
-    "tool_write_1",
-    {
+  await executeToolHub(tools, {
+    provider: "memory",
+    action: "write",
+    args: {
       content: "Long term note for phase B integration",
       scope: "long-term",
     },
-    undefined,
-    undefined,
-    undefined as never
-  );
+  });
 
   const transcriptsDir = join(root, "transcripts");
   const sessionDir = join(transcriptsDir, "main");
@@ -223,18 +240,16 @@ test("Phase B integration: memory_write -> summary batch -> memory_search", asyn
   const batch = await service.runOnce();
   assert.equal(batch.processedSessions, 1);
 
-  const search = (await memorySearch.execute(
-    "tool_search_1",
-    {
+  const search = await executeToolHub(tools, {
+    provider: "memory",
+    action: "search",
+    args: {
       query: "phase b summary",
       maxResults: 5,
     },
-    undefined,
-    undefined,
-    undefined as never
-  )) as { details: { results?: Array<{ path: string }> } };
+  });
 
-  const results = search.details.results ?? [];
+  const results = (asRecord(search.data).results ?? []) as Array<{ path: string }>;
   assert.equal(results.length > 0, true);
   assert.equal(
     results.some(

@@ -423,6 +423,7 @@ export async function main(): Promise<void> {
     toolName: string;
     status: string;
     argsText?: string;
+    rawInput?: unknown;
     result?: string;
   };
   const runToolCallAccum = new Map<string, Map<string, ToolCallAccumEntry>>();
@@ -609,6 +610,7 @@ export async function main(): Promise<void> {
             toolName,
             status: "started",
             argsText: rawInput !== undefined ? safeStringify(rawInput) : undefined,
+            rawInput,
           });
         }
         agentAuditLog.appendToolStart({
@@ -661,6 +663,7 @@ export async function main(): Promise<void> {
               toolCallId,
               toolName: updateToolName ?? "tool",
               status: typeof status === "string" ? (status as string) : "started",
+              rawInput: undefined,
               result: rawOutput !== undefined ? safeStringify(rawOutput) : undefined,
             });
           }

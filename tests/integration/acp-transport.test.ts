@@ -122,7 +122,11 @@ async function createSession(client: WorkerClient, id: number): Promise<string> 
 }
 
 test("ACP stdio transport integrates initialize/session-new/session-prompt", async (t) => {
-  const client = startWorker(t);
+  const client = startWorker(t, {
+    ADJUTANT_TEST_MOCK_RUNNER: "1",
+    ADJUTANT_TEST_MOCK_TEXT: "hello",
+    ADJUTANT_TEST_MOCK_DELTA: "hello",
+  });
   await initialize(client);
   const sessionId = await createSession(client, 2);
 
@@ -135,7 +139,8 @@ test("ACP stdio transport integrates initialize/session-new/session-prompt", asy
 
   const update = await waitForCondition(
     (entry) => entry.method === "session/update",
-    client.envelopes
+    client.envelopes,
+    5000
   );
   assert.equal(update.params?.sessionId, sessionId);
   const updatePayload = update.params?.update as Record<string, unknown> | undefined;
@@ -143,7 +148,8 @@ test("ACP stdio transport integrates initialize/session-new/session-prompt", asy
 
   const promptResult = await waitForCondition(
     (entry) => entry.id === 3 && entry.result !== undefined,
-    client.envelopes
+    client.envelopes,
+    5000
   );
   assert.equal(promptResult.result?.stopReason, "end_turn");
   assert.equal(promptResult.result?.text, "hello");

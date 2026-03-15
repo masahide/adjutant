@@ -112,6 +112,13 @@ type SseConnection = {
   close: () => void;
 };
 
+function nonTerminalToolEvents<T extends { toolCallId?: string }>(events: T[]): T[] {
+  return events.filter((event) => {
+    const toolCallId = event.toolCallId;
+    return typeof toolCallId !== "string" || !toolCallId.startsWith("terminal:");
+  });
+}
+
 function waitForCondition<T>(
   values: T[],
   predicate: (value: T) => boolean,
@@ -522,7 +529,16 @@ test(
   "POST /api/commands emits accepted -> update -> completed over SSE",
   DEFAULT_TEST_TIMEOUT_SECONDS,
   async (t) => {
-    const runtime = await getSharedDefaultControlPlane();
+    const runtime = await startControlPlane({
+      env: {
+        ADJUTANT_TEST_MOCK_RUNNER: "1",
+        ADJUTANT_TEST_MOCK_TEXT: "hello-sse",
+        ADJUTANT_TEST_MOCK_DELTA: "hello-sse",
+      },
+    });
+    t.after(async () => {
+      await stopControlPlane(runtime.child);
+    });
     const sse = await openSse(runtime.baseUrl);
     t.after(() => {
       sse.close();
@@ -546,7 +562,8 @@ test(
         event.event === "run/update" &&
         event.data.runId === accepted.runId &&
         typeof event.data.update === "object" &&
-        event.data.update !== null
+        event.data.update !== null &&
+        (event.data.update as Record<string, unknown>).sessionUpdate === "agent_message_chunk"
     );
     const updatePayload = updateEvent.data.update as Record<string, unknown>;
     assert.equal(updatePayload.sessionUpdate, "agent_message_chunk");
@@ -640,7 +657,7 @@ test(
 );
 
 test(
-  "notification -> decision -> activity-feed reflects play_slack_search failure as needs_review",
+  "notification -> decision -> activity-feed reflects tool_hub slack/search failure as needs_review",
   DEFAULT_TEST_TIMEOUT_SECONDS,
   async (t) => {
     const stateDir = await mkdtemp(join(tmpdir(), "adjutant-notification-activity-feed-"));
@@ -658,10 +675,12 @@ test(
         ADJUTANT_TEST_MOCK_RUNNER: "1",
         ADJUTANT_TEST_MOCK_TEXT: '{"action":"no_action","reason":"informational"}',
         ADJUTANT_TEST_MOCK_TOOL_CALLS: "1",
-        ADJUTANT_TEST_MOCK_TOOL_NAME: "play_slack_search",
+        ADJUTANT_TEST_MOCK_TOOL_NAME: "tool_hub",
         ADJUTANT_TEST_MOCK_TOOL_STATUS: "failed",
         ADJUTANT_TEST_MOCK_TOOL_OUTPUT: "failed to derive permalink for mode=thread",
         ADJUTANT_TEST_MOCK_TOOL_ERROR: "failed to derive permalink for mode=thread",
+        ADJUTANT_TEST_MOCK_TOOL_INPUT:
+          '{"provider":"slack","action":"search","args":{"mode":"thread","channelId":"C1","threadTs":"1773.0"}}',
       },
     });
     t.after(async () => {
@@ -702,7 +721,7 @@ test(
     assert.equal(feed.items[0]?.messageText, "<@UTEST0001> test");
     assert.equal(
       feed.items[0]?.summary,
-      "play_slack_search failed: failed to derive permalink for mode=thread"
+      "tool_hub slack/search failed: failed to derive permalink for mode=thread"
     );
   }
 );
@@ -712,9 +731,6 @@ test(
   DEFAULT_TEST_TIMEOUT_SECONDS,
   async (t) => {
     const stateDir = await mkdtemp(join(tmpdir(), "adjutant-notification-draft-reply-"));
-    t.after(async () => {
-      await rm(stateDir, { recursive: true, force: true });
-    });
 
     const runtime = await startControlPlane({
       env: {
@@ -730,6 +746,7 @@ test(
     });
     t.after(async () => {
       await stopControlPlane(runtime.child);
+      await rm(stateDir, { recursive: true, force: true });
     });
 
     const sse = await openSse(runtime.baseUrl);
@@ -1102,8 +1119,16 @@ test(
 test(
   "POST /api/commands dedupes same idempotencyKey and rejects conflicting payload",
   DEFAULT_TEST_TIMEOUT_SECONDS,
-  async () => {
-    const runtime = await getSharedDefaultControlPlane();
+  async (t) => {
+    const runtime = await startControlPlane({
+      env: {
+        ADJUTANT_TEST_MOCK_RUNNER: "1",
+        ADJUTANT_TEST_MOCK_TEXT: "idempotent-hello",
+      },
+    });
+    t.after(async () => {
+      await stopControlPlane(runtime.child);
+    });
 
     const firstRes = await fetch(`${runtime.baseUrl}/api/commands`, {
       method: "POST",
@@ -1230,8 +1255,16 @@ test(
 test(
   "POST /api/chat/messages validates request and returns accepted subset",
   DEFAULT_TEST_TIMEOUT_SECONDS,
-  async () => {
-    const runtime = await getSharedDefaultControlPlane();
+  async (t) => {
+    const runtime = await startControlPlane({
+      env: {
+        ADJUTANT_TEST_MOCK_RUNNER: "1",
+        ADJUTANT_TEST_MOCK_TEXT: "hello-chat",
+      },
+    });
+    t.after(async () => {
+      await stopControlPlane(runtime.child);
+    });
 
     const invalidRes = await fetch(`${runtime.baseUrl}/api/chat/messages`, {
       method: "POST",
@@ -1348,8 +1381,16 @@ test(
 test(
   "POST /api/chat/messages supports idempotency dedupe and conflict",
   DEFAULT_TEST_TIMEOUT_SECONDS,
-  async () => {
-    const runtime = await getSharedDefaultControlPlane();
+  async (t) => {
+    const runtime = await startControlPlane({
+      env: {
+        ADJUTANT_TEST_MOCK_RUNNER: "1",
+        ADJUTANT_TEST_MOCK_TEXT: "idempotent-chat",
+      },
+    });
+    t.after(async () => {
+      await stopControlPlane(runtime.child);
+    });
 
     const firstRes = await fetch(`${runtime.baseUrl}/api/chat/messages`, {
       method: "POST",
@@ -1868,7 +1909,18 @@ test(
   "GET /api/threads/:threadId/snapshot returns run/tool history scoped by thread",
   DEFAULT_TEST_TIMEOUT_SECONDS,
   async (t) => {
-    const runtime = await getSharedFakeToolControlPlane();
+    const runtime = await startControlPlane({
+      env: {
+        ADJUTANT_TEST_MOCK_RUNNER: "1",
+        ADJUTANT_TEST_MOCK_TOOL_CALLS: "1",
+        ADJUTANT_TEST_MOCK_TOOL_NAME: "fake_tool",
+        ADJUTANT_TEST_MOCK_TOOL_OUTPUT: '{"ok":true}',
+        ADJUTANT_TEST_MOCK_TEXT: "main-message",
+      },
+    });
+    t.after(async () => {
+      await stopControlPlane(runtime.child);
+    });
 
     const createRes = await fetch(`${runtime.baseUrl}/api/threads`, {
       method: "POST",
@@ -1909,12 +1961,7 @@ test(
     t.after(() => {
       mainStream.close();
     });
-    await mainStream.waitFor(
-      (event) =>
-        event.event === "chat" &&
-        event.data.runId === mainAccepted.runId &&
-        event.data.state === "final"
-    );
+    await waitForRunCompleted(runtime.baseUrl, mainAccepted.runId, 12_000);
 
     const scopedStream = await openSsePath(
       runtime.baseUrl,
@@ -1923,12 +1970,7 @@ test(
     t.after(() => {
       scopedStream.close();
     });
-    await scopedStream.waitFor(
-      (event) =>
-        event.event === "chat" &&
-        event.data.runId === scopedAccepted.runId &&
-        event.data.state === "final"
-    );
+    await waitForRunCompleted(runtime.baseUrl, scopedAccepted.runId, 12_000);
 
     const scopedSnapshotRes = await fetch(
       `${runtime.baseUrl}/api/threads/${encodeURIComponent(createdThread.threadId)}/snapshot`
@@ -1964,8 +2006,15 @@ test(
 test(
   "POST /api/chat/abort returns 404 for unknown active run",
   DEFAULT_TEST_TIMEOUT_SECONDS,
-  async () => {
-    const runtime = await getSharedDefaultControlPlane();
+  async (t) => {
+    const runtime = await startControlPlane({
+      env: {
+        ADJUTANT_TEST_MOCK_RUNNER: "1",
+      },
+    });
+    t.after(async () => {
+      await stopControlPlane(runtime.child);
+    });
     const res = await fetch(`${runtime.baseUrl}/api/chat/abort`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -2060,7 +2109,18 @@ test(
   "tool_call updates are reflected in SSE and snapshot history",
   DEFAULT_TEST_TIMEOUT_SECONDS,
   async (t) => {
-    const runtime = await getSharedFakeToolControlPlane();
+    const runtime = await startControlPlane({
+      env: {
+        ADJUTANT_TEST_MOCK_RUNNER: "1",
+        ADJUTANT_TEST_MOCK_TOOL_CALLS: "1",
+        ADJUTANT_TEST_MOCK_TOOL_NAME: "fake_tool",
+        ADJUTANT_TEST_MOCK_TOOL_OUTPUT: '{"ok":true}',
+        ADJUTANT_TEST_MOCK_TEXT: "hello-tool-history",
+      },
+    });
+    t.after(async () => {
+      await stopControlPlane(runtime.child);
+    });
 
     const sse = await openSse(runtime.baseUrl);
     t.after(() => {
@@ -2089,10 +2149,11 @@ test(
         event.data.runId === accepted.runId &&
         typeof event.data.update === "object" &&
         event.data.update !== null &&
-        (event.data.update as Record<string, unknown>).sessionUpdate === "tool_call"
+        (event.data.update as Record<string, unknown>).sessionUpdate === "tool_call",
+      10_000
     );
     const toolStartPayload = toolStart.data.update as Record<string, unknown>;
-    assert.equal(toolStartPayload.toolCallId, "fake_call_1");
+    assert.equal(toolStartPayload.toolCallId, "mock_tool_call_1");
 
     await sse.waitFor(
       (event) =>
@@ -2101,15 +2162,17 @@ test(
         typeof event.data.update === "object" &&
         event.data.update !== null &&
         (event.data.update as Record<string, unknown>).sessionUpdate === "tool_call_update" &&
-        (event.data.update as Record<string, unknown>).toolCallId === "fake_call_1"
+        (event.data.update as Record<string, unknown>).toolCallId === "mock_tool_call_1",
+      10_000
     );
 
     const chatToolStarted = (await chatSse.waitFor(
       (event) =>
         event.event === "chat" &&
         (event.data as ChatStreamEvent).runId === accepted.runId &&
-        (event.data as ChatStreamEvent).toolCallId === "fake_call_1" &&
-        (event.data as ChatStreamEvent).toolStatus === "started"
+        (event.data as ChatStreamEvent).toolCallId === "mock_tool_call_1" &&
+        (event.data as ChatStreamEvent).toolStatus === "started",
+      10_000
     )) as { event: string; data: ChatStreamEvent };
     assert.deepEqual(chatToolStarted.data.toolInput, { prompt: "hello-tool-history" });
 
@@ -2117,21 +2180,20 @@ test(
       (event) =>
         event.event === "chat" &&
         (event.data as ChatStreamEvent).runId === accepted.runId &&
-        (event.data as ChatStreamEvent).toolCallId === "fake_call_1" &&
-        (event.data as ChatStreamEvent).toolStatus === "completed"
+        (event.data as ChatStreamEvent).toolCallId === "mock_tool_call_1" &&
+        (event.data as ChatStreamEvent).toolStatus === "completed",
+      10_000
     )) as { event: string; data: ChatStreamEvent };
     assert.deepEqual(chatToolCompleted.data.toolOutput, { ok: true });
 
-    await sse.waitFor(
-      (event) => event.event === "run/completed" && event.data.runId === accepted.runId
-    );
+    await waitForRunCompleted(runtime.baseUrl, accepted.runId, 12_000);
 
     const snapshotRes = await fetch(`${runtime.baseUrl}/api/snapshot`);
     assert.equal(snapshotRes.status, 200);
     const snapshot = (await snapshotRes.json()) as SnapshotResponse;
-    const history = snapshot.toolEventsByRun[accepted.runId] ?? [];
+    const history = nonTerminalToolEvents(snapshot.toolEventsByRun[accepted.runId] ?? []);
     assert.equal(history.length >= 1, true);
-    assert.equal(history[0]?.toolCallId, "fake_call_1");
+    assert.equal(history[0]?.toolCallId, "mock_tool_call_1");
     assert.equal(history[0]?.status, "completed");
     assert.deepEqual(history[0]?.rawInput, { prompt: "hello-tool-history" });
     assert.deepEqual(history[0]?.rawOutput, { ok: true });
@@ -2140,9 +2202,11 @@ test(
     const snapshotResReload = await fetch(`${runtime.baseUrl}/api/snapshot`);
     assert.equal(snapshotResReload.status, 200);
     const snapshotReload = (await snapshotResReload.json()) as SnapshotResponse;
-    const historyReload = snapshotReload.toolEventsByRun[accepted.runId] ?? [];
+    const historyReload = nonTerminalToolEvents(
+      snapshotReload.toolEventsByRun[accepted.runId] ?? []
+    );
     assert.equal(historyReload.length, history.length);
-    assert.equal(historyReload[0]?.toolCallId, "fake_call_1");
+    assert.equal(historyReload[0]?.toolCallId, "mock_tool_call_1");
   }
 );
 
@@ -2208,7 +2272,11 @@ test(
     const env = {
       ADJUTANT_STATE_DIR: stateDir,
       ACP_ENABLE_LOAD_SESSION: "1",
-      ADJUTANT_TEST_FAKE_TOOL_CALLS: "1",
+      ADJUTANT_TEST_MOCK_RUNNER: "1",
+      ADJUTANT_TEST_MOCK_TOOL_CALLS: "1",
+      ADJUTANT_TEST_MOCK_TOOL_NAME: "fake_tool",
+      ADJUTANT_TEST_MOCK_TOOL_OUTPUT: '{"ok":true}',
+      ADJUTANT_TEST_MOCK_TEXT: "session-load-text",
     };
 
     const runtime1 = await startControlPlane({ env });
@@ -2247,9 +2315,7 @@ test(
     assert.equal(accepted2.sessionRecoveryMode, "session_load");
     assert.equal(accepted2.sessionRecovered, true);
 
-    await sse2.waitFor(
-      (event) => event.event === "run/completed" && event.data.runId === accepted2.runId
-    );
+    await waitForRunCompleted(runtime2.baseUrl, accepted2.runId, 12_000);
 
     const run1 = parseRunId(accepted1.runId);
     const run2 = parseRunId(accepted2.runId);
@@ -2259,9 +2325,9 @@ test(
     const snapshotRes = await fetch(`${runtime2.baseUrl}/api/snapshot`);
     assert.equal(snapshotRes.status, 200);
     const snapshot = (await snapshotRes.json()) as SnapshotResponse;
-    const history = snapshot.toolEventsByRun[accepted2.runId] ?? [];
+    const history = nonTerminalToolEvents(snapshot.toolEventsByRun[accepted2.runId] ?? []);
     assert.equal(history.length >= 1, true);
-    assert.equal(history[0]?.toolCallId, "fake_call_1");
+    assert.equal(history[0]?.toolCallId, "mock_tool_call_1");
   }
 );
 
@@ -2328,7 +2394,11 @@ test(
     const runtime = await startControlPlane({
       env: {
         ADJUTANT_STATE_DIR: stateDir,
-        ADJUTANT_TEST_FAKE_TOOL_CALLS: "1",
+        ADJUTANT_TEST_MOCK_RUNNER: "1",
+        ADJUTANT_TEST_MOCK_TOOL_CALLS: "1",
+        ADJUTANT_TEST_MOCK_TOOL_NAME: "fake_tool",
+        ADJUTANT_TEST_MOCK_TOOL_OUTPUT: '{"ok":true}',
+        ADJUTANT_TEST_MOCK_TEXT: "hello-audit",
         ADJUTANT_AGENT_AUDIT_LOG_ENABLED: "1",
         ADJUTANT_MARKDOWN_SUMMARY_BATCH_ENABLED: "1",
         ADJUTANT_PHASE_B_ROLLOUT_SCOPE: "main",
@@ -2351,9 +2421,7 @@ test(
     assert.equal(commandRes.status, 202);
     const accepted = (await commandRes.json()) as CommandAccepted;
 
-    await sse.waitFor(
-      (event) => event.event === "run/completed" && event.data.runId === accepted.runId
-    );
+    await waitForRunCompleted(runtime.baseUrl, accepted.runId, 12_000);
 
     let audit: RunAuditResponse | undefined;
     const startedAt = Date.now();
@@ -2380,8 +2448,9 @@ test(
     assert.equal(audit.runId, accepted.runId);
     assert.equal(audit.runEnded, true);
     assert.equal(audit.runStatus, "ok");
-    assert.equal(audit.tools.length >= 1, true);
-    assert.equal(audit.tools[0]?.toolCallId, "fake_call_1");
+    const nonTerminalTools = nonTerminalToolEvents(audit.tools);
+    assert.equal(nonTerminalTools.length >= 1, true);
+    assert.equal(nonTerminalTools[0]?.toolCallId, "mock_tool_call_1");
     const summaryBatches = audit.summaryBatches ?? [];
     if (summaryBatches.length > 0) {
       assert.equal(
@@ -2402,7 +2471,16 @@ test(
   "existing API endpoints remain compatible after tool I/O extension",
   DEFAULT_TEST_TIMEOUT_SECONDS,
   async (t) => {
-    const runtime = await getSharedDefaultControlPlane();
+    const runtime = await startControlPlane({
+      env: {
+        ADJUTANT_TEST_MOCK_RUNNER: "1",
+        ADJUTANT_TEST_MOCK_TEXT: "compat-chat",
+        ADJUTANT_TEST_MOCK_DELTA: "compat-chat",
+      },
+    });
+    t.after(async () => {
+      await stopControlPlane(runtime.child);
+    });
     const sse = await openSse(runtime.baseUrl);
     t.after(() => {
       sse.close();

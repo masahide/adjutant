@@ -44,6 +44,65 @@ function readNumberParam(params: Record<string, unknown>, key: string): number |
   return undefined;
 }
 
+export function validateMemorySearchRequest(rawParams: unknown): {
+  query: string;
+  maxResults?: number;
+  minScore?: number;
+} {
+  const params = (rawParams ?? {}) as Record<string, unknown>;
+  return {
+    query: readStringParam(params, "query", true) ?? "",
+    maxResults: readNumberParam(params, "maxResults"),
+    minScore: readNumberParam(params, "minScore"),
+  };
+}
+
+export async function executeMemorySearchRequest(
+  rawParams: unknown,
+  workspaceDir: string,
+  config: MemorySearchRuntimeConfig
+): Promise<unknown> {
+  const params = validateMemorySearchRequest(rawParams);
+  const manager = getOrCreateMemorySqliteIndex({
+    workspaceDir,
+    config,
+  });
+  return await manager.search(params.query, {
+    maxResults: params.maxResults,
+    minScore: params.minScore,
+  });
+}
+
+export function validateMemoryGetRequest(rawParams: unknown): {
+  path: string;
+  from?: number;
+  lines?: number;
+} {
+  const params = (rawParams ?? {}) as Record<string, unknown>;
+  return {
+    path: readStringParam(params, "path", true) ?? "",
+    from: readNumberParam(params, "from"),
+    lines: readNumberParam(params, "lines"),
+  };
+}
+
+export async function executeMemoryGetRequest(
+  rawParams: unknown,
+  workspaceDir: string,
+  config: MemorySearchRuntimeConfig
+): Promise<unknown> {
+  const params = validateMemoryGetRequest(rawParams);
+  const manager = getOrCreateMemorySqliteIndex({
+    workspaceDir,
+    config,
+  });
+  return await manager.readFile({
+    relPath: params.path,
+    from: params.from !== undefined ? Math.floor(params.from) : undefined,
+    lines: params.lines !== undefined ? Math.floor(params.lines) : undefined,
+  });
+}
+
 export function createMemoryToolDefinitions(params: {
   workspaceDir: string;
   config: MemorySearchRuntimeConfig;
@@ -69,15 +128,11 @@ export function createMemoryToolDefinitions(params: {
     } as never,
     execute: async (_toolCallId, rawParams) => {
       try {
-        const paramsRecord = (rawParams ?? {}) as Record<string, unknown>;
-        const query = readStringParam(paramsRecord, "query", true) ?? "";
-        const maxResults = readNumberParam(paramsRecord, "maxResults");
-        const minScore = readNumberParam(paramsRecord, "minScore");
-        const manager = getOrCreateMemorySqliteIndex({
-          workspaceDir: params.workspaceDir,
-          config: params.config,
-        });
-        const result = await manager.search(query, { maxResults, minScore });
+        const result = await executeMemorySearchRequest(
+          rawParams,
+          params.workspaceDir,
+          params.config
+        );
         return jsonToolResult(result);
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
@@ -107,20 +162,10 @@ export function createMemoryToolDefinitions(params: {
       additionalProperties: false,
     } as never,
     execute: async (_toolCallId, rawParams) => {
-      const paramsRecord = (rawParams ?? {}) as Record<string, unknown>;
-      const path = readStringParam(paramsRecord, "path", true) ?? "";
+      const path =
+        readStringParam((rawParams ?? {}) as Record<string, unknown>, "path", true) ?? "";
       try {
-        const manager = getOrCreateMemorySqliteIndex({
-          workspaceDir: params.workspaceDir,
-          config: params.config,
-        });
-        const from = readNumberParam(paramsRecord, "from");
-        const lines = readNumberParam(paramsRecord, "lines");
-        const result = await manager.readFile({
-          relPath: path,
-          from: from !== undefined ? Math.floor(from) : undefined,
-          lines: lines !== undefined ? Math.floor(lines) : undefined,
-        });
+        const result = await executeMemoryGetRequest(rawParams, params.workspaceDir, params.config);
         return jsonToolResult(result);
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);

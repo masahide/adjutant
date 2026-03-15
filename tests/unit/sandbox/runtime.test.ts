@@ -32,7 +32,7 @@ test("initializeSandboxRuntime keeps sandbox disabled when mode=off", async () =
   await runtime.dispose();
 });
 
-test("initializeSandboxRuntime fails closed when docker is unavailable", async () => {
+test("initializeSandboxRuntime fails closed when docker is unavailable under default mode", async () => {
   const runner = createRunner((args) => {
     if (args[0] === "version") {
       return { code: 1, stdout: "", stderr: "daemon not running" };
@@ -44,10 +44,7 @@ test("initializeSandboxRuntime fails closed when docker is unavailable", async (
     async () =>
       await initializeSandboxRuntime({
         workspaceDir: process.cwd(),
-        env: {
-          ...process.env,
-          ADJUTANT_SANDBOX_MODE: "non-main",
-        },
+        env: {},
         runner,
       }),
     /sandbox unavailable/
@@ -75,6 +72,8 @@ test("initializeSandboxRuntime prepares per-tool runSpec without creating contai
       ADJUTANT_SANDBOX_AUTO_BUILD_IMAGE: "0",
       ADJUTANT_SANDBOX_IMAGE: "adjutant-sandbox:test",
       ADJUTANT_SANDBOX_WORKDIR: "/workspace",
+      ADJUTANT_SANDBOX_HOME: "/home/runtime-agent",
+      ADJUTANT_SANDBOX_USER: "1234:5678",
       ADJUTANT_SANDBOX_NETWORK: "none",
       ADJUTANT_SANDBOX_PIDS_LIMIT: "128",
       ADJUTANT_SANDBOX_MEMORY: "1g",
@@ -86,9 +85,17 @@ test("initializeSandboxRuntime prepares per-tool runSpec without creating contai
   assert.equal(runtime.mode, "all");
   assert.equal(runtime.runSpec?.image, "adjutant-sandbox:test");
   assert.equal(runtime.runSpec?.containerWorkdir, "/workspace");
+  assert.equal(runtime.runSpec?.containerHome, "/home/runtime-agent");
+  assert.equal(runtime.runSpec?.user, "1234:5678");
   assert.equal(runtime.runSpec?.network, "none");
   assert.equal(runtime.runSpec?.pidsLimit, 128);
   assert.equal(runtime.runSpec?.memory, "1g");
+  assert.equal(
+    runtime.runSpec?.tmpfs?.includes(
+      "/home/runtime-agent:rw,exec,nosuid,size=512m,uid=1234,gid=5678,mode=700"
+    ),
+    true
+  );
 
   await runtime.dispose();
   assert.equal(

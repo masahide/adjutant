@@ -56,7 +56,7 @@ test("parseNotificationDecision は不正な応答を needs_review に倒す", (
   assert.equal(decision.reviewNotes, "plain text only");
 });
 
-test("parseNotificationDecision は play_slack_search 失敗時に needs_review へ倒す", () => {
+test("parseNotificationDecision は tool_hub slack/search 失敗時に needs_review へ倒す", () => {
   const decision = parseNotificationDecision(
     JSON.stringify({
       action: "draft_reply",
@@ -66,9 +66,14 @@ test("parseNotificationDecision は play_slack_search 失敗時に needs_review 
     {
       toolCalls: [
         {
-          toolName: "play_slack_search",
+          toolName: "tool_hub",
           status: "failed",
           result: "timeout after 180000ms",
+          rawInput: {
+            provider: "slack",
+            action: "search",
+            args: { mode: "message", channelId: "C1", messageTs: "1773.1" },
+          },
         },
       ],
     }
@@ -78,7 +83,7 @@ test("parseNotificationDecision は play_slack_search 失敗時に needs_review 
     action: "needs_review",
     reason: "context available",
     replyText: "確認します",
-    reviewNotes: "play_slack_search failed: timeout after 180000ms",
+    reviewNotes: "tool_hub slack/search failed: timeout after 180000ms",
   });
 });
 
@@ -91,9 +96,14 @@ test("parseNotificationDecision は permalink fallback 失敗を needs_review �
     {
       toolCalls: [
         {
-          toolName: "play_slack_search",
+          toolName: "tool_hub",
           status: "failed",
           result: "failed to derive permalink for mode=thread",
+          rawInput: {
+            provider: "slack",
+            action: "search",
+            args: { mode: "thread", channelId: "C1", threadTs: "1773.0" },
+          },
         },
       ],
     }
@@ -102,7 +112,7 @@ test("parseNotificationDecision は permalink fallback 失敗を needs_review �
   assert.deepEqual(decision, {
     action: "needs_review",
     reason: "informational",
-    reviewNotes: "play_slack_search failed: failed to derive permalink for mode=thread",
+    reviewNotes: "tool_hub slack/search failed: failed to derive permalink for mode=thread",
   });
 });
 
@@ -115,11 +125,11 @@ test("buildNotificationDecisionPrompt は通知 anchor を含む", () => {
   assert.match(prompt, /Return JSON only/);
   assert.match(
     prompt,
-    /call play_slack_search with \{"mode":"message","channelId":"C1","messageTs":"1773\.1","permalink":"https:\/\/example\.slack\.com\/archives\/C1\/p17731","workspaceUrl":"https:\/\/example\.slack\.com"\}/
+    /call tool_hub with \{"provider":"slack","action":"search","args":\{"mode":"message","channelId":"C1","messageTs":"1773\.1","permalink":"https:\/\/example\.slack\.com\/archives\/C1\/p17731","workspaceUrl":"https:\/\/example\.slack\.com"\}\}/
   );
   assert.match(
     prompt,
-    /If play_slack_search fails, times out, or returns insufficient context, respond with action=needs_review/
+    /If tool_hub slack\/search fails, times out, or returns insufficient context, respond with action=needs_review/
   );
 });
 
@@ -144,6 +154,6 @@ test("buildNotificationDecisionPrompt は threadTs がある場合 thread mode �
 
   assert.match(
     prompt,
-    /call play_slack_search with \{"mode":"thread","channelId":"C1","threadTs":"1773\.0","permalink":"https:\/\/example\.slack\.com\/archives\/C1\/p17731","workspaceUrl":"https:\/\/example\.slack\.com"\}/
+    /call tool_hub with \{"provider":"slack","action":"search","args":\{"mode":"thread","channelId":"C1","threadTs":"1773\.0","permalink":"https:\/\/example\.slack\.com\/archives\/C1\/p17731","workspaceUrl":"https:\/\/example\.slack\.com"\}\}/
   );
 });

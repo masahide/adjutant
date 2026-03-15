@@ -34,6 +34,12 @@ test("slack acp e2e: collector accepted -> worker prompt -> deliver accepted -> 
     command: process.execPath,
     args: ["--import", "tsx", "src/agent-worker-acp/stdio-server.ts"],
     cwd: process.cwd(),
+    env: {
+      ...process.env,
+      ADJUTANT_TEST_MOCK_RUNNER: "1",
+      ADJUTANT_TEST_MOCK_TEXT: "hello from slack",
+      ADJUTANT_TEST_MOCK_DELTA: "hello from slack",
+    },
     maxRestarts: 1,
     restartDelayMs: 20,
   });

@@ -29,29 +29,39 @@ test("memory_write tool writes to daily and long-term markdown", async (t) => {
     memoryScope: "main",
     memoryWriteEnabled: true,
   });
-  const memoryWrite = tools.find((tool) => tool.name === "memory_write");
-  assert.ok(memoryWrite);
+  const toolHub = tools.find((tool) => tool.name === "tool_hub");
+  assert.ok(toolHub);
 
-  const dailyResult = (await memoryWrite.execute(
+  const dailyResult = (await toolHub.execute(
     "call_1",
-    { content: "daily fact", scope: "daily" },
+    {
+      provider: "memory",
+      action: "write",
+      args: { content: "daily fact", scope: "daily" },
+    },
     undefined,
     undefined,
     undefined as never
   )) as ToolResult;
   const dailyDetails = asRecord(dailyResult.details);
-  const dailyPath = String(dailyDetails.path ?? "");
+  const dailyData = asRecord(dailyDetails.data);
+  const dailyPath = String(dailyData.path ?? "");
   assert.equal(dailyPath.startsWith("memory/"), true);
 
-  const longTermResult = (await memoryWrite.execute(
+  const longTermResult = (await toolHub.execute(
     "call_2",
-    { content: "long term fact", scope: "long-term" },
+    {
+      provider: "memory",
+      action: "write",
+      args: { content: "long term fact", scope: "long-term" },
+    },
     undefined,
     undefined,
     undefined as never
   )) as ToolResult;
   const longTermDetails = asRecord(longTermResult.details);
-  assert.equal(longTermDetails.path, "MEMORY.md");
+  const longTermData = asRecord(longTermDetails.data);
+  assert.equal(longTermData.path, "MEMORY.md");
 
   const dailyContent = await readFile(join(workspaceDir, dailyPath), "utf8");
   assert.equal(dailyContent.includes("daily fact"), true);

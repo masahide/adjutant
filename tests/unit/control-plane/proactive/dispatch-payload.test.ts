@@ -32,7 +32,7 @@ test("notification dispatch payload は decision prompt を使う", () => {
   assert.equal(payload.sessionKey, "slack-activity");
   assert.equal(payload.idempotencyKey, "dedupe-1");
   assert.match(payload.message, /Return JSON only/);
-  assert.match(payload.message, /play_slack_search/);
+  assert.match(payload.message, /tool_hub/);
   assert.doesNotMatch(payload.message, /legacy-message/);
 });
 

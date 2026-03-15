@@ -5,6 +5,8 @@ export interface SandboxDockerConfig {
   autoBuildImage: boolean;
   containerPrefix: string;
   workdir: string;
+  home: string;
+  user: string;
   envAllowlist: string[];
   readOnlyRoot: boolean;
   tmpfs: string[];
@@ -23,6 +25,8 @@ export interface SandboxRunSpec {
   image: string;
   hostWorkspaceDir: string;
   containerWorkdir: string;
+  containerHome: string;
+  user: string;
   envAllowlist?: string[];
   readOnlyRoot?: boolean;
   tmpfs?: string[];

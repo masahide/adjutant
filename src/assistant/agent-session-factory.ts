@@ -8,13 +8,12 @@ import {
   type ToolDefinition,
 } from "@mariozechner/pi-coding-agent";
 
-import { resolveMemorySearchRuntimeConfig } from "./memory/config.js";
-import { createMemoryToolDefinitions } from "./memory/tool-definitions.js";
 import type { MemoryScope } from "./memory/types.js";
-import { appendDailyMemory, updateLongTermMemory } from "./memory/writer.js";
-import { createPlaySlackSearchToolDefinition } from "./play-slack-search-tool.js";
 import { createDockerBashOperations, shouldSandbox } from "../sandbox/docker-bash-operations.js";
 import type { ActiveSandboxConfig } from "../sandbox/types.js";
+import { createContainerizedFileTools } from "./containerized-file-tool-operations.js";
+import { createToolHubToolDefinition, ToolHub } from "./dynamic-tool/index.js";
+import { createAssistantProviderRegistry } from "./tool-hub-provider-registry.js";
 
 export interface PiAgentSessionLike {
   prompt: (text: string) => Promise<void>;
@@ -42,6 +41,10 @@ let activeSandbox: ActiveSandboxConfig | null = null;
 
 export function configureSandbox(config: ActiveSandboxConfig | null): void {
   activeSandbox = config;
+}
+
+export function getConfiguredSandbox(): ActiveSandboxConfig | null {
+  return activeSandbox;
 }
 
 function parseModelSpecifier(model: string): { provider: string; modelId: string } | null {
@@ -119,20 +122,6 @@ export function buildCustomToolDefinitions(options: CreatePiAgentSessionOptions)
   const rolloutScope = resolvePhaseBRolloutScope(options.phaseBRolloutScope, process.env);
   const phaseBEnabled = isPhaseBEnabledForScope(rolloutScope, options.memoryScope);
 
-  if (options.memoryScope === "main") {
-    customTools.push(
-      ...createMemoryToolDefinitions({
-        workspaceDir: options.cwd,
-        config: resolveMemorySearchRuntimeConfig({
-          stateDir: options.stateDir,
-          agentId: "main",
-        }),
-      })
-    );
-  }
-  if (options.memoryWriteEnabled && phaseBEnabled) {
-    customTools.push(createMemoryWriteToolDefinition(options.cwd));
-  }
   const sandboxConfig = activeSandbox;
   if (
     sandboxConfig !== null &&
@@ -145,45 +134,15 @@ export function buildCustomToolDefinitions(options: CreatePiAgentSessionOptions)
       }),
     });
     customTools.push(sandboxBashTool as unknown as ToolDefinition);
+    customTools.push(...createContainerizedFileTools({ runSpec: sandboxConfig.runSpec }));
   }
-  customTools.push(createPlaySlackSearchToolDefinition(options.cwd));
+  const providerRegistry = createAssistantProviderRegistry({
+    workspaceDir: options.cwd,
+    stateDir: options.stateDir,
+    includeMemoryRead: options.memoryScope === "main",
+    includeMemoryWrite: options.memoryWriteEnabled === true && phaseBEnabled,
+  });
+  customTools.push(createToolHubToolDefinition(new ToolHub(providerRegistry)));
 
   return customTools;
-}
-
-function createMemoryWriteToolDefinition(workspaceDir: string): ToolDefinition {
-  return {
-    name: "memory_write",
-    label: "Memory Write",
-    description: "Persist notable context into assistant memory files.",
-    parameters: {
-      type: "object",
-      properties: {
-        content: { type: "string", minLength: 1 },
-        scope: { enum: ["daily", "long-term"] },
-      },
-      required: ["content"],
-      additionalProperties: false,
-    } as never,
-    execute: async (_toolCallId, rawParams) => {
-      const params = (rawParams ?? {}) as Record<string, unknown>;
-      const content = typeof params.content === "string" ? params.content.trim() : "";
-      if (content.length === 0) {
-        throw new Error("content required");
-      }
-
-      const scope = params.scope === "long-term" ? "long-term" : "daily";
-      const written =
-        scope === "long-term"
-          ? await updateLongTermMemory({ workspaceDir, content })
-          : await appendDailyMemory({ workspaceDir, content });
-      return {
-        content: [{ type: "text", text: `memory_write accepted (${scope})` }],
-        details: {
-          scope,
-          path: written.path,
-        },
-      };
-    },
-  };
 }

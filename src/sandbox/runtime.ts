@@ -52,6 +52,8 @@ export async function initializeSandboxRuntime(params: {
     image: config.docker.image,
     hostWorkspaceDir: params.workspaceDir,
     containerWorkdir: config.docker.workdir,
+    containerHome: config.docker.home,
+    user: config.docker.user,
     envAllowlist: config.docker.envAllowlist,
     readOnlyRoot: config.docker.readOnlyRoot,
     tmpfs: config.docker.tmpfs,

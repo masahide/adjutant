@@ -143,7 +143,7 @@ test("ActivityFeed は permalink fallback 失敗の needs_review summary を表�
           notificationUid: "uid-2",
           action: "needs_review",
           reason: "informational",
-          reviewNotes: "play_slack_search failed: failed to derive permalink for mode=thread",
+          reviewNotes: "tool_hub slack/search failed: failed to derive permalink for mode=thread",
           originalMessageText: "hello",
         },
       },
@@ -155,6 +155,6 @@ test("ActivityFeed は permalink fallback 失敗の needs_review summary を表�
   assert.equal(response.items[0]?.messageText, "hello");
   assert.equal(
     response.items[0]?.summary,
-    "play_slack_search failed: failed to derive permalink for mode=thread"
+    "tool_hub slack/search failed: failed to derive permalink for mode=thread"
   );
 });

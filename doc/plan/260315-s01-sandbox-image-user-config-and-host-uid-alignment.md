@@ -159,8 +159,8 @@
    When `ADJUTANT_SANDBOX_USER` 未指定で sandbox 設定を解決する
    Then `1000:1000` fallback が使われ、README / spec に制約が明記される
 10. Given sandbox 対象セッション
-   When agent が `read` / `edit` / `write` / `grep` / `find` / `ls` を実行する
-   Then それらの実行は host 直実行ではなく sandbox 経由になる
+    When agent が `read` / `edit` / `write` / `grep` / `find` / `ls` を実行する
+    Then それらの実行は host 直実行ではなく sandbox 経由になる
 11. Given sandbox 対象セッションで file tool が workspace 外の path を要求する
     When tool 実行を開始する
     Then docker 実行前に path guard が拒否し、workspace 外アクセスを許可しない
@@ -515,130 +515,130 @@ sequenceDiagram
 
 ### Phase 1 設計と準備
 
-- [ ] `Task-SBX-DESIGN-001` インターフェース契約の確定  
+- [x] `Task-SBX-DESIGN-001` インターフェース契約の確定  
        成果物: 本計画書の 4 章、`ADJUTANT_SANDBOX_USER` 契約
-- [ ] `Task-SBX-DESIGN-002` Mermaid 図の作成  
+- [x] `Task-SBX-DESIGN-002` Mermaid 図の作成  
        成果物: 本計画書の 5 章
-- [ ] `Task-SBX-DESIGN-003` 型定義の更新方針確定  
+- [x] `Task-SBX-DESIGN-003` 型定義の更新方針確定  
        対象: `src/sandbox/types.ts`
-- [ ] `Task-SBX-DESIGN-004` 既存テスト基盤の確認  
+- [x] `Task-SBX-DESIGN-004` 既存テスト基盤の確認  
        対象: `tests/unit/sandbox/*`, `tests/unit/agent-worker-acp/*`
-- [ ] `Task-SBX-DESIGN-005` git 履歴上の ToolHub + full tool sandbox 統合設計棚卸し  
+- [x] `Task-SBX-DESIGN-005` git 履歴上の ToolHub + full tool sandbox 統合設計棚卸し  
        対象: `f43b468`, `eb05767`, `agent-session-factory.ts`, `dynamic-tool/*`, `containerized-file-tool-operations.ts`
-- [ ] `Task-SBX-DESIGN-006` git 履歴上の責務別差分棚卸し  
+- [x] `Task-SBX-DESIGN-006` git 履歴上の責務別差分棚卸し  
        対象: `0eb307d`, `bc60728`, `3073ccde`, 旧 file operations 実装と workspace path restriction 実装
 
 ### Phase 2 Image 設定契約の固定
 
 - [ ] `Task-SBX-IMG-RED-001` Test: `ADJUTANT_SANDBOX_IMAGE` が config / worker bridge / docker args に反映される失敗テストを追加
-- [ ] `Task-SBX-IMG-GREEN-001` Impl: 既存 image 契約を docs-sync と worker bridge 含めて明示化
-- [ ] `Task-SBX-IMG-GREEN-002` Impl: `Dockerfile.sandbox` をツール専用のシンプルな image 契約へ更新し、`/workspace` と `/home/agent` の枠組みを整備
+- [x] `Task-SBX-IMG-GREEN-001` Impl: 既存 image 契約を docs-sync と worker bridge 含めて明示化
+- [x] `Task-SBX-IMG-GREEN-002` Impl: `Dockerfile.sandbox` をツール専用のシンプルな image 契約へ更新し、`/workspace` と `/home/agent` の枠組みを整備
 - [ ] `Task-SBX-IMG-REFACTOR-001` Refactor: image 関連の説明とテスト重複を削減
-- [ ] `Task-SBX-IMG-CONTRACT-001` Contract: README / spec / env inventory を同期更新
-- [ ] `Task-SBX-IMG-DOC-001` Docs: custom image の責務範囲と `--user` / `/workspace` / tmpfs home 契約を明記
+- [x] `Task-SBX-IMG-CONTRACT-001` Contract: README / spec / env inventory を同期更新
+- [x] `Task-SBX-IMG-DOC-001` Docs: custom image の責務範囲と `--user` / `/workspace` / tmpfs home 契約を明記
 
 ### Phase 3 Home Mount 契約の固定
 
-- [ ] `Task-SBX-HOME-RED-001` Test: `ADJUTANT_SANDBOX_HOME` が config / worker bridge / docker args に反映される失敗テストを追加
-- [ ] `Task-SBX-HOME-RED-002` Test: relative path な home 指定を reject する失敗テストを追加
-- [ ] `Task-SBX-HOME-GREEN-001` Impl: `SandboxDockerConfig` / `SandboxRunSpec` に home を追加
-- [ ] `Task-SBX-HOME-GREEN-002` Impl: `HOME` は tmpfs, workspace は `/workspace`, `workdir` は `/workspace` に揃える
-- [ ] `Task-SBX-HOME-GREEN-003` Impl: home tmpfs の uid/gid/mode 構築を docker 引数へ反映する
+- [x] `Task-SBX-HOME-RED-001` Test: `ADJUTANT_SANDBOX_HOME` が config / worker bridge / docker args に反映される失敗テストを追加
+- [x] `Task-SBX-HOME-RED-002` Test: relative path な home 指定を reject する失敗テストを追加
+- [x] `Task-SBX-HOME-GREEN-001` Impl: `SandboxDockerConfig` / `SandboxRunSpec` に home を追加
+- [x] `Task-SBX-HOME-GREEN-002` Impl: `HOME` は tmpfs, workspace は `/workspace`, `workdir` は `/workspace` に揃える
+- [x] `Task-SBX-HOME-GREEN-003` Impl: home tmpfs の uid/gid/mode 構築を docker 引数へ反映する
 - [ ] `Task-SBX-HOME-REFACTOR-001` Refactor: home/workdir の既定値決定ロジックを整理
-- [ ] `Task-SBX-HOME-CONTRACT-001` Contract: README / spec / docs-sync / examples を home tmpfs + workspace bind mount 契約へ同期更新
+- [x] `Task-SBX-HOME-CONTRACT-001` Contract: README / spec / docs-sync / examples を home tmpfs + workspace bind mount 契約へ同期更新
 
 ### Phase 4 Default Sandbox 化
 
-- [ ] `Task-SBX-MODE-RED-001` Test: `ADJUTANT_SANDBOX_MODE` 未指定時に default=`all` を期待する失敗テストを追加
-- [ ] `Task-SBX-MODE-RED-002` Test: Docker unavailable で未指定起動が fail-closed になる失敗テストを追加
-- [ ] `Task-SBX-MODE-GREEN-001` Impl: sandbox mode の既定値を `all` に変更
+- [x] `Task-SBX-MODE-RED-001` Test: `ADJUTANT_SANDBOX_MODE` 未指定時に default=`all` を期待する失敗テストを追加
+- [x] `Task-SBX-MODE-RED-002` Test: Docker unavailable で未指定起動が fail-closed になる失敗テストを追加
+- [x] `Task-SBX-MODE-GREEN-001` Impl: sandbox mode の既定値を `all` に変更
 - [ ] `Task-SBX-MODE-GREEN-002` Impl: no-Docker テスト逃げ道と bootstrap の分岐を既定変更に合わせて調整
 - [ ] `Task-SBX-MODE-REFACTOR-001` Refactor: mode default の説明と helper の重複を削減
-- [ ] `Task-SBX-MODE-CONTRACT-001` Contract: README / spec / docs-sync / runbook の default mode 記述を同期更新
+- [x] `Task-SBX-MODE-CONTRACT-001` Contract: README / spec / docs-sync / runbook の default mode 記述を同期更新
 
 ### Phase 5 Host UID/GID 追従の実装
 
-- [ ] `Task-SBX-USER-RED-001` Test: `ADJUTANT_SANDBOX_USER` override の失敗テストを追加
-- [ ] `Task-SBX-USER-RED-002` Test: POSIX auto-detect と non-POSIX fallback の失敗テストを追加
-- [ ] `Task-SBX-USER-RED-003` Test: invalid `uid:gid` を reject する失敗テストを追加
-- [ ] `Task-SBX-USER-GREEN-001` Impl: `SandboxDockerConfig` / `SandboxRunSpec` へ `user` を追加
-- [ ] `Task-SBX-USER-GREEN-002` Impl: config resolver に user 解決ロジックと validation を追加
-- [ ] `Task-SBX-USER-GREEN-003` Impl: control-plane から worker への `ACP_WORKER_SANDBOX_USER` 伝播を追加
-- [ ] `Task-SBX-USER-GREEN-004` Impl: `docker run --user <uid>:<gid>` へ切り替え、tmpfs home の uid/gid も同期させる
-- [ ] `Task-SBX-USER-REFACTOR-001` Refactor: user 解決ロジックを utility へ抽出し、platform 分岐を局所化
+- [x] `Task-SBX-USER-RED-001` Test: `ADJUTANT_SANDBOX_USER` override の失敗テストを追加
+- [x] `Task-SBX-USER-RED-002` Test: POSIX auto-detect と non-POSIX fallback の失敗テストを追加
+- [x] `Task-SBX-USER-RED-003` Test: invalid `uid:gid` を reject する失敗テストを追加
+- [x] `Task-SBX-USER-GREEN-001` Impl: `SandboxDockerConfig` / `SandboxRunSpec` へ `user` を追加
+- [x] `Task-SBX-USER-GREEN-002` Impl: config resolver に user 解決ロジックと validation を追加
+- [x] `Task-SBX-USER-GREEN-003` Impl: control-plane から worker への `ACP_WORKER_SANDBOX_USER` 伝播を追加
+- [x] `Task-SBX-USER-GREEN-004` Impl: `docker run --user <uid>:<gid>` へ切り替え、tmpfs home の uid/gid も同期させる
+- [x] `Task-SBX-USER-REFACTOR-001` Refactor: user 解決ロジックを utility へ抽出し、platform 分岐を局所化
 - [ ] `Task-SBX-USER-INTEG-001` Integration: worker bootstrap と docker args の end-to-end テストを追加
 - [ ] `Task-SBX-USER-INTEG-002` Integration: WSL Linux ネイティブ領域相当の bind mount でも所有者が一致することを検証
-- [ ] `Task-SBX-USER-DOC-001` Docs: 既知制約と fallback を README / spec に追記
+- [x] `Task-SBX-USER-DOC-001` Docs: 既知制約と fallback を README / spec に追記
 
 ### Phase 5.5 Hardening 契約の固定
 
-- [ ] `Task-SBX-HARDEN-RED-001` Test: `docker run` に read-only rootfs と security flags が付与される失敗テストを追加
-- [ ] `Task-SBX-HARDEN-GREEN-001` Impl: `--pull=never`, `--init`, `--read-only`, `--mount`, `--tmpfs /tmp`, `--tmpfs /run`, `--tmpfs <home>`, `--network=none`, `--cap-drop=ALL`, `--security-opt`, `--ipc=private`, `--cgroupns=private`, `--pids-limit`, `--memory`, `--memory-swap`, `--hostname=sandbox` を導入
+- [x] `Task-SBX-HARDEN-RED-001` Test: `docker run` に read-only rootfs と security flags が付与される失敗テストを追加
+- [x] `Task-SBX-HARDEN-GREEN-001` Impl: `--pull=never`, `--init`, `--read-only`, `--mount`, `--tmpfs /tmp`, `--tmpfs /run`, `--tmpfs <home>`, `--network=none`, `--cap-drop=ALL`, `--security-opt`, `--ipc=private`, `--cgroupns=private`, `--pids-limit`, `--memory`, `--memory-swap`, `--hostname=sandbox` を導入
 - [ ] `Task-SBX-HARDEN-REFACTOR-001` Refactor: hardening flags 構築を helper 化する
-- [ ] `Task-SBX-HARDEN-DOC-001` Docs: Mac / WSL / Linux の挙動差と hardening 契約を README / spec に追記
+- [x] `Task-SBX-HARDEN-DOC-001` Docs: Mac / WSL / Linux の挙動差と hardening 契約を README / spec に追記
 
 ### Phase 6 標準ツール sandbox 復元
 
-- [ ] `Task-SBX-TOOLS-RED-001` Test: sandbox 対象セッションで `read` / `edit` / `write` / `grep` / `find` / `ls` が containerized operations を使う失敗テストを追加
-- [ ] `Task-SBX-TOOLS-RED-002` Test: workspace 外 path を reject する path guard の失敗テストを追加
-- [ ] `Task-SBX-TOOLS-RED-003` Test: `mode=non-main` で main/spoke の tool 差分を検証する失敗テストを追加
-- [ ] `Task-SBX-TOOLS-GREEN-001` Impl: `containerized-file-tool-operations` 相当を現行 `src/assistant/` に再導入
-- [ ] `Task-SBX-TOOLS-GREEN-002` Impl: workspace path restriction ロジックを container `/workspace` 契約に合わせて再導入または内包化
-- [ ] `Task-SBX-TOOLS-GREEN-003` Impl: `agent-session-factory` と worker bootstrap に file tool sandbox 差し替えを統合
-- [ ] `Task-SBX-TOOLS-REFACTOR-001` Refactor: `bash` と file tools が同一 `SandboxRunSpec` を共有するよう整理
-- [ ] `Task-SBX-TOOLS-INTEG-001` Integration: sandbox mode / memory scope ごとの tool 実行経路を end-to-end で検証
-- [ ] `Task-SBX-TOOLS-DOC-001` Docs: 標準ツール sandbox 対象範囲と path 制約を README / spec に追記
+- [x] `Task-SBX-TOOLS-RED-001` Test: sandbox 対象セッションで `read` / `edit` / `write` / `grep` / `find` / `ls` が containerized operations を使う失敗テストを追加
+- [x] `Task-SBX-TOOLS-RED-002` Test: workspace 外 path を reject する path guard の失敗テストを追加
+- [x] `Task-SBX-TOOLS-RED-003` Test: `mode=non-main` で main/spoke の tool 差分を検証する失敗テストを追加
+- [x] `Task-SBX-TOOLS-GREEN-001` Impl: `containerized-file-tool-operations` 相当を現行 `src/assistant/` に再導入
+- [x] `Task-SBX-TOOLS-GREEN-002` Impl: workspace path restriction ロジックを container `/workspace` 契約に合わせて再導入または内包化
+- [x] `Task-SBX-TOOLS-GREEN-003` Impl: `agent-session-factory` と worker bootstrap に file tool sandbox 差し替えを統合
+- [x] `Task-SBX-TOOLS-REFACTOR-001` Refactor: `bash` と file tools が同一 `SandboxRunSpec` を共有するよう整理
+- [x] `Task-SBX-TOOLS-INTEG-001` Integration: sandbox mode / memory scope ごとの tool 実行経路を end-to-end で検証
+- [x] `Task-SBX-TOOLS-DOC-001` Docs: 標準ツール sandbox 対象範囲と path 制約を README / spec に追記
 
 ### Phase 7 ToolHub 復元と direct custom tool 全廃
 
-- [ ] `Task-SBX-HUB-RED-001` Test: `agent-session-factory` が hub tool 以外の custom tool を公開していると失敗するテストを追加
-- [ ] `Task-SBX-HUB-RED-002` Test: 未登録 provider/action が `ToolHub` で reject される失敗テストを追加
-- [ ] `Task-SBX-HUB-RED-003` Test: 現行で公開している全 custom tool が `ToolHub` provider/action へ移行されていることを検証する失敗テストを追加
-- [ ] `Task-SBX-HUB-GREEN-001` Impl: `ToolHub` / `ProviderRegistry` / tool definition 群を現行 `src/assistant/dynamic-tool/` に復元
-- [ ] `Task-SBX-HUB-GREEN-002` Impl: `agent-session-factory` の direct custom tool 登録を全廃し、hub tool 1 本へ置き換える
-- [ ] `Task-SBX-HUB-GREEN-003` Impl: 現行で公開中の全 custom tool を provider/action 実装へ移行する
-- [ ] `Task-SBX-HUB-GREEN-004` Impl: sandbox 対象 provider が `SandboxRunSpec` と両立するよう接続する
-- [ ] `Task-SBX-HUB-REFACTOR-001` Refactor: custom tool 公開責務を `ToolHub` に一本化し、direct 登録コードを削除する
-- [ ] `Task-SBX-HUB-INTEG-001` Integration: `ToolHub` 経由の provider/action 呼び出しが現行 runtime で通ることを検証
-- [ ] `Task-SBX-HUB-INTEG-002` Integration: hub 移行後に direct custom tool が公開されていないことを検証
-- [ ] `Task-SBX-HUB-DOC-001` Docs: 全 custom tool 公開面を `ToolHub` 前提に README / spec へ反映
+- [x] `Task-SBX-HUB-RED-001` Test: `agent-session-factory` が hub tool 以外の custom tool を公開していると失敗するテストを追加
+- [x] `Task-SBX-HUB-RED-002` Test: 未登録 provider/action が `ToolHub` で reject される失敗テストを追加
+- [x] `Task-SBX-HUB-RED-003` Test: 現行で公開している全 custom tool が `ToolHub` provider/action へ移行されていることを検証する失敗テストを追加
+- [x] `Task-SBX-HUB-GREEN-001` Impl: `ToolHub` / `ProviderRegistry` / tool definition 群を現行 `src/assistant/dynamic-tool/` に復元
+- [x] `Task-SBX-HUB-GREEN-002` Impl: `agent-session-factory` の direct custom tool 登録を全廃し、hub tool 1 本へ置き換える
+- [x] `Task-SBX-HUB-GREEN-003` Impl: 現行で公開中の全 custom tool を provider/action 実装へ移行する
+- [x] `Task-SBX-HUB-GREEN-004` Impl: sandbox 対象 provider が `SandboxRunSpec` と両立するよう接続する
+- [x] `Task-SBX-HUB-REFACTOR-001` Refactor: custom tool 公開責務を `ToolHub` に一本化し、direct 登録コードを削除する
+- [x] `Task-SBX-HUB-INTEG-001` Integration: `ToolHub` 経由の provider/action 呼び出しが現行 runtime で通ることを検証
+- [x] `Task-SBX-HUB-INTEG-002` Integration: hub 移行後に direct custom tool が公開されていないことを検証
+- [x] `Task-SBX-HUB-DOC-001` Docs: 全 custom tool 公開面を `ToolHub` 前提に README / spec へ反映
 
 ### Phase 8 統合と検証
 
-- [ ] `Task-SBX-VERIFY-001` 全体テストの実行  
+- [x] `Task-SBX-VERIFY-001` 全体テストの実行  
        例: `pnpm run test`, `pnpm run verify:config-doc-sync`
-- [ ] `Task-SBX-VERIFY-002` エッジケース確認  
+- [x] `Task-SBX-VERIFY-002` エッジケース確認  
        例: mode 未指定, invalid home, empty user, invalid user, non-POSIX fallback, workspace 外 path
-- [ ] `Task-SBX-VERIFY-003` ログと例外の確認  
+- [x] `Task-SBX-VERIFY-003` ログと例外の確認  
        例: `INVALID_SANDBOX_USER`, Docker unavailable, default sandbox 起動失敗, path guard violation
-- [ ] `Task-SBX-VERIFY-004` ドキュメント更新完了確認  
+- [x] `Task-SBX-VERIFY-004` ドキュメント更新完了確認  
        対象: `README.md`, `doc/spec.md`, docs-sync, runbook
 
 ## 8. 完了の定義 Definition of Done
 
 ### 8.1 機能DoD Functional DoD
 
-- [ ] `ADJUTANT_SANDBOX_MODE` 未指定時に sandbox が既定有効となること
-- [ ] host workspace が container `/workspace` に mount されること
-- [ ] `ADJUTANT_SANDBOX_IMAGE` が公開設定として docs / tests /実装で一致していること
-- [ ] `ADJUTANT_SANDBOX_HOME` が docs / tests / 実装で一致していること
-- [ ] `ADJUTANT_SANDBOX_USER` 未指定時に POSIX host UID/GID が使われること
-- [ ] `ADJUTANT_SANDBOX_USER` 指定時に override が優先されること
-- [ ] invalid user 設定が fail-closed で拒否されること
-- [ ] `--user <uid>:<gid>` と home tmpfs の uid/gid 同期により権限整合が取れること
-- [ ] `bash` に加えて `read` / `edit` / `write` / `grep` / `find` / `ls` も sandbox 実行されること
-- [ ] workspace 外 path が file tools から拒否されること
-- [ ] custom tool 公開面が direct 登録ではなく `ToolHub` に統一されていること
-- [ ] `ToolHub` の provider/action dispatch が現行 runtime で動作すること
-- [ ] `agent-session-factory` に hub tool 以外の custom tool 公開が残っていないこと
-- [ ] read-only rootfs, tmpfs home, namespace/cgroup 制限を含む security flags が sandbox 実行に適用されること
+- [x] `ADJUTANT_SANDBOX_MODE` 未指定時に sandbox が既定有効となること
+- [x] host workspace が container `/workspace` に mount されること
+- [x] `ADJUTANT_SANDBOX_IMAGE` が公開設定として docs / tests /実装で一致していること
+- [x] `ADJUTANT_SANDBOX_HOME` が docs / tests / 実装で一致していること
+- [x] `ADJUTANT_SANDBOX_USER` 未指定時に POSIX host UID/GID が使われること
+- [x] `ADJUTANT_SANDBOX_USER` 指定時に override が優先されること
+- [x] invalid user 設定が fail-closed で拒否されること
+- [x] `--user <uid>:<gid>` と home tmpfs の uid/gid 同期により権限整合が取れること
+- [x] `bash` に加えて `read` / `edit` / `write` / `grep` / `find` / `ls` も sandbox 実行されること
+- [x] workspace 外 path が file tools から拒否されること
+- [x] custom tool 公開面が direct 登録ではなく `ToolHub` に統一されていること
+- [x] `ToolHub` の provider/action dispatch が現行 runtime で動作すること
+- [x] `agent-session-factory` に hub tool 以外の custom tool 公開が残っていないこと
+- [x] read-only rootfs, tmpfs home, namespace/cgroup 制限を含む security flags が sandbox 実行に適用されること
 
 ### 8.2 品質DoD Quality DoD
 
-- [ ] 全ての対象テストがパスしていること
-- [ ] docs-sync mismatch がないこと
-- [ ] 不要なデバッグコードがないこと
-- [ ] README と spec に主要変更が反映されていること
+- [x] 全ての対象テストがパスしていること
+- [x] docs-sync mismatch がないこと
+- [x] 不要なデバッグコードがないこと
+- [x] README と spec に主要変更が反映されていること
 
 ## 9. 懸念事項と未確定事項 Concerns and Questions
 

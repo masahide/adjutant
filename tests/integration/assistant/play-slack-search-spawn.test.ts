@@ -7,7 +7,7 @@ import test from "node:test";
 import { buildCustomToolDefinitions } from "../../../src/assistant/agent-session-factory.js";
 import { PLAY_SLACK_SEARCH_ADAPTER_ENTRY_ENV } from "../../../src/assistant/play-slack-search-tool.js";
 
-test("play_slack_search は customTools 経由で adapter script を spawn する", async (t) => {
+test("tool_hub slack/search は adapter script を spawn する", async (t) => {
   const tempDir = mkdtempSync(join(tmpdir(), "adjutant-play-slack-search-"));
   const adapterPath = join(tempDir, "fake-adapter.ts");
   writeFileSync(
@@ -54,7 +54,7 @@ test("play_slack_search は customTools 経由で adapter script を spawn す�
   const tool = buildCustomToolDefinitions({
     cwd: process.cwd(),
     memoryScope: "spoke",
-  }).find((entry) => entry.name === "play_slack_search");
+  }).find((entry) => entry.name === "tool_hub");
 
   assert.ok(tool);
   assert.ok(tool.execute);
@@ -62,10 +62,14 @@ test("play_slack_search は customTools 経由で adapter script を spawn す�
   const result = await tool.execute!(
     "tool-call-1",
     {
-      mode: "message",
-      channelId: "C1",
-      messageTs: "1773481739.636659",
-      workspaceUrl: "https://workspace-b.slack.com",
+      provider: "slack",
+      action: "search",
+      args: {
+        mode: "message",
+        channelId: "C1",
+        messageTs: "1773481739.636659",
+        workspaceUrl: "https://workspace-b.slack.com",
+      },
     },
     new AbortController().signal,
     async () => {},
@@ -73,14 +77,20 @@ test("play_slack_search は customTools 経由で adapter script を spawn す�
   );
 
   const details = result.details as {
-    mode: string;
-    items: Array<{ text: string; ts?: string }>;
+    ok: boolean;
+    provider: string;
+    action: string;
+    data: {
+      mode: string;
+      items: Array<{ text: string; ts?: string }>;
+      sourceUrl?: string;
+    };
   };
-  assert.equal(details.mode, "message");
-  assert.equal(
-    (result.details as { sourceUrl?: string }).sourceUrl,
-    "https://workspace-b.slack.com"
-  );
-  assert.equal(details.items[0]?.text, "echo:message");
-  assert.equal(details.items[0]?.ts, "1773481739.636659");
+  assert.equal(details.ok, true);
+  assert.equal(details.provider, "slack");
+  assert.equal(details.action, "search");
+  assert.equal(details.data.mode, "message");
+  assert.equal(details.data.sourceUrl, "https://workspace-b.slack.com");
+  assert.equal(details.data.items[0]?.text, "echo:message");
+  assert.equal(details.data.items[0]?.ts, "1773481739.636659");
 });

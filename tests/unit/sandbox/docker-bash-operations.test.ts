@@ -63,6 +63,8 @@ test("buildDockerRunArgs builds docker run --rm and keeps only allowlisted env v
       image: "adjutant-sandbox:test",
       hostWorkspaceDir: process.cwd(),
       containerWorkdir: "/workspace",
+      containerHome: "/home/agent",
+      user: "2001:3001",
       envAllowlist: ["LANG"],
       network: "none",
       pidsLimit: 128,
@@ -76,9 +78,30 @@ test("buildDockerRunArgs builds docker run --rm and keeps only allowlisted env v
     },
   });
 
-  assert.deepEqual(args.slice(0, 5), ["run", "--rm", "-i", "--workdir", "/workspace"]);
+  assert.deepEqual(args.slice(0, 7), [
+    "run",
+    "--rm",
+    "-i",
+    "--pull=never",
+    "--init",
+    "--workdir",
+    "/workspace",
+  ]);
+  assert.equal(args.includes("--read-only"), true);
+  assert.equal(args.includes("--user"), true);
+  assert.equal(args.includes("2001:3001"), true);
+  assert.equal(args.includes("HOME=/home/agent"), true);
+  assert.equal(args.includes("--mount"), true);
+  assert.equal(args.includes(`type=bind,src=${process.cwd()},dst=/workspace`), true);
+  assert.equal(args.includes("--security-opt"), true);
+  assert.equal(args.includes("no-new-privileges=true"), true);
+  assert.equal(args.includes("seccomp=builtin"), true);
+  assert.equal(args.includes("--ipc=private"), true);
+  assert.equal(args.includes("--cgroupns=private"), true);
+  assert.equal(args.includes("--hostname=sandbox"), true);
   assert.equal(args.includes("--network"), true);
   assert.equal(args.includes("none"), true);
+  assert.equal(args.includes("--memory-swap"), true);
   assert.equal(args.includes("LANG=ja_JP.UTF-8"), true);
   assert.equal(args.includes("OPENAI_API_KEY=secret"), false);
   assert.equal(args.includes("adjutant-sandbox:test"), true);
@@ -91,6 +114,8 @@ test("createDockerBashOperations.exec aborts active docker run", async () => {
       image: "adjutant-sandbox:test",
       hostWorkspaceDir: process.cwd(),
       containerWorkdir: "/workspace",
+      containerHome: "/home/agent",
+      user: "1000:1000",
     },
     spawnImpl: mock.spawnImpl as never,
   });
@@ -119,6 +144,8 @@ test("createDockerBashOperations.exec times out and fails", async () => {
       image: "adjutant-sandbox:test",
       hostWorkspaceDir: process.cwd(),
       containerWorkdir: "/workspace",
+      containerHome: "/home/agent",
+      user: "1000:1000",
     },
     spawnImpl: mock.spawnImpl as never,
   });

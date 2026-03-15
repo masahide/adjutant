@@ -353,6 +353,17 @@ function parseBooleanEnv(value: string | undefined): boolean {
   return normalized === "1" || normalized === "true";
 }
 
+function parseJsonEnv(value: string | undefined): unknown {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return undefined;
+  }
+  try {
+    return JSON.parse(value);
+  } catch {
+    return undefined;
+  }
+}
+
 async function waitForAbortableDelay(
   delayMs: number,
   signal: AbortSignal | undefined
@@ -394,8 +405,14 @@ export async function runAgent(options: AgentRunOptions): Promise<AgentRunResult
     const mockToolCalls = parseBooleanEnv(process.env.ADJUTANT_TEST_MOCK_TOOL_CALLS);
     const mockToolName = process.env.ADJUTANT_TEST_MOCK_TOOL_NAME ?? "play_slack_search";
     const mockToolStatus = process.env.ADJUTANT_TEST_MOCK_TOOL_STATUS === "failed" ? "error" : "ok";
-    const mockToolOutput = process.env.ADJUTANT_TEST_MOCK_TOOL_OUTPUT ?? "mock-tool-output";
+    const mockToolOutput =
+      parseJsonEnv(process.env.ADJUTANT_TEST_MOCK_TOOL_OUTPUT) ??
+      process.env.ADJUTANT_TEST_MOCK_TOOL_OUTPUT ??
+      "mock-tool-output";
     const mockToolError = process.env.ADJUTANT_TEST_MOCK_TOOL_ERROR ?? "mock-tool-error";
+    const mockToolInput = parseJsonEnv(process.env.ADJUTANT_TEST_MOCK_TOOL_INPUT) ?? {
+      prompt: options.prompt,
+    };
     if (mockToolCalls) {
       options.callbacks?.onToolCall?.({
         event: "tool_execution_start",
@@ -403,7 +420,7 @@ export async function runAgent(options: AgentRunOptions): Promise<AgentRunResult
         name: mockToolName,
         title: mockToolName,
         kind: "search",
-        rawInput: { prompt: options.prompt },
+        rawInput: mockToolInput,
       });
     }
     if (delta.length > 0) {

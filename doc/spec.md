@@ -46,7 +46,7 @@ Adjutant は Slack Desktop の CDP イベントを収集し、`NormalizedEvent` 
 - bash ツールの Docker サンドボックス実行（`ADJUTANT_SANDBOX_MODE=non-main|all`）
 - 初回実行リチュアル（workspace bootstrap / BOOTSTRAP context 注入）
 - Pre-compaction memory flush + context compaction 連動制御
-- `memory_search` / `memory_get`（main セッション限定）と `memory_write`（`memoryWriteEnabled` run 限定）
+- `tool_hub`（`memory/search|get|write`, `slack/search` を provider/action で公開）
 
 ### 2.2 現在実装済み（`src/`）
 
@@ -75,9 +75,9 @@ Adjutant は Slack Desktop の CDP イベントを収集し、`NormalizedEvent` 
 - pre-compaction memory flush（閾値判定）と context overflow 時の `session.compact()` 再試行
 - compaction メタデータの永続化（`<stateDir>/worker/sessions.json`）
 - markdown summary batch service（`runOnce`, watermark 保存, transcript 増分読込）
-- `memory_write` ツール（`memoryWriteEnabled=true` の run 限定）
+- `tool_hub(provider=memory, action=write)`（`memoryWriteEnabled=true` の run 限定）
 - sandbox 実行設定の session factory 連携（`ADJUTANT_SANDBOX_MODE=off|non-main|all`）
-- Phase B 統合テスト（memory/sandbox/audit、path traversal/symlink 拒否、memory_write->summary->memory_search）
+- Phase B 統合テスト（memory/sandbox/audit、path traversal/symlink 拒否、tool_hub memory/write -> summary -> memory/search）
 
 ### 2.3 未実装
 
@@ -374,7 +374,7 @@ vNext では notification について、collector 調整により以下の opti
 | `ADJUTANT_MEMORY_FLUSH_SOFT_THRESHOLD_TOKENS` | `4000`                                | flush 閾値計算の soft threshold                 |
 | `ADJUTANT_MEMORY_FLUSH_PROMPT`                | 組み込み既定文                        | flush turn の user prompt                       |
 | `ADJUTANT_MEMORY_FLUSH_SYSTEM_PROMPT`         | 組み込み既定文                        | flush turn の system prompt                     |
-| `ADJUTANT_MEMORY_SEARCH_ENABLED`              | `true`                                | memory_search/memory_get 有効化                 |
+| `ADJUTANT_MEMORY_SEARCH_ENABLED`              | `true`                                | `tool_hub` の memory search/get を有効化        |
 | `ADJUTANT_MEMORY_SEARCH_DB_PATH`              | `<stateDir>/memory/<agentId>.sqlite`  | メモリ検索インデックス DB                       |
 | `ADJUTANT_MEMORY_SEARCH_MODEL`                | `text-embedding-3-small`              | 埋め込みモデル                                  |
 | `ADJUTANT_MEMORY_SEARCH_MAX_RESULTS`          | `5`                                   | 検索結果上限                                    |
@@ -387,12 +387,14 @@ vNext では notification について、collector 調整により以下の opti
 | `ADJUTANT_MEMORY_SEARCH_CANDIDATE_MULTIPLIER` | `3`                                   | 候補拡張倍率                                    |
 | `ADJUTANT_MEMORY_SEARCH_VECTOR_WEIGHT`        | `0.7`                                 | hybrid score の vector 重み                     |
 | `ADJUTANT_MEMORY_SEARCH_TEXT_WEIGHT`          | `0.3`                                 | hybrid score の text 重み                       |
-| `ADJUTANT_SANDBOX_MODE`                       | `all`                                 | bash sandbox mode（`off` / `non-main` / `all`） |
+| `ADJUTANT_SANDBOX_MODE`                       | `all`                                 | tool sandbox mode（`off` / `non-main` / `all`） |
 | `ADJUTANT_SANDBOX_IMAGE`                      | `adjutant-sandbox:trixie-slim`        | sandbox Docker image                            |
 | `ADJUTANT_SANDBOX_AUTO_BUILD_IMAGE`           | `true`                                | 未存在時に sandbox image を自動 build する      |
+| `ADJUTANT_SANDBOX_HOME`                       | `/home/agent`                         | sandbox 内 `HOME`（tmpfs）                      |
+| `ADJUTANT_SANDBOX_USER`                       | `<host uid>:<host gid>` / `1000:1000` | sandbox 実行ユーザー                            |
 | `ADJUTANT_SANDBOX_ENV_ALLOWLIST`              | `LANG,LC_ALL,TERM,TZ`                 | sandbox に引き渡す環境変数 allowlist            |
 | `ADJUTANT_SANDBOX_WORKDIR`                    | `/workspace`                          | コンテナ内作業ディレクトリ                      |
-| `ADJUTANT_SANDBOX_NETWORK`                    | 未設定（bridge）                      | Docker network（例: `none`）                    |
+| `ADJUTANT_SANDBOX_NETWORK`                    | `none`                                | Docker network                                  |
 | `ADJUTANT_SANDBOX_MEMORY`                     | 未設定                                | Docker memory limit（例: `1g`）                 |
 | `ADJUTANT_SANDBOX_PIDS_LIMIT`                 | `256`                                 | Docker pids limit                               |
 
@@ -528,30 +530,36 @@ vNext では notification について、collector 調整により以下の opti
 
 ### 13.6 SQLite Hybrid Memory Search / Memory Write（Local File First）
 
-- `memory_search` / `memory_get` は `memoryScope=main` のセッションでのみ custom tool として登録する。
-- `memory_write` は `memoryWriteEnabled=true` の run で custom tool として登録する。
-- `memoryWriteEnabled=false` の run では `memory_write` を登録せず、`memory_write` の tool event は監査対象から除外する。
-- `memory_write` の入力は `{ content: string; scope?: "daily" | "long-term" }`。
+- custom tool 公開面は `tool_hub` に統一し、memory 操作は `provider=memory` / `action=search|get|write` で呼び出す。
+- `memory/search` / `memory/get` は `memoryScope=main` のセッションでのみ利用可能。
+- `memory/write` は `memoryWriteEnabled=true` の run でのみ利用可能。
+- `memoryWriteEnabled=false` の run では `memory/write` は provider catalog に出さず、`memory_write` 相当の tool event は監査対象から除外する。
+- `memory/write` の入力は `{ content: string; scope?: "daily" | "long-term" }`。
 - `scope=daily` は `memory/YYYY-MM-DD.md` へ追記し、`scope=long-term` は `MEMORY.md` を更新する。
 - source of truth はローカル Markdown（`MEMORY.md` と `memory/**/*.md`）。
 - index DB の既定値は `<stateDir>/memory/<agentId>.sqlite`。
 - 検索は FTS5(BM25) と sqlite-vec のハイブリッドスコアで返す。
 - 埋め込み取得失敗時は BM25 のみで継続し、`fallback` を返す。
-- `memory_get` は allowlist（`MEMORY.md`, `memory/*.md`）+ workspace 内 + symlink 拒否で path を検証する。
+- `memory/get` は allowlist（`MEMORY.md`, `memory/*.md`）+ workspace 内 + symlink 拒否で path を検証する。
 - 例外は throw せず、`disabled/error` を含む tool 契約レスポンスへ正規化する。
 
-### 13.7 Bash Sandbox（Docker）
+### 13.7 Tool Sandbox（Docker）
 
-- `ADJUTANT_SANDBOX_MODE=all`（既定）では heartbeat を除く全セッションの bash 実行をコンテナ化。
-- `ADJUTANT_SANDBOX_MODE=non-main` では `memoryScope=main` 以外（spoke）の bash 実行のみをコンテナ化。
+- `ADJUTANT_SANDBOX_MODE=all`（既定）では heartbeat を除く全セッションの `bash` / `read` / `edit` / `write` / `grep` / `find` / `ls` をコンテナ化。
+- `ADJUTANT_SANDBOX_MODE=non-main` では `memoryScope=main` 以外（spoke）の同ツール実行のみをコンテナ化。
 - `ADJUTANT_SANDBOX_MODE=off` では従来どおりホスト実行。
 - 起動時（ACP 標準: `src/index.ts`、legacy 統合: `legacy/impl-20260228/src/assistant/main.ts`）は以下順で fail-safe 初期化する。
   1. Docker daemon 可用性確認（不可なら起動中断）
   2. sandbox image 存在確認（未存在時は `ADJUTANT_SANDBOX_AUTO_BUILD_IMAGE=true` なら自動 build）
   3. `configureSandbox()` へ per-tool 実行 spec を注入
-- bash 実行は `docker run --rm -i -w <mappedCwd> ... <image> bash -lc "<command>"` を使用し、tool 呼び出し単位でコンテナを作成・終了時削除する。
+- bash 実行は `docker run --rm -i --pull=never --init --user <uid>:<gid> -e HOME=<home> --workdir <mappedCwd> ... <image> bash -lc "<command>"` を使用し、tool 呼び出し単位でコンテナを作成・終了時削除する。
+- file tools も同じ `SandboxRunSpec` を共有し、workspace は `/workspace` へ写像して実行する。
 - 常駐コンテナは保持しないため、並行セッション時も tool 実行は独立コンテナとして分離される。
-- sandbox イメージには `bash` / `git` / `curl` / `jq` / `rg`（ripgrep）を同梱する。
+- workspace は `/workspace` へ bind mount し、`HOME=/home/agent` は uid/gid を合わせた tmpfs を割り当てる。
+- `ADJUTANT_SANDBOX_USER` 未指定時は POSIX でホスト UID/GID を使い、取得不可環境では `1000:1000` を使う。
+- sandbox には `--read-only`, `--network=none`, `--cap-drop=ALL`, `--security-opt no-new-privileges=true`, `--security-opt seccomp=builtin`, `--ipc=private`, `--cgroupns=private`, `--hostname=sandbox` を付与する。
+- sandbox イメージには `bash` / `git` / `curl` / `jq` / `python3` / `python3-pip` / `rg`（ripgrep）を同梱する。
+- workspace 外 path は file tool 実行前に拒否する。
 
 ## 14. ACP 分離アーキテクチャ（s02 基準）
 
@@ -563,7 +571,7 @@ vNext では notification について、collector 調整により以下の opti
 - AI 実行部を `agent-worker-acp` として分離し、`control-plane` と ACP（JSON-RPC over stdio）で接続する。
 - `collector` は Process RPC（JSON-RPC over stdio）で `control-plane` と接続する。
 - vNext の標準経路は OpenClaw 寄せの session/transcript 中心設計とし、durable queue / replay / duplicate 吸収を control-plane の主要責務にしない。
-- Slack 通知は ephemeral trigger として扱い、必要な文脈は `play-slack-search` で都度取得する。
+- Slack 通知は ephemeral trigger として扱い、必要な文脈は `tool_hub(provider=slack, action=search)` で都度取得する。
 - heartbeat は `main` セッション上の full agent turn とし、`HEARTBEAT.md` / `HEARTBEAT_OK` / busy 時 `skip + retry` の mental model を採用する。
 
 ### 14.2 プロセス構成
@@ -622,7 +630,7 @@ sequenceDiagram
   CP-->>C: accepted
   alt direct mention notification
     CP->>AW: initialize/session.new/session.prompt
-    AW->>T: play-slack-search(...)
+    AW->>T: tool_hub(slack/search) -> play-slack-search(...)
     T-->>AW: context
     AW-->>CP: session/update stream
     AW-->>CP: draft reply / no_action / needs_review

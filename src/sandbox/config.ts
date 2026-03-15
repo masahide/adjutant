@@ -1,18 +1,15 @@
-import type { SandboxConfig, SandboxMode } from "./types.js";
-
-const DEFAULT_SANDBOX_IMAGE = "adjutant-sandbox:trixie-slim";
-const DEFAULT_SANDBOX_CONTAINER_PREFIX = "adjutant-sandbox";
-const DEFAULT_SANDBOX_WORKDIR = "/workspace";
-const DEFAULT_SANDBOX_TMPFS = ["/tmp", "/var/tmp", "/run"];
-const DEFAULT_SANDBOX_CAP_DROP = ["ALL"];
-
-function parseSandboxMode(value: string | undefined): SandboxMode {
-  const normalized = value?.trim().toLowerCase();
-  if (normalized === "off" || normalized === "non-main" || normalized === "all") {
-    return normalized;
-  }
-  return "off";
-}
+import {
+  buildSandboxTmpfs,
+  DEFAULT_SANDBOX_CAP_DROP,
+  DEFAULT_SANDBOX_CONTAINER_PREFIX,
+  DEFAULT_SANDBOX_IMAGE,
+  DEFAULT_SANDBOX_NETWORK,
+  DEFAULT_SANDBOX_WORKDIR,
+  parseSandboxMode,
+  resolveSandboxHome,
+  resolveSandboxUser,
+} from "./config-helpers.js";
+import type { SandboxConfig } from "./types.js";
 
 function parseBoolean(value: string | undefined, fallback: boolean): boolean {
   if (typeof value !== "string") {
@@ -70,6 +67,9 @@ function parseCsvList(value: string | undefined): string[] {
 }
 
 export function resolveSandboxConfig(env: NodeJS.ProcessEnv = process.env): SandboxConfig {
+  const user = resolveSandboxUser(env.ADJUTANT_SANDBOX_USER);
+  const home = resolveSandboxHome(env.ADJUTANT_SANDBOX_HOME);
+
   return {
     mode: parseSandboxMode(env.ADJUTANT_SANDBOX_MODE),
     docker: {
@@ -80,10 +80,12 @@ export function resolveSandboxConfig(env: NodeJS.ProcessEnv = process.env): Sand
         DEFAULT_SANDBOX_CONTAINER_PREFIX
       ),
       workdir: parseString(env.ADJUTANT_SANDBOX_WORKDIR, DEFAULT_SANDBOX_WORKDIR),
+      home,
+      user,
       envAllowlist: parseCsvList(env.ADJUTANT_SANDBOX_ENV_ALLOWLIST),
       readOnlyRoot: true,
-      tmpfs: DEFAULT_SANDBOX_TMPFS,
-      network: parseOptionalString(env.ADJUTANT_SANDBOX_NETWORK),
+      tmpfs: buildSandboxTmpfs(home, user),
+      network: parseOptionalString(env.ADJUTANT_SANDBOX_NETWORK) ?? DEFAULT_SANDBOX_NETWORK,
       capDrop: DEFAULT_SANDBOX_CAP_DROP,
       pidsLimit: parsePositiveInt(env.ADJUTANT_SANDBOX_PIDS_LIMIT, 256),
       memory: parseOptionalString(env.ADJUTANT_SANDBOX_MEMORY),

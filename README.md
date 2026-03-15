@@ -14,12 +14,7 @@ Slack Desktop の Chrome DevTools Protocol (CDP) からイベントを収集し�
 - Slack通知の一次判定（`TriggerFilter.secondaryClassifier`）に OpenAI 軽量モデルを接続可能
 
 GitHub / ローカル Git 収集は未実装で、仕様メモは `doc/spec.md` にあります。日次 Markdown 要約は `ADJUTANT_MARKDOWN_SUMMARY_BATCH_ENABLED=1` で有効化できます。
-bash ツールの Docker サンドボックス実行は `ADJUTANT_SANDBOX_MODE=non-main|all` で有効化できます（既定 `off`）。
-
-デバッグ向けメモ:
-
-- 現状の実装では raw log 検証とローカル起動をしやすくするため、`ADJUTANT_SANDBOX_MODE` の既定値を一時的に `off` にしています。
-- Docker sandbox を前提に確認したい場合だけ、`ADJUTANT_SANDBOX_MODE=non-main|all` を明示してください。
+Docker sandbox は既定で有効です（`ADJUTANT_SANDBOX_MODE=all`）。sandbox 対象では `bash` に加えて `read` / `edit` / `write` / `grep` / `find` / `ls` もコンテナ実行されます。custom tool 公開面は `tool_hub` に統一されています。
 
 日次 Markdown 要約バッチの実装挙動（抜粋）は次のとおりです。
 
@@ -131,12 +126,14 @@ pnpm check               # format -> typecheck -> test
 | `ADJUTANT_ROUTE_LLM_MODEL`                     | `gpt-5-mini`                                         | route LLM に使用する OpenAI モデル名                                                  |
 | `ADJUTANT_ROUTE_LLM_TIMEOUT_MS`                | `1000`                                               | route LLM 判定のタイムアウト（ミリ秒）                                                |
 | `ADJUTANT_ROUTE_LLM_MAX_CONCURRENT`            | `1`                                                  | route LLM 判定の同時実行上限（1で逐次）                                               |
-| `ADJUTANT_SANDBOX_MODE`                        | `off`                                                | bash sandbox mode（`off` / `non-main` / `all`）                                       |
+| `ADJUTANT_SANDBOX_MODE`                        | `all`                                                | bash sandbox mode（`off` / `non-main` / `all`）                                       |
 | `ADJUTANT_SANDBOX_IMAGE`                       | `adjutant-sandbox:trixie-slim`                       | sandbox Docker image                                                                  |
 | `ADJUTANT_SANDBOX_AUTO_BUILD_IMAGE`            | `true`                                               | sandbox image が未存在時に自動 build                                                  |
+| `ADJUTANT_SANDBOX_HOME`                        | `/home/agent`                                        | sandbox 内 `HOME`。tmpfs で割り当てる                                                 |
+| `ADJUTANT_SANDBOX_USER`                        | `<host uid>:<host gid>` または `1000:1000`           | sandbox 実行ユーザー。未指定時は POSIX でホスト UID/GID を使い、不可なら `1000:1000`  |
 | `ADJUTANT_SANDBOX_WORKDIR`                     | `/workspace`                                         | コンテナ内作業ディレクトリ                                                            |
 | `ADJUTANT_SANDBOX_ENV_ALLOWLIST`               | `LANG,LC_ALL,TERM,TZ`                                | sandbox へ受け渡す環境変数 allowlist                                                  |
-| `ADJUTANT_SANDBOX_NETWORK`                     | 未設定（bridge）                                     | Docker network（例: `none`）                                                          |
+| `ADJUTANT_SANDBOX_NETWORK`                     | `none`                                               | Docker network                                                                        |
 | `ADJUTANT_SANDBOX_MEMORY`                      | 未設定                                               | Docker memory limit（例: `1g`）                                                       |
 | `ADJUTANT_SANDBOX_PIDS_LIMIT`                  | `256`                                                | Docker pids limit                                                                     |
 | `PLAY_SLACK_SEARCH_SESSION`                    | `slack`                                              | `play-slack-search` adapter が使う playwright-cli セッション名                        |
@@ -144,21 +141,28 @@ pnpm check               # format -> typecheck -> test
 | `PLAY_SLACK_SEARCH_WORKSPACE_URL`              | -                                                    | `play_slack_search` が request/permalink から workspace を解決できない場合の fallback |
 | `OPENAI_API_KEY`                               | -                                                    | route LLM 有効時に利用する OpenAI API キー                                            |
 
-`play_slack_search` は `workspaceUrl` を request で受けるか、notification の `permalink` から workspace を解決します。`PLAY_SLACK_SEARCH_WORKSPACE_URL` はそのどちらも使えない場合の最後の fallback です。複数 workspace 運用では、この環境変数に依存せず、collector が保持する `workspace_host` / `permalink` を優先させてください。
+`tool_hub(provider=slack, action=search)` が内部で使う `play-slack-search` adapter は、`workspaceUrl` を request で受けるか、notification の `permalink` から workspace を解決します。`PLAY_SLACK_SEARCH_WORKSPACE_URL` はそのどちらも使えない場合の最後の fallback です。複数 workspace 運用では、この環境変数に依存せず、collector が保持する `workspace_host` / `permalink` を優先させてください。
 
-## Bash sandbox（Docker）
+## Tool sandbox（Docker）
 
 ```bash
 pnpm run sandbox:build
-ADJUTANT_SANDBOX_MODE=all pnpm start
+pnpm start
 ```
 
-- `off`: ホスト実行（既定）
+- `off`: ホスト実行
 - `non-main`: main 以外（spoke）のみコンテナ実行
-- `all`: heartbeat を除く全セッションをコンテナ実行
+- `all`: heartbeat を除く全セッションで `bash` と標準ファイルツールをコンテナ実行
 - 実行方式は tool 呼び出しごとの `docker run --rm`（常駐コンテナは使わない）
-- sandbox イメージには `bash` / `git` / `curl` / `jq` / `rg`（ripgrep）を同梱
+- sandbox には `--pull=never`, `--init`, `--read-only`, `--network=none`, `--cap-drop=ALL`, `--security-opt no-new-privileges=true`, `--security-opt seccomp=builtin`, `--ipc=private`, `--cgroupns=private`, `--hostname=sandbox` を付与
+- workspace は `/workspace` に bind mount し、`HOME=/home/agent` は uid/gid を合わせた tmpfs を割り当てる
+- `ADJUTANT_SANDBOX_USER` 未指定時は POSIX でホスト UID/GID を使い、取得できない環境では `1000:1000` に fallback する
+- `read` / `edit` / `write` / `grep` / `find` / `ls` も `SandboxRunSpec` を共有し、workspace 外 path は拒否する
+- custom tool 公開面は `tool_hub` 1 本のみで、`slack/search`, `memory/search`, `memory/get`, `memory/write` を provider/action として dispatch する
+- Mac の Docker Desktop では root 所有問題が見えにくいことがありますが、設計基準は WSL の Linux filesystem 側と将来の Linux 実行です
+- 既定 sandbox イメージには `bash` / `git` / `curl` / `jq` / `python3` / `python3-pip` / `rg`（ripgrep）を同梱
 - Docker 利用不可またはイメージ未ビルド時は fail-safe で起動中断します
+- WSL2 では workspace を `/mnt/c/...` ではなく Linux filesystem 側へ置くことを推奨します
 
 ## AI セッションコンテキスト方針
 
@@ -231,8 +235,8 @@ pnpm rawlog:analyze
 
 補足:
 
-- `pnpm rawlog:capture` は現状の既定値のまま Docker sandbox なしで動きます。
-- `pnpm start` でも同様に、環境変数を付けなければ sandbox は起動しません。
+- `pnpm rawlog:capture` は collector 系の補助コマンドで、通常は sandbox を経由しません。
+- `pnpm start` は既定で sandbox 初期化を行うため、Docker 利用不可環境では `ADJUTANT_SANDBOX_MODE=off` か `ADJUTANT_TEST_NO_DOCKER=1` を明示してください。
 
 ## 注意点
 

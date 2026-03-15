@@ -3,6 +3,13 @@ import { resolve } from "node:path";
 
 import type { BashOperations } from "@mariozechner/pi-coding-agent";
 
+import {
+  buildSandboxTmpfs,
+  DEFAULT_SANDBOX_CAP_DROP,
+  DEFAULT_SANDBOX_NETWORK,
+  DEFAULT_SANDBOX_HOME,
+  resolveSandboxUser,
+} from "./config-helpers.js";
 import { createPathMapper } from "./path-mapper.js";
 import type { SandboxMode, SandboxRunSpec } from "./types.js";
 
@@ -16,9 +23,6 @@ type SpawnLike = (
 
 type DockerRunEnvironment = NodeJS.ProcessEnv | Record<string, string> | undefined;
 const DEFAULT_SANDBOX_ENV_ALLOWLIST = ["LANG", "LC_ALL", "TERM", "TZ"] as const;
-const DEFAULT_SANDBOX_TMPFS = ["/tmp", "/var/tmp", "/run"] as const;
-const DEFAULT_SANDBOX_CAP_DROP = ["ALL"] as const;
-const SANDBOX_USER = "1000:1000";
 
 function normalizeEnvironment(env: DockerRunEnvironment): Record<string, string> {
   const result: Record<string, string> = {};
@@ -55,37 +59,44 @@ export function buildDockerRunArgs(params: {
   command: string;
   env?: DockerRunEnvironment;
 }): string[] {
-  const args = ["run", "--rm", "-i", "--workdir", params.containerCwd];
+  const args = ["run", "--rm", "-i", "--pull=never", "--init", "--workdir", params.containerCwd];
   const runSpec = params.runSpec;
+  const sandboxUser = runSpec.user?.trim() || resolveSandboxUser(undefined);
+  const containerHome = runSpec.containerHome?.trim() || DEFAULT_SANDBOX_HOME;
 
   if (runSpec.readOnlyRoot !== false) {
     args.push("--read-only");
   }
-  for (const entry of runSpec.tmpfs ?? DEFAULT_SANDBOX_TMPFS) {
+  for (const entry of runSpec.tmpfs ?? buildSandboxTmpfs(containerHome, sandboxUser)) {
     args.push("--tmpfs", entry);
   }
-  if (runSpec.network && runSpec.network.trim().length > 0) {
-    args.push("--network", runSpec.network.trim());
-  }
+  args.push("--network", runSpec.network?.trim() || DEFAULT_SANDBOX_NETWORK);
   for (const cap of runSpec.capDrop ?? DEFAULT_SANDBOX_CAP_DROP) {
     args.push("--cap-drop", cap);
   }
-  args.push("--security-opt", "no-new-privileges");
+  args.push("--security-opt", "no-new-privileges=true");
+  args.push("--security-opt", "seccomp=builtin");
+  args.push("--ipc=private", "--cgroupns=private", "--hostname=sandbox");
   if (typeof runSpec.pidsLimit === "number" && runSpec.pidsLimit > 0) {
     args.push("--pids-limit", String(runSpec.pidsLimit));
   }
   const memoryLimit = parseOptionalLimit(runSpec.memory);
   if (memoryLimit !== undefined) {
     args.push("--memory", memoryLimit);
+    args.push("--memory-swap", memoryLimit);
   }
 
-  args.push("--user", SANDBOX_USER);
-  args.push("-v", `${resolve(runSpec.hostWorkspaceDir)}:${runSpec.containerWorkdir}`);
+  args.push("--user", sandboxUser);
+  args.push("-e", `HOME=${containerHome}`);
+  args.push(
+    "--mount",
+    `type=bind,src=${resolve(runSpec.hostWorkspaceDir)},dst=${runSpec.containerWorkdir}`
+  );
 
   const envAllowlist = resolveEnvAllowlist(runSpec.envAllowlist);
   const env = normalizeEnvironment(params.env);
   for (const [key, value] of Object.entries(env)) {
-    if (!envAllowlist.has(key)) {
+    if (!envAllowlist.has(key) && !key.startsWith("ADJ_")) {
       continue;
     }
     args.push("-e", `${key}=${value}`);

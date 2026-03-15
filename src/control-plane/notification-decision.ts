@@ -13,6 +13,7 @@ export type NotificationDecisionToolCall = {
   toolName?: string;
   status?: string;
   result?: string;
+  rawInput?: unknown;
 };
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -73,6 +74,13 @@ function normalizeDecision(input: Record<string, unknown>): NotificationDecision
     return { action, reason, replyText };
   }
   return { action, reason, replyText, reviewNotes };
+}
+
+function isToolHubSlackSearchRawInput(rawInput: unknown): boolean {
+  if (!isObject(rawInput)) {
+    return false;
+  }
+  return rawInput.provider === "slack" && rawInput.action === "search";
 }
 
 export function parseNotificationDecision(
@@ -146,10 +154,10 @@ export function buildNotificationDecisionPrompt(projection: IngestProjection): s
     'Schema: {"action":"no_action|draft_reply|needs_review","reason":"string?","replyText":"string?","reviewNotes":"string?"}',
     "Rules:",
     "- Read Slack context before drafting a reply when an anchor is available.",
-    `- If threadTs is present, call play_slack_search with {"mode":"thread","channelId":"${channelId}","threadTs":"${threadTs ?? ""}"${permalinkJson}${workspaceUrlJson}}.`,
-    `- Else if messageTs is present, call play_slack_search with {"mode":"message","channelId":"${channelId}","messageTs":"${messageTs ?? ""}"${permalinkJson}${workspaceUrlJson}}.`,
-    `- Else if permalink is present, call play_slack_search with {"mode":"permalink","permalink":"${permalink ?? ""}"${workspaceUrlJson}}.`,
-    "- If play_slack_search fails, times out, or returns insufficient context, respond with action=needs_review.",
+    `- If threadTs is present, call tool_hub with {"provider":"slack","action":"search","args":{"mode":"thread","channelId":"${channelId}","threadTs":"${threadTs ?? ""}"${permalinkJson}${workspaceUrlJson}}}.`,
+    `- Else if messageTs is present, call tool_hub with {"provider":"slack","action":"search","args":{"mode":"message","channelId":"${channelId}","messageTs":"${messageTs ?? ""}"${permalinkJson}${workspaceUrlJson}}}.`,
+    `- Else if permalink is present, call tool_hub with {"provider":"slack","action":"search","args":{"mode":"permalink","permalink":"${permalink ?? ""}"${workspaceUrlJson}}}.`,
+    "- If tool_hub slack/search fails, times out, or returns insufficient context, respond with action=needs_review.",
     "- Use draft_reply only when a concrete reply draft can be written from the available context.",
     "- Use needs_review when context is insufficient, anchor resolution failed, or the notification looks ambiguous.",
     "- Use no_action when the notification is informational and no reply is needed.",
@@ -195,14 +203,17 @@ function summarizePlaySlackSearchFailure(
     return undefined;
   }
   for (const toolCall of toolCalls) {
-    if (toolCall.toolName !== "play_slack_search") {
+    const isPlaySlackSearch = toolCall.toolName === "play_slack_search";
+    const isToolHubSlackSearch =
+      toolCall.toolName === "tool_hub" && isToolHubSlackSearchRawInput(toolCall.rawInput);
+    if (!isPlaySlackSearch && !isToolHubSlackSearch) {
       continue;
     }
-    if (toolCall.status !== "failed") {
+    if (toolCall.status !== "failed" && toolCall.status !== "error") {
       continue;
     }
     const detail = asString(toolCall.result);
-    return detail ? `play_slack_search failed: ${detail}` : "play_slack_search failed";
+    return detail ? `tool_hub slack/search failed: ${detail}` : "tool_hub slack/search failed";
   }
   return undefined;
 }
