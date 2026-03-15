@@ -8,6 +8,8 @@ import type {
   CommandRequest,
   CreateThreadRequest,
   CreateThreadResponse,
+  GenerateThreadTitleRequest,
+  GenerateThreadTitleResponse,
   GetHeartbeatHistoryResponse,
   GetHeartbeatLastResponse,
   GetChatHistoryResponse,
@@ -32,6 +34,7 @@ import type { RunEventBuffer } from "./run-event-buffer.js";
 import { mapAbortToChatStreamEvent } from "./chat-stream-event-mapper.js";
 import type { ChatHistoryStore } from "./chat-history-store.js";
 import type { ThreadRepository } from "./thread-repository.js";
+import type { GenerateThreadTitleInput, ThreadTitleGenerator } from "./thread-title-generator.js";
 
 export interface SubmitPromptResult {
   accepted: AcceptedResponse;
@@ -56,6 +59,7 @@ interface ControlPlaneRouterDeps {
   chatHistoryStore: ChatHistoryStore;
   threadRepository: ThreadRepository;
   buildThreadSnapshot: (threadId: string) => ThreadSnapshotResponse | undefined;
+  generateThreadTitle?: ThreadTitleGenerator;
   supervisor: WorkerSupervisor;
   permissionGateway: PermissionGateway;
   runHeartbeat?: (reason: string) => Promise<PostHeartbeatRunResponse>;
@@ -180,6 +184,20 @@ function isUpdateThreadRequest(value: unknown): value is UpdateThreadRequest {
     return false;
   }
   return true;
+}
+
+function isGenerateThreadTitleRequest(value: unknown): value is GenerateThreadTitleRequest {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record);
+  if (keys.length !== 1 || keys[0] !== "messages" || !Array.isArray(record.messages)) {
+    return false;
+  }
+  return record.messages.every(
+    (message) => typeof message === "string" && message.trim().length > 0
+  );
 }
 
 function isPostPermissionResolveRequest(value: unknown): value is PostPermissionResolveRequest {
@@ -420,6 +438,45 @@ export function createControlPlaneRequestHandler(deps: ControlPlaneRouterDeps) {
       return;
     }
 
+    const threadGenerateTitleMatch = /^\/api\/threads\/([^/]+)\/generate-title$/.exec(url.pathname);
+    if (method === "POST" && threadGenerateTitleMatch?.[1]) {
+      try {
+        const threadId = decodeURIComponent(threadGenerateTitleMatch[1]);
+        const thread = deps.threadRepository.getOrVirtual(threadId);
+        if (thread === undefined) {
+          writeJson(res, 404, { code: "NOT_FOUND", message: `unknown threadId: ${threadId}` });
+          return;
+        }
+        const payload = await readJsonBody<unknown>(req);
+        if (!isGenerateThreadTitleRequest(payload)) {
+          writeJson(res, 400, {
+            code: "INVALID_REQUEST",
+            message: "messages must be a non-empty string array",
+          });
+          return;
+        }
+        const generatorInput: GenerateThreadTitleInput = {
+          messages: payload.messages,
+        };
+        const generated = deps.generateThreadTitle
+          ? await deps.generateThreadTitle(generatorInput)
+          : {
+              title: payload.messages[0]?.trim().slice(0, 40) ?? "",
+              model: "gpt-5-nano",
+              fallback: true,
+            };
+        const response: GenerateThreadTitleResponse = generated;
+        writeJson(res, 200, response);
+      } catch (error) {
+        const summary = toErrorSummary(error);
+        writeJson(res, toHttpStatusCode(summary), {
+          code: summary.errorCode,
+          message: summary.errorMessage,
+        });
+      }
+      return;
+    }
+
     const threadMatch = /^\/api\/threads\/([^/]+)$/.exec(url.pathname);
     if (threadMatch?.[1]) {
       const threadId = decodeURIComponent(threadMatch[1]);
@@ -441,6 +498,13 @@ export function createControlPlaneRequestHandler(deps: ControlPlaneRouterDeps) {
             writeJson(res, 400, {
               code: "INVALID_REQUEST",
               message: "only title/archived fields are allowed",
+            });
+            return;
+          }
+          if (threadId === "main" && payload.archived === true) {
+            writeJson(res, 403, {
+              code: "FORBIDDEN",
+              message: "main thread cannot be archived",
             });
             return;
           }

@@ -1707,6 +1707,13 @@ test(
     assert.equal(patched.title, "Renamed");
     assert.equal(patched.archived, true);
 
+    const patchMainArchiveRes = await fetch(`${runtime.baseUrl}/api/threads/main`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ archived: true }),
+    });
+    assert.equal(patchMainArchiveRes.status, 403);
+
     const deleteMainRes = await fetch(`${runtime.baseUrl}/api/threads/main`, {
       method: "DELETE",
     });

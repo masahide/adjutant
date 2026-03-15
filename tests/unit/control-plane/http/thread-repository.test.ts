@@ -88,7 +88,7 @@ test("ThreadRepository は delete tombstone を replay して削除済み thread
   assert.equal(restored.list()[0]?.threadId, "main");
 });
 
-test("ThreadRepository.update は title/archived 更新を反映する", async (t) => {
+test("ThreadRepository.update は title 更新を反映する", async (t) => {
   const stateDir = await mkdtemp(join(tmpdir(), "adjutant-thread-repo-update-"));
   t.after(async () => {
     await rm(stateDir, { recursive: true, force: true });
@@ -101,12 +101,11 @@ test("ThreadRepository.update は title/archived 更新を反映する", async (
 
   const mainUpdated = await repository.update("main", {
     title: "Primary",
-    archived: true,
   });
   assert.ok(mainUpdated);
   assert.equal(mainUpdated.threadId, "main");
   assert.equal(mainUpdated.title, "Primary");
-  assert.equal(mainUpdated.archived, true);
+  assert.equal(mainUpdated.archived, false);
   assert.equal(mainUpdated.isDefault, true);
 });
 
@@ -125,6 +124,25 @@ test("ThreadRepository.delete は main の削除を明示拒否する", async (t
     },
     {
       message: "INVALID_REQUEST: main thread cannot be deleted",
+    }
+  );
+});
+
+test("ThreadRepository.update は main の archive を拒否する", async (t) => {
+  const stateDir = await mkdtemp(join(tmpdir(), "adjutant-thread-repo-main-archive-"));
+  t.after(async () => {
+    await rm(stateDir, { recursive: true, force: true });
+  });
+
+  const repository = createThreadRepository(stateDir);
+  await repository.initialize();
+
+  await assert.rejects(
+    async () => {
+      await repository.update("main", { archived: true });
+    },
+    {
+      message: "INVALID_REQUEST: main thread cannot be archived",
     }
   );
 });
