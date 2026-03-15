@@ -50,5 +50,5 @@ export function serializeBrowserCode<TInput>(
   browserRunner: (page: unknown, input: TInput) => Promise<unknown> | unknown,
   input: TInput,
 ): string {
-  return `async page => (${browserRunner.toString()})(page, ${JSON.stringify(input)})`;
+  return `async page => { const __name = (target, _name) => target; return (${browserRunner.toString()})(page, ${JSON.stringify(input)}); }`;
 }

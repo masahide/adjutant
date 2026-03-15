@@ -7,7 +7,7 @@ export function createToolHubToolDefinition(toolHub: ToolHub): ToolDefinition {
     name: "tool_hub",
     label: "Tool Hub",
     description:
-      "Single entrypoint for provider/action discovery and execution. Use no args for providers, provider only for actions, provider+action for help, provider+action+args to execute.",
+      "Single entrypoint for discovering and using custom tools. If you think a specialized integration may exist but do not see a direct tool, start with tool_hub. Use no args to list providers, provider only to list actions, provider+action for help, and provider+action+args to execute.",
     parameters: {
       type: "object",
       properties: {

@@ -53,7 +53,7 @@ export function createPlaySlackSearchToolDefinition(
     name: PLAY_SLACK_SEARCH_TOOL_NAME,
     label: PLAY_SLACK_SEARCH_TOOL_NAME,
     description:
-      "Search or resolve Slack message context via play-slack-search. Supports thread, message, search, and permalink modes.",
+      "Search or resolve Slack message context via play-slack-search. Use mode=search with Slack query syntax such as from:me, from:@やまさき after:2026-03-03, or in:#channel. Supports thread, message, search, and permalink modes.",
     parameters: {
       type: "object",
       properties: {

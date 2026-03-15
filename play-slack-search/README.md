@@ -4,6 +4,26 @@ Slack を `playwright-cli` 経由で検索し、検索結果またはチャン�
 
 内部動作の説明は [doc/how-it-works.md](./doc/how-it-works.md) を参照してください。
 
+## まずこれを見る
+
+用途:
+Slack メッセージ検索。自分の投稿だけを取りたいときは `from:me` を使います。
+
+必須パラメータと頻出クエリ例:
+
+- `--query` は検索実行で必須
+- `from:me`
+- `from:@やまさき after:2026-03-03`
+- `from:me in:#texチーム`
+- `error from:me after:2026-03-03`
+
+Tips / 注意事項:
+
+- Slack UI と同じ検索構文で検索されます
+- 自分の投稿は `from:me`、自分宛ては `to:me`
+- `from:@表示名` はヒットしないことがあります。その場合は `from:me` や `from:<@USER_ID>` を試してください
+- 0 件なら、まず人だけの条件でヒット確認してから `after:` や `in:` を足すと切り分けやすいです
+
 ## セットアップ
 
 ```bash
