@@ -47,10 +47,10 @@ export function Thread() {
       >
         {pendingPermissions.length > 0 ? (
           <div
-            className="mx-auto w-full max-w-[var(--thread-max-width)] rounded-xl border border-yellow-700/60 bg-yellow-950/40 p-3"
+            className="mx-auto w-full max-w-[var(--thread-max-width)] rounded-xl border border-amber-300/90 bg-amber-50/90 p-3 dark:border-yellow-700/60 dark:bg-yellow-950/40"
             aria-label="pending-permission-banner"
           >
-            <div className="mb-2 text-xs font-bold uppercase tracking-wide text-yellow-400">
+            <div className="mb-2 text-xs font-bold uppercase tracking-wide text-amber-800 dark:text-yellow-400">
               Pending Permissions
             </div>
             <ul className="flex flex-col gap-2">
@@ -61,7 +61,7 @@ export function Thread() {
                     key={permission.requestId}
                     className="flex flex-wrap items-center justify-between gap-2"
                   >
-                    <span className="text-sm text-yellow-200">
+                    <span className="text-sm text-amber-900 dark:text-yellow-200">
                       {permission.title}
                       {permission.toolCallId ? ` (${permission.toolCallId})` : ""}
                     </span>

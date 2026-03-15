@@ -4,7 +4,7 @@ export const DEFAULT_SANDBOX_IMAGE = "adjutant-sandbox:trixie-slim";
 export const DEFAULT_SANDBOX_CONTAINER_PREFIX = "adjutant-sandbox";
 export const DEFAULT_SANDBOX_WORKDIR = "/workspace";
 export const DEFAULT_SANDBOX_HOME = "/home/agent";
-export const DEFAULT_SANDBOX_NETWORK = "none";
+export const DEFAULT_SANDBOX_NETWORK = "bridge";
 export const DEFAULT_SANDBOX_CAP_DROP = ["ALL"];
 
 export function parseSandboxMode(value: string | undefined): SandboxMode {

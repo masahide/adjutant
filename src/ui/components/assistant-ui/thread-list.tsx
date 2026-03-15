@@ -20,7 +20,6 @@ import {
   use,
   useCallback,
   useEffect,
-  useMemo,
   useRef,
   useState,
 } from "react";
@@ -151,11 +150,11 @@ export const ThreadListSidebar: FC = () => {
     <ThreadListActionsContext
       value={{ onArchived: handleArchived, onUnarchived: handleUnarchived }}
     >
-      <aside className="relative flex flex-col border-r border-border/40 bg-[#0a0e14]">
+      <aside className="adj-sidebar relative flex flex-col border-r border-border/40">
         <div className="flex flex-col gap-3 p-3 pb-2">
           <div className="px-1 text-lg font-bold tracking-tight text-foreground/90">Adjutant</div>
           <ThreadListPrimitive.Root className="flex flex-col gap-0.5">
-            <PinnedMainThreadItem />
+            <ThreadListPrimitive.Items components={PINNED_MAIN_THREAD_COMPONENTS} />
           </ThreadListPrimitive.Root>
           <ThreadListPrimitive.New asChild>
             <button
@@ -170,7 +169,7 @@ export const ThreadListSidebar: FC = () => {
 
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-2 pb-2">
           <ThreadListPrimitive.Root className="flex flex-col gap-0.5">
-            <RegularThreadListItems />
+            <ThreadListPrimitive.Items components={REGULAR_THREAD_LIST_ITEM_COMPONENTS} />
           </ThreadListPrimitive.Root>
 
           {archivedCount > 0 ? (
@@ -231,13 +230,14 @@ export const ThreadListSidebar: FC = () => {
   );
 };
 
-const ThreadListItem: FC = () => {
+const ThreadListItemBase = () => {
   const aui = useAui();
   const threadListActions = use(ThreadListActionsContext);
+  const threadRemoteId = useAuiState((s) => s.threadListItem.remoteId);
+  const threadLocalId = useAuiState((s) => s.threadListItem.id);
   const threadStatus = useAuiState((s) => s.threadListItem.status);
   const threadTitle = useAuiState((s) => s.threadListItem.title);
-  const currentItem = readThreadListItemIdentity(aui);
-  const threadId = currentItem.remoteId || currentItem.id || "main";
+  const threadId = threadRemoteId || threadLocalId || "main";
   const isMainThread = threadId === "main";
   const isArchived = threadStatus === "archived";
   const title = resolveThreadTitle(threadTitle, isMainThread);
@@ -292,7 +292,7 @@ const ThreadListItem: FC = () => {
     setIsEditing(false);
   }, [aui, draftTitle, title]);
 
-  const actionButtons = useMemo(() => {
+  const actionButtons = (() => {
     if (isEditing) {
       return (
         <>
@@ -355,16 +355,7 @@ const ThreadListItem: FC = () => {
         )}
       </>
     );
-  }, [
-    cancelEdit,
-    handleArchive,
-    handleUnarchive,
-    isArchived,
-    isEditing,
-    isMainThread,
-    openEdit,
-    submitEdit,
-  ]);
+  })();
 
   return (
     <ThreadListItemPrimitive.Root
@@ -424,6 +415,30 @@ const ThreadListItem: FC = () => {
   );
 };
 
+const ThreadListItem = () => {
+  return <ThreadListItemBase />;
+};
+
+const MainOnlyThreadListItem = () => {
+  const threadRemoteId = useAuiState((s) => s.threadListItem.remoteId);
+  const threadLocalId = useAuiState((s) => s.threadListItem.id);
+  const threadId = threadRemoteId || threadLocalId || "main";
+  if (threadId !== "main") {
+    return null;
+  }
+  return <ThreadListItemBase />;
+};
+
+const NonMainThreadListItem = () => {
+  const threadRemoteId = useAuiState((s) => s.threadListItem.remoteId);
+  const threadLocalId = useAuiState((s) => s.threadListItem.id);
+  const threadId = threadRemoteId || threadLocalId || "main";
+  if (threadId === "main") {
+    return null;
+  }
+  return <ThreadListItemBase />;
+};
+
 function resolveThreadTitle(title: string | undefined, isMain: boolean): string {
   const trimmed = title?.trim();
   if (trimmed && trimmed.length > 0) {
@@ -436,34 +451,13 @@ const THREAD_LIST_ITEM_COMPONENTS = {
   ThreadListItem,
 } as const;
 
-const PinnedMainThreadItem: FC = () => {
-  const mainIndex = useAuiState((s) => s.threads.threadIds.findIndex((id) => id === "main"));
-  if (mainIndex < 0) {
-    return null;
-  }
-  return (
-    <ThreadListPrimitive.ItemByIndex index={mainIndex} components={THREAD_LIST_ITEM_COMPONENTS} />
-  );
-};
+const PINNED_MAIN_THREAD_COMPONENTS = {
+  ThreadListItem: MainOnlyThreadListItem,
+} as const;
 
-const RegularThreadListItems: FC = () => {
-  const threadCount = useAuiState((s) => s.threads.threadIds.length);
-  const mainIndex = useAuiState((s) => s.threads.threadIds.findIndex((id) => id === "main"));
-
-  const items = useMemo(() => {
-    return Array.from({ length: threadCount }, (_, index) => index)
-      .filter((index) => index !== mainIndex)
-      .map((index) => (
-        <ThreadListPrimitive.ItemByIndex
-          key={index}
-          index={index}
-          components={THREAD_LIST_ITEM_COMPONENTS}
-        />
-      ));
-  }, [mainIndex, threadCount]);
-
-  return items;
-};
+const REGULAR_THREAD_LIST_ITEM_COMPONENTS = {
+  ThreadListItem: NonMainThreadListItem,
+} as const;
 
 function readThreadListItemIdentity(aui: ReturnType<typeof useAui>): {
   id?: string;

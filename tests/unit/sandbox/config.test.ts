@@ -37,7 +37,7 @@ test("resolveSandboxConfig defaults sandbox mode to all", () => {
   assert.equal(config.docker.home, "/home/agent");
   assert.equal(config.docker.workdir, "/workspace");
   assert.match(config.docker.user, /^\d+:\d+$/);
-  assert.equal(config.docker.network, "none");
+  assert.equal(config.docker.network, "bridge");
 });
 
 test("resolveSandboxConfig reflects sandbox image override", () => {
