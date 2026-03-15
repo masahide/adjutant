@@ -15,6 +15,7 @@
 - What
   - Slack からは「自分宛メンション通知」だけを即時 AI 起動トリガーとして扱う。
   - 通知だけでは文脈が不足するため、AI は必要に応じて `play-slack-search` を呼び、`thread / message / search / permalink` のいずれかで周辺文脈を取得する。
+  - 将来互換のため、`play-slack-search` は standalone custom tool のまま固定せず、`ToolHub` provider/action 経由へ戻せる構成にする。
   - `self post` と `self reaction` は自分の行動ログとして日次ファイルへ記録するが、AI 即時起動トリガーにはしない。`self reaction` は反応先本文を reaction 時点のスナップショットとして保持する。
   - heartbeat は `main` セッション上の full agent turn として定期実行し、`HEARTBEAT.md` を読み、必要な対応がなければ `HEARTBEAT_OK` で終了する。
   - Slack 通知一覧は `ActivityFeed` として表示するが、これは durable queue や SoT ではなく UI 向けの lightweight unread-like view とし、v1 では既読状態を保持しない。
@@ -26,6 +27,7 @@
 - How
   - 通知取得は既存 `collector-slack` の CDP 収集を使うが、処理対象は自分宛メンション通知に限定する。notification 正規化には `threadTs` / `messageTs` / `permalink` を追加収集する。
   - Slack 読み取りは `customTools` 経由の `play-slack-search` だけに絞る。
+  - follow-up では `ToolHub` を現行 ACP 構成へ復帰し、`play-slack-search` を provider/action として登録する。
   - AI の結果は `no_action | draft_reply | needs_review` に正規化するが、独立した decision store には保存せず transcript や UI 表示に残す。
   - v1 では Slack 送信口は持たず、返信が必要な場合は draft reply の生成までに留める。
 - `play-slack-search` の `spawn adapter` は 3 分 timeout を持ち、timeout 時は run 全体を落とさず `needs_review` に変換する。
@@ -46,6 +48,7 @@
   - AI の結果を `no_action | draft_reply | needs_review(replyText?)` に正規化する
   - `vendor/openclaw` 相当の heartbeat を main セッション上の full agent turn として有効化する
   - 仕様・図・テストを OpenClaw 寄せ前提に整理する
+  - follow-up として `ToolHub` 復活と `play-slack-search` の provider/action 化を計画へ含める
 - 成果物
   - 実装: `src/collector-slack/*`, `src/control-plane/*`, `src/assistant/*`
   - View: `ActivityFeed`（Slack 通知専用の unread-like view。v1 では既読管理なし）
@@ -184,6 +187,7 @@
 - Tool I/O
   - `play_slack_search(mode, ...)`
   - 論理機能として `thread`, `message`, `search`, `permalink` を提供する
+  - follow-up では `tool_hub(provider=\"play-slack-search\", action, args)` を公開面の第一候補とする
 - heartbeat I/O
   - `HEARTBEAT.md` が存在すればその内容を heartbeat prompt の workspace context として利用する
   - `HEARTBEAT.md` が存在しなければ default heartbeat prompt を利用する
@@ -684,6 +688,17 @@ sequenceDiagram
 - [x] Integration `customTools` 経由で `play-slack-search` が spawn される統合テストを追加する
 - [x] Docs tool I/O と contract boundary を更新する
 
+### Phase 3.5 ToolHub 復活と `play-slack-search` 移行
+
+- [ ] Test `tool_hub` の provider catalog / action help / execute の失敗テストを追加する Red
+- [ ] Test `play-slack-search` provider が `thread/message/search/permalink` action を公開する失敗テストを追加する Red
+- [ ] Test 通知処理 prompt / decision 契約が `tool_hub(provider=play-slack-search, action=..., args=...)` を許容する失敗テストを追加する Red
+- [ ] Impl legacy `dynamic-tool` を ACP 現行構成へ最小復帰し、`tool_hub` custom tool を再登録する Green
+- [ ] Impl `play-slack-search` を standalone custom tool から ToolHub provider へ移植する Green
+- [ ] Refactor `src/assistant/agent-session-factory.ts` の direct tool 登録と ToolHub 登録の責務を整理する
+- [ ] Integration `customTools -> tool_hub -> play-slack-search provider -> spawn adapter` の縦断テストを追加する
+- [ ] Docs `play_slack_search(mode, ...)` 直呼び前提の記述を `tool_hub(provider/action)` 前提へ更新する
+
 ### Phase 4 通知 run と draft reply の実装
 
 - [x] Test `NotificationDecision` 正規化と `draft_reply` / `needs_review` の失敗テストを追加する Red
@@ -707,6 +722,8 @@ sequenceDiagram
 
 - [x] 自分宛メンション notification で即時 AI run が起動すること
 - [x] `play-slack-search` が `customTools` 経由で利用できること
+- [ ] `ToolHub` が `customTools` 経由で利用できること
+- [ ] `play-slack-search` が `ToolHub` provider/action 経由で利用できること
 - [x] self post / self reaction が record-only として扱われること
 - [x] self post / self reaction が `state/activity/self/YYYY-MM-DD.jsonl` に日次保存されること
 - [x] self reaction が反応先本文スナップショットを保持できること
@@ -727,6 +744,8 @@ sequenceDiagram
 
 - `ActivityFeed` は unread-like view として扱うが、v1 では既読状態を保存しない。
 - `play-slack-search` の `spawn adapter` は外部コマンド障害の影響を受けるため、timeout は 180000ms に固定する。v1 の UI 表示は `needs_review.summary = play_slack_search failed: ...` とし、追加の文言 polish は後続改善とする。
+- `ToolHub` を戻す場合、既存の standalone `play_slack_search` custom tool を残すか、`tool_hub` へ一気に切り替えるかの移行方針を決める必要がある。
+- `ToolHub` 復活により、通知処理 prompt、spec の tool 呼び出し例、既存テスト fixture をまとめて更新する必要がある。
 - transcript は長期運用で肥大化する可能性がある。v1 の本計画で全セッション共通の日次ファイル切替を実装する。
 - heartbeat は OpenClaw 寄せで `main` に残るため、有意味な heartbeat turn が main の履歴へ混ざる点はプロトタイプとして許容する。
 - collector が自分宛メンション通知を判定するために必要な情報をどこまで CDP から安定取得できるかは、Phase 1 の調査で確認が必要である。
