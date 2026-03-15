@@ -13,6 +13,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   ChatHistoryMessage,
   ChatStreamEvent,
+  GenerateThreadTitleResponse,
   PermissionSummary,
   ThreadSnapshotResponse,
 } from "../control-plane/contracts/http-api.js";
@@ -87,6 +88,20 @@ function extractThreadMessageText(message: ThreadMessage): string {
     })
     .join("")
     .trim();
+}
+
+function extractThreadTitleSourceMessages(messages: readonly ThreadMessage[]): string[] {
+  return messages
+    .filter((message) => message.role === "user")
+    .map(extractThreadMessageText)
+    .map((text) => text.replace(/\s+/g, " ").trim())
+    .filter((text) => text.length > 0)
+    .slice(0, 6);
+}
+
+function buildFallbackGeneratedTitle(messages: readonly ThreadMessage[]): string {
+  const source = extractThreadTitleSourceMessages(messages)[0] ?? "";
+  return source.slice(0, 40).trim();
 }
 
 function parseAppendMessageText(content: unknown): string {
@@ -312,6 +327,9 @@ function createThreadListAdapter(baseUrl: string): unstable_RemoteThreadListAdap
       }
     },
     async archive(remoteId: string) {
+      if (remoteId === "main") {
+        return;
+      }
       fallbackThreads.set(remoteId, {
         ...(fallbackThreads.get(remoteId) ?? { status: "regular", remoteId }),
         status: "archived",
@@ -358,9 +376,26 @@ function createThreadListAdapter(baseUrl: string): unstable_RemoteThreadListAdap
       }
     },
     async generateTitle(remoteId: string, unstableMessages: readonly ThreadMessage[]) {
-      const firstUser = unstableMessages.find((message) => message.role === "user");
-      const source = firstUser ? extractThreadMessageText(firstUser) : "";
-      const title = source.slice(0, 40).trim();
+      const sourceMessages = extractThreadTitleSourceMessages(unstableMessages);
+      let title = "";
+      if (remoteId !== "main" && sourceMessages.length > 0) {
+        try {
+          const generated = await fetchJson<GenerateThreadTitleResponse>(
+            `${baseUrl}/api/threads/${encodeURIComponent(remoteId)}/generate-title`,
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ messages: sourceMessages }),
+            }
+          );
+          title = generated.title.trim();
+        } catch {
+          // fallback below
+        }
+      }
+      if (title.length === 0) {
+        title = buildFallbackGeneratedTitle(unstableMessages);
+      }
       if (title.length > 0) {
         fallbackThreads.set(remoteId, {
           ...(fallbackThreads.get(remoteId) ?? { status: "regular", remoteId }),

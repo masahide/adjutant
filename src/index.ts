@@ -36,6 +36,7 @@ import {
 import { ChatHistoryStore } from "./control-plane/http/chat-history-store.js";
 import { createControlPlaneRequestHandler } from "./control-plane/http/control-plane-router.js";
 import { createActivityFeedReader } from "./control-plane/http/activity-feed.js";
+import { createThreadTitleGenerator } from "./control-plane/http/thread-title-generator.js";
 import { RunLifecycle } from "./control-plane/http/run-lifecycle.js";
 import { RunEventBuffer } from "./control-plane/http/run-event-buffer.js";
 import { SessionThreadCoordinator } from "./control-plane/http/session-thread-coordinator.js";
@@ -1833,6 +1834,9 @@ export async function main(): Promise<void> {
     chatHistoryStore,
     threadRepository,
     buildThreadSnapshot,
+    generateThreadTitle: createThreadTitleGenerator({
+      apiKey: process.env.OPENAI_API_KEY,
+    }),
     supervisor,
     permissionGateway,
     runHeartbeat: heartbeatEnabled

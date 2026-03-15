@@ -289,6 +289,79 @@ test("POST /api/chat/messages returns 404 when sessionKey is unknown", async (t)
   });
 });
 
+test("POST /api/threads/:threadId/generate-title returns generated title", async (t) => {
+  const runLifecycle = new RunLifecycle({
+    now: () => "2026-03-01T00:00:00.000Z",
+    newMessageId: () => "msg_test",
+  });
+  const runEventBuffer = new RunEventBuffer({ retentionMs: 60_000 });
+  const stateDir = await mkdtemp(join(tmpdir(), "adjutant-router-test-thread-title-"));
+  t.after(async () => {
+    await rm(stateDir, { recursive: true, force: true });
+  });
+  const threadRepository = ThreadRepository.fromStateDir(stateDir);
+  await threadRepository.initialize();
+  const created = await threadRepository.create({ title: "" });
+
+  const handler = createControlPlaneRequestHandler({
+    sseHub: new SseHub(),
+    renderRootPage: () => "<!doctype html><html></html>",
+    buildSnapshot: () => ({ runs: [], toolEventsByRun: {}, pendingPermissions: [] }),
+    submitPrompt: async () => {
+      throw new Error("not used");
+    },
+    readRunAudit: async () => ({}),
+    runLifecycle,
+    runEventBuffer,
+    chatHistoryStore: new ChatHistoryStore(),
+    threadRepository,
+    buildThreadSnapshot: () => undefined,
+    generateThreadTitle: async () => ({
+      title: "Archive UI cleanup",
+      model: "gpt-5-nano",
+      fallback: false,
+    }),
+    supervisor: {
+      request: async () => {
+        throw new Error("not used");
+      },
+    } as unknown as WorkerSupervisor,
+    permissionGateway: new PermissionGateway({
+      emitUiEvent: () => {},
+    }),
+  });
+
+  const port = await allocatePort();
+  const server = createServer((req, res) => {
+    void handler(req, res);
+  });
+  await new Promise<void>((resolve) => {
+    server.listen(port, "127.0.0.1", () => resolve());
+  });
+  t.after(async () => {
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve());
+    });
+  });
+
+  const response = await fetch(
+    `http://127.0.0.1:${port}/api/threads/${encodeURIComponent(created.threadId)}/generate-title`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        messages: ["Archive 済み thread を safer に戻す導線を設計したい"],
+      }),
+    }
+  );
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    title: "Archive UI cleanup",
+    model: "gpt-5-nano",
+    fallback: false,
+  });
+});
+
 test("POST /api/commands rejects blank sessionKey", async (t) => {
   const runLifecycle = new RunLifecycle({
     now: () => "2026-03-01T00:00:00.000Z",

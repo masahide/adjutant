@@ -139,7 +139,7 @@ pnpm check               # format -> typecheck -> test
 | `PLAY_SLACK_SEARCH_SESSION`                    | `slack`                                              | `play-slack-search` adapter が使う playwright-cli セッション名                        |
 | `PLAY_SLACK_SEARCH_PROFILE`                    | playwright-cli の既定 profile                        | `play-slack-search` adapter が使う browser profile path                               |
 | `PLAY_SLACK_SEARCH_WORKSPACE_URL`              | -                                                    | `play_slack_search` が request/permalink から workspace を解決できない場合の fallback |
-| `OPENAI_API_KEY`                               | -                                                    | route LLM 有効時に利用する OpenAI API キー                                            |
+| `OPENAI_API_KEY`                               | -                                                    | route LLM と thread title 生成に利用する OpenAI API キー                              |
 
 `tool_hub(provider=slack, action=search)` が内部で使う `play-slack-search` adapter は、`workspaceUrl` を request で受けるか、notification の `permalink` から workspace を解決します。`PLAY_SLACK_SEARCH_WORKSPACE_URL` はそのどちらも使えない場合の最後の fallback です。複数 workspace 運用では、この環境変数に依存せず、collector が保持する `workspace_host` / `permalink` を優先させてください。
 

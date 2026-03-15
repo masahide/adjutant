@@ -273,6 +273,9 @@ export class ThreadRepository {
     if (current === undefined) {
       return undefined;
     }
+    if (threadId === MAIN_THREAD_ID && fields.archived === true) {
+      throw new Error("INVALID_REQUEST: main thread cannot be archived");
+    }
 
     const shouldMaterializeMain =
       threadId === MAIN_THREAD_ID &&

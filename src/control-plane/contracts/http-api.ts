@@ -216,6 +216,16 @@ export type CreateThreadResponse = ThreadRecord;
 export type GetThreadResponse = ThreadRecord;
 export type UpdateThreadResponse = ThreadRecord;
 
+export type GenerateThreadTitleRequest = {
+  messages: string[];
+};
+
+export type GenerateThreadTitleResponse = {
+  title: string;
+  model: string;
+  fallback: boolean;
+};
+
 export type ThreadSnapshotResponse = SnapshotResponse & {
   thread: ThreadRecord;
 };

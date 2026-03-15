@@ -28,7 +28,7 @@
 | `ADJUTANT_WORKSPACE_DIR` | `<stateDir>/workspace`               | agent の workspace                                           |
 | `ADJUTANT_DATA_DIR`      | `<stateDir>/data`                    | collector 系保存先                                           |
 | `DATA_DIR`               | `ADJUTANT_DATA_DIR` 未指定時のみ使用 | 旧互換の data dir alias                                      |
-| `OPENAI_API_KEY`         | 未設定                               | 設定時は外部 agent runner を有効化。未設定時は echo fallback |
+| `OPENAI_API_KEY`         | 未設定                               | 外部 agent runner と thread title 生成で使う OpenAI API キー |
 | `ADJUTANT_MODEL`         | 未指定                               | agent session に渡すモデル名                                 |
 
 ## 4. Collector / Slack
