@@ -25,7 +25,7 @@ test("memory_write tool writes to daily and long-term markdown", async (t) => {
   await mkdir(join(workspaceDir, "memory"), { recursive: true });
 
   const tools = buildCustomToolDefinitions({
-    cwd: workspaceDir,
+    workspaceDir,
     memoryScope: "main",
     memoryWriteEnabled: true,
   });

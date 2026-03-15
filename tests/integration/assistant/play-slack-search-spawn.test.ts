@@ -52,7 +52,7 @@ test("tool_hub slack/search は adapter script を spawn する", async (t) => {
   });
 
   const tool = buildCustomToolDefinitions({
-    cwd: process.cwd(),
+    workspaceDir: process.cwd(),
     memoryScope: "spoke",
   }).find((entry) => entry.name === "tool_hub");
 

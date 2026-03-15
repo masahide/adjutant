@@ -1937,7 +1937,15 @@ export async function main(): Promise<void> {
   const shutdownSignals: NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP"];
   for (const signal of shutdownSignals) {
     process.on(signal, () => {
-      void shutdown();
+      void shutdown()
+        .then(() => {
+          process.exit(0);
+        })
+        .catch((error) => {
+          const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
+          console.error(message);
+          process.exit(1);
+        });
     });
   }
 }

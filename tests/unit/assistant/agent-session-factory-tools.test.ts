@@ -25,7 +25,7 @@ async function executeToolHub(
 
 test("buildCustomToolDefinitions enables tool_hub and memory provider only for main scope", async () => {
   const mainTools = buildCustomToolDefinitions({
-    cwd: process.cwd(),
+    workspaceDir: process.cwd(),
     memoryScope: "main",
   });
   const mainNames = mainTools.map((tool) => tool.name).sort();
@@ -50,7 +50,7 @@ test("buildCustomToolDefinitions enables tool_hub and memory provider only for m
   });
 
   const spokeTools = buildCustomToolDefinitions({
-    cwd: process.cwd(),
+    workspaceDir: process.cwd(),
     memoryScope: "spoke",
   });
   assert.deepEqual(
@@ -75,7 +75,7 @@ test("buildCustomToolDefinitions enables tool_hub and memory provider only for m
 
 test("buildCustomToolDefinitions enables memory write action only when memoryWriteEnabled is true", async () => {
   const enabled = buildCustomToolDefinitions({
-    cwd: process.cwd(),
+    workspaceDir: process.cwd(),
     memoryScope: "spoke",
     memoryWriteEnabled: true,
     phaseBRolloutScope: "all",
@@ -106,7 +106,7 @@ test("buildCustomToolDefinitions enables memory write action only when memoryWri
   });
 
   const disabled = buildCustomToolDefinitions({
-    cwd: process.cwd(),
+    workspaceDir: process.cwd(),
     memoryScope: "spoke",
     memoryWriteEnabled: false,
   });
@@ -115,7 +115,7 @@ test("buildCustomToolDefinitions enables memory write action only when memoryWri
 
 test("buildCustomToolDefinitions defaults phase B rollout to main-only", async () => {
   const spokeTools = buildCustomToolDefinitions({
-    cwd: process.cwd(),
+    workspaceDir: process.cwd(),
     memoryScope: "spoke",
     memoryWriteEnabled: true,
     phaseBRolloutScope: "main",
@@ -144,7 +144,7 @@ test("buildCustomToolDefinitions enables sandboxed bash by mode and memoryScope"
   });
 
   const mainTools = buildCustomToolDefinitions({
-    cwd: process.cwd(),
+    workspaceDir: process.cwd(),
     memoryScope: "main",
   });
   assert.equal(
@@ -157,7 +157,7 @@ test("buildCustomToolDefinitions enables sandboxed bash by mode and memoryScope"
   );
 
   const spokeTools = buildCustomToolDefinitions({
-    cwd: process.cwd(),
+    workspaceDir: process.cwd(),
     memoryScope: "spoke",
     phaseBRolloutScope: "main",
   });
@@ -177,7 +177,7 @@ test("buildCustomToolDefinitions enables sandboxed bash by mode and memoryScope"
 
 test("buildCustomToolDefinitions excludes tool_hub from heartbeat sessions", () => {
   const tools = buildCustomToolDefinitions({
-    cwd: process.cwd(),
+    workspaceDir: process.cwd(),
     memoryScope: "main",
     isHeartbeat: true,
   });

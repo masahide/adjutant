@@ -79,7 +79,7 @@ export type AgentRunner = (options: AgentRunOptions) => Promise<AgentRunResult>;
 type AgentRunnerRuntime = {
   isExternalRunnerEnabled: () => boolean;
   createSession: (input: {
-    cwd: string;
+    workspaceDir: string;
     model?: string;
     memoryScope?: "main" | "spoke";
     memoryWriteEnabled?: boolean;
@@ -132,10 +132,17 @@ const defaultRuntime: AgentRunnerRuntime = {
       typeof process.env.OPENAI_API_KEY === "string" && process.env.OPENAI_API_KEY.trim().length > 0
     );
   },
-  createSession: async ({ cwd, model, memoryScope, memoryWriteEnabled, stateDir, isHeartbeat }) => {
+  createSession: async ({
+    workspaceDir,
+    model,
+    memoryScope,
+    memoryWriteEnabled,
+    stateDir,
+    isHeartbeat,
+  }) => {
     const module = await import("./agent-session-factory.js");
     return await module.createPiAgentSession({
-      cwd,
+      workspaceDir,
       model,
       memoryScope,
       memoryWriteEnabled,
@@ -190,7 +197,7 @@ async function resolveAgentSession(params: {
   }
 
   const created = await params.runtime.createSession({
-    cwd: params.workspaceDir,
+    workspaceDir: params.workspaceDir,
     model: process.env.ADJUTANT_MODEL,
     memoryScope: params.memoryScope,
     memoryWriteEnabled: params.options.memoryWriteEnabled,

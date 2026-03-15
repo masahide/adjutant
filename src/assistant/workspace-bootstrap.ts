@@ -106,8 +106,17 @@ async function readTemplateFile(
 ): Promise<string> {
   const resolvedTemplateDir = templateDir?.trim() || DEFAULT_PROMPT_TEMPLATE_DIR;
   const path = join(resolvedTemplateDir, fileName);
-  const content = await readFile(path, "utf8");
-  return stripFrontMatter(content);
+  try {
+    const content = await readFile(path, "utf8");
+    return stripFrontMatter(content);
+  } catch (error) {
+    if (isErrnoCode(error, "ENOENT")) {
+      throw new Error(
+        `Missing workspace template: ${path} (file=${fileName}, templateDir=${resolvedTemplateDir})`
+      );
+    }
+    throw error;
+  }
 }
 
 function stripFrontMatter(content: string): string {

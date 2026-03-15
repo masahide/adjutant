@@ -65,7 +65,7 @@ test("Phase B integration: memory/sandbox tool wiring and audit summary", async 
   });
 
   const mainTools = buildCustomToolDefinitions({
-    cwd: root,
+    workspaceDir: root,
     memoryScope: "main",
     memoryWriteEnabled: true,
     stateDir: join(root, "state"),
@@ -95,7 +95,7 @@ test("Phase B integration: memory/sandbox tool wiring and audit summary", async 
   );
 
   const spokeTools = buildCustomToolDefinitions({
-    cwd: root,
+    workspaceDir: root,
     memoryScope: "spoke",
     memoryWriteEnabled: false,
     stateDir: join(root, "state"),
@@ -163,7 +163,7 @@ test("Phase B integration: memory_get rejects traversal and symlink paths", asyn
   await writeFile(outsidePath, "secret\n", "utf8");
 
   const tools = buildCustomToolDefinitions({
-    cwd: root,
+    workspaceDir: root,
     memoryScope: "main",
     stateDir: join(root, "state"),
   });
@@ -195,7 +195,7 @@ test("Phase B integration: memory_write -> summary batch -> memory_search", asyn
   });
 
   const tools = buildCustomToolDefinitions({
-    cwd: root,
+    workspaceDir: root,
     memoryScope: "main",
     memoryWriteEnabled: true,
     stateDir: join(root, "state"),

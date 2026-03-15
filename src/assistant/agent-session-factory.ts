@@ -28,7 +28,7 @@ export interface PiAgentSessionLike {
 }
 
 export interface CreatePiAgentSessionOptions {
-  cwd: string;
+  workspaceDir: string;
   projectRoot?: string;
   model?: string;
   memoryScope?: MemoryScope;
@@ -101,8 +101,8 @@ export async function createPiAgentSession(
   const customTools = buildCustomToolDefinitions(options);
 
   const created = await createAgentSession({
-    cwd: options.cwd,
-    sessionManager: SessionManager.inMemory(options.cwd),
+    cwd: options.workspaceDir,
+    sessionManager: SessionManager.inMemory(options.workspaceDir),
     authStorage,
     modelRegistry,
     settingsManager,
@@ -129,7 +129,7 @@ export function buildCustomToolDefinitions(options: CreatePiAgentSessionOptions)
     shouldSandbox(sandboxConfig.mode, options.memoryScope) &&
     options.memoryScope !== undefined
   ) {
-    const sandboxBashTool = createBashTool(options.cwd, {
+    const sandboxBashTool = createBashTool(options.workspaceDir, {
       operations: createDockerBashOperations({
         runSpec: sandboxConfig.runSpec,
       }),
@@ -138,7 +138,7 @@ export function buildCustomToolDefinitions(options: CreatePiAgentSessionOptions)
     customTools.push(...createContainerizedFileTools({ runSpec: sandboxConfig.runSpec }));
   }
   const providerRegistry = createAssistantProviderRegistry({
-    workspaceDir: options.cwd,
+    workspaceDir: options.workspaceDir,
     projectRoot: options.projectRoot,
     stateDir: options.stateDir,
     includeMemoryRead: options.memoryScope === "main",

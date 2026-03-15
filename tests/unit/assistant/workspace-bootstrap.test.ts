@@ -49,6 +49,28 @@ test("ensureWorkspaceBootstrapFiles strips template front matter", async () => {
   }
 });
 
+test("ensureWorkspaceBootstrapFiles throws a clear error when a template file is missing", async () => {
+  const root = await mkdtemp(join(tmpdir(), "adjutant-workspace-bootstrap-missing-"));
+  const workspaceDir = join(root, "workspace");
+  const templateDir = join(root, "templates");
+  try {
+    await mkdir(templateDir, { recursive: true });
+    await writeFile(join(templateDir, "SOUL.md"), "# SOUL\n", "utf8");
+    await writeFile(join(templateDir, "TOOLS.md"), "# TOOLS\n", "utf8");
+    await writeFile(join(templateDir, "IDENTITY.md"), "# IDENTITY\n", "utf8");
+    await writeFile(join(templateDir, "USER.md"), "# USER\n", "utf8");
+    await writeFile(join(templateDir, "HEARTBEAT.md"), "# HEARTBEAT\n", "utf8");
+    await writeFile(join(templateDir, DEFAULT_BOOTSTRAP_FILENAME), "# BOOTSTRAP\n", "utf8");
+
+    await assert.rejects(
+      async () => await ensureWorkspaceBootstrapFiles(workspaceDir, { templateDir }),
+      /Missing workspace template: .*AGENTS\.md .*file=AGENTS\.md/
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("loadWorkspaceBootstrapFiles does not auto-load daily memory files", async () => {
   const workspaceDir = await mkdtemp(join(tmpdir(), "adjutant-workspace-files-"));
   try {

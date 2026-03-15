@@ -32,7 +32,7 @@ test("configureWorkerSandboxFromEnv enables sandbox bash for spoke scope", async
   );
 
   const tools = buildCustomToolDefinitions({
-    cwd: process.cwd(),
+    workspaceDir: process.cwd(),
     memoryScope: "spoke",
   });
   assert.equal(configured.enabled, true);
@@ -59,7 +59,7 @@ test("configureWorkerSandboxFromEnv disables sandbox when mode is off", async ()
   );
 
   const tools = buildCustomToolDefinitions({
-    cwd: process.cwd(),
+    workspaceDir: process.cwd(),
     memoryScope: "spoke",
   });
   assert.equal(configured.enabled, false);
@@ -81,7 +81,7 @@ test("configureWorkerSandboxFromEnv disables sandbox when image is missing", asy
   );
 
   const tools = buildCustomToolDefinitions({
-    cwd: process.cwd(),
+    workspaceDir: process.cwd(),
     memoryScope: "spoke",
   });
   assert.equal(configured.enabled, false);

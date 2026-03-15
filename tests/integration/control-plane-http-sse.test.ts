@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -233,6 +233,7 @@ async function waitForHttpReady(params: {
 async function startControlPlane(options?: { env?: Record<string, string | undefined> }): Promise<{
   baseUrl: string;
   child: ChildProcessWithoutNullStreams;
+  stateDir: string;
 }> {
   const port = await allocatePort();
   const baseUrl = `http://127.0.0.1:${port}`;
@@ -305,7 +306,7 @@ async function startControlPlane(options?: { env?: Record<string, string | undef
     );
   }
 
-  return { baseUrl, child };
+  return { baseUrl, child, stateDir };
 }
 
 async function stopControlPlane(child: ChildProcessWithoutNullStreams): Promise<void> {
@@ -330,6 +331,7 @@ async function stopControlPlane(child: ChildProcessWithoutNullStreams): Promise<
 type ControlPlaneRuntime = {
   baseUrl: string;
   child: ChildProcessWithoutNullStreams;
+  stateDir: string;
 };
 
 const sharedRuntimeByKey = new Map<string, ControlPlaneRuntime>();
@@ -523,6 +525,46 @@ test(
     assert.equal(typeof accepted.runId, "string");
     assert.ok(accepted.runId.length > 0);
     await waitForRunCompleted(runtime.baseUrl, accepted.runId);
+  }
+);
+
+test(
+  "control-plane startup honors ADJUTANT_WORKSPACE_DIR for workspace creation and worker session cwd",
+  DEFAULT_TEST_TIMEOUT_SECONDS,
+  async (t) => {
+    const root = await mkdtemp(join(tmpdir(), "adjutant-control-plane-workspace-"));
+    const workspaceDir = join(root, "custom-workspace");
+    const runtime = await startControlPlane({
+      env: {
+        ADJUTANT_WORKSPACE_DIR: workspaceDir,
+      },
+    });
+    t.after(async () => {
+      await stopControlPlane(runtime.child);
+      await rm(root, { recursive: true, force: true });
+    });
+
+    await access(workspaceDir);
+
+    const commandRes = await fetch(`${runtime.baseUrl}/api/commands`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionKey: "main", message: "hello from custom workspace test" }),
+    });
+    assert.equal(commandRes.status, 202);
+    const accepted = (await commandRes.json()) as CommandAccepted;
+    await waitForRunCompleted(runtime.baseUrl, accepted.runId);
+
+    const sessionStoreRaw = await readFile(
+      join(runtime.stateDir, "worker", "session-store.json"),
+      "utf8"
+    );
+    const sessions = JSON.parse(sessionStoreRaw) as Array<{ cwd?: string }>;
+    assert.equal(sessions.length > 0, true);
+    assert.equal(
+      sessions.some((session) => session.cwd === workspaceDir),
+      true
+    );
   }
 );
 
