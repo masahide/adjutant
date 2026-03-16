@@ -8,10 +8,10 @@ import {
   normalizeProfilePath,
 } from '../scripts/slack-search/profile.ts';
 
-test('defaultProfilePath は標準の Playwright プロファイルを返す', () => {
+test('defaultProfilePath は adjutant 配下の標準プロファイルを返す', () => {
   assert.equal(
     defaultProfilePath(),
-    resolve(homedir(), '.playwright-cli/slack'),
+    resolve(homedir(), '.adjutant/tools/play-slack-search/profile'),
   );
 });
 

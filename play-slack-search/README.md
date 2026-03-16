@@ -37,7 +37,7 @@ cp .env.example .env
 PLAY_SLACK_SEARCH_WORKSPACE_URL=https://your-workspace.slack.com
 # 任意
 PLAY_SLACK_SEARCH_SESSION=auto
-PLAY_SLACK_SEARCH_PROFILE=~/.playwright-cli/slack
+PLAY_SLACK_SEARCH_PROFILE=~/.adjutant/tools/play-slack-search/profile
 ```
 
 ## 主なコマンド

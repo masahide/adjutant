@@ -7,11 +7,17 @@ import test from "node:test";
 import {
   createPlaySlackSearchToolDefinition,
   DEFAULT_TIMEOUT_MS,
+  executePlaySlackSearchListUsersRequest,
   executePlaySlackSearchRequest,
+  executePlaySlackSearchResolveChannelRequest,
   PLAY_SLACK_SEARCH_ADAPTER_ENTRY_ENV,
   PLAY_SLACK_SEARCH_TOOL_NAME,
+  validatePlaySlackSearchListUsersRequest,
   validatePlaySlackSearchRequest,
+  validatePlaySlackSearchResolveChannelRequest,
+  type PlaySlackSearchListUsersRequest,
   type PlaySlackSearchRequest,
+  type PlaySlackSearchResolveChannelRequest,
 } from "../../../src/assistant/play-slack-search-tool.js";
 
 test("validatePlaySlackSearchRequest accepts thread mode with permalink fallback only", () => {
@@ -76,6 +82,42 @@ test("validatePlaySlackSearchRequest rejects permalink mode without permalink", 
         mode: "permalink",
       }),
     /permalink required/
+  );
+});
+
+test("validatePlaySlackSearchListUsersRequest accepts optional hydrate and limit", () => {
+  const request = validatePlaySlackSearchListUsersRequest({
+    workspaceUrl: "https://workspace-b.slack.com",
+    limit: 10,
+    hydrate: true,
+  });
+
+  assert.deepEqual(request, {
+    mode: "list-users",
+    workspaceUrl: "https://workspace-b.slack.com",
+    limit: 10,
+    hydrate: true,
+  });
+});
+
+test("validatePlaySlackSearchResolveChannelRequest requires non-empty channelIds", () => {
+  const request = validatePlaySlackSearchResolveChannelRequest({
+    workspaceUrl: "https://workspace-b.slack.com",
+    channelIds: ["C123", "C456"],
+  });
+
+  assert.deepEqual(request, {
+    mode: "resolve-channel-id",
+    workspaceUrl: "https://workspace-b.slack.com",
+    channelIds: ["C123", "C456"],
+  });
+
+  assert.throws(
+    () =>
+      validatePlaySlackSearchResolveChannelRequest({
+        channelIds: [],
+      }),
+    /channelIds must be a non-empty string array/
   );
 });
 
@@ -194,6 +236,80 @@ test("executePlaySlackSearchRequest uses default timeout when not overridden", a
   );
 
   assert.equal(capturedTimeout, DEFAULT_TIMEOUT_MS);
+});
+
+test("executePlaySlackSearchListUsersRequest forwards timeout and cwd to runner", async () => {
+  const calls: Array<{ request: PlaySlackSearchListUsersRequest; cwd: string; timeoutMs: number }> =
+    [];
+
+  const result = await executePlaySlackSearchListUsersRequest(
+    {
+      mode: "list-users",
+      hydrate: true,
+      limit: 25,
+    },
+    {
+      cwd: "/tmp/workspace",
+      timeoutMs: 2345,
+      runCommand: async (request, options) => {
+        calls.push({ request, cwd: options.cwd, timeoutMs: options.timeoutMs });
+        return {
+          mode: "list-users",
+          users: [{ id: "U123", name: "alice" }],
+          sourceUrl: "https://example.slack.com/client/T1",
+        };
+      },
+    }
+  );
+
+  assert.equal(result.mode, "list-users");
+  assert.deepEqual(calls, [
+    {
+      request: { mode: "list-users", hydrate: true, limit: 25 },
+      cwd: "/tmp/workspace",
+      timeoutMs: 2345,
+    },
+  ]);
+});
+
+test("executePlaySlackSearchResolveChannelRequest forwards request to runner", async () => {
+  const calls: Array<{
+    request: PlaySlackSearchResolveChannelRequest;
+    cwd: string;
+    timeoutMs: number;
+  }> = [];
+
+  const result = await executePlaySlackSearchResolveChannelRequest(
+    {
+      mode: "resolve-channel-id",
+      workspaceUrl: "https://workspace-b.slack.com",
+      channelIds: ["C123"],
+    },
+    {
+      cwd: "/tmp/workspace",
+      runCommand: async (request, options) => {
+        calls.push({ request, cwd: options.cwd, timeoutMs: options.timeoutMs });
+        return {
+          mode: "resolve-channel-id",
+          channels: [{ channelId: "C123", channelName: "general", resolved: true }],
+          sourceUrl: "https://example.slack.com/client/T1",
+        };
+      },
+    }
+  );
+
+  assert.equal(result.mode, "resolve-channel-id");
+  assert.deepEqual(calls, [
+    {
+      request: {
+        mode: "resolve-channel-id",
+        workspaceUrl: "https://workspace-b.slack.com",
+        channelIds: ["C123"],
+      },
+      cwd: "/tmp/workspace",
+      timeoutMs: DEFAULT_TIMEOUT_MS,
+    },
+  ]);
 });
 
 test("runPlaySlackSearchAdapter は timeout 時に SIGTERM を送り child cleanup を待つ", async (t) => {

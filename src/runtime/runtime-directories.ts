@@ -47,6 +47,23 @@ export function resolveWorkspaceDir(
   return resolve(stateDir, "workspace");
 }
 
+export function resolveToolDataDir(
+  toolName: string,
+  params: {
+    env?: NodeJS.ProcessEnv;
+    stateDir?: string;
+    homedirPath?: string;
+  } = {}
+): string {
+  const normalizedToolName = toolName.trim();
+  if (normalizedToolName.length === 0) {
+    throw new Error("toolName is required");
+  }
+  const stateDir =
+    params.stateDir ?? resolveStateDir(params.env ?? process.env, params.homedirPath);
+  return resolve(stateDir, "tools", normalizedToolName);
+}
+
 export function resolveRuntimeDirectories(
   options: ResolveRuntimeDirectoriesOptions = {}
 ): RuntimeDirectories {

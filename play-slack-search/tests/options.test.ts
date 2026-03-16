@@ -29,7 +29,10 @@ test('parseArgs は検索実行時のデフォルト値を補完する', () => {
     session: DEFAULT_SESSION,
     workspaceUrl: 'https://example.slack.com',
   });
-  assert.match(options.profile, /\.playwright-cli\/slack$/);
+  assert.match(
+    options.profile,
+    /\.adjutant\/tools\/play-slack-search\/profile$/,
+  );
 });
 
 test('parseArgs は .env 相当のデフォルト値を補完する', () => {

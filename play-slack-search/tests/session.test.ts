@@ -11,8 +11,10 @@ import {
   runInteractiveLogin,
 } from '../scripts/slack-search/session.ts';
 
-const TEST_PROFILE = '/Users/test-user/.playwright-cli/slack';
-const OTHER_PROFILE = '/Users/test-user/.playwright-cli/other';
+const TEST_PROFILE =
+  '/Users/test-user/.adjutant/tools/play-slack-search/profile';
+const OTHER_PROFILE =
+  '/Users/test-user/.adjutant/tools/play-slack-search/other-profile';
 const CLONED_PROFILE = '/tmp/play-slack-search-profile-clone/slack';
 const PROFILE_IN_USE_ERROR = `Browser is already in use for ${TEST_PROFILE}`;
 
@@ -21,7 +23,7 @@ test('parseSessionListOutput は playwright-cli list の出力を構造化する
     `
 - auto:
   status: open
-  user-data-dir: /Users/example/.playwright-cli/slack
+  user-data-dir: /Users/example/.adjutant/tools/play-slack-search/profile
 - old:
   status: closed
   user-data-dir: /tmp/old
@@ -31,7 +33,8 @@ test('parseSessionListOutput は playwright-cli list の出力を構造化する
   assert.deepEqual(sessions, [
     {
       name: 'auto',
-      rawUserDataDir: '/Users/example/.playwright-cli/slack',
+      rawUserDataDir:
+        '/Users/example/.adjutant/tools/play-slack-search/profile',
       status: 'open',
     },
     {
@@ -211,7 +214,7 @@ test('runInteractiveLogin は同じ profile の open session を再利用して 
       sessionMessages: [
         'session.list elapsed=0.0s count=2',
         'session.ready reused=shared elapsed=0.0s',
-        'login.instructions session=shared profile=/Users/test-user/.playwright-cli/slack action=open-browser-and-return-control',
+        'login.instructions session=shared profile=/Users/test-user/.adjutant/tools/play-slack-search/profile action=open-browser-and-return-control',
         'login.done session=shared elapsed=0.0s',
       ],
     },

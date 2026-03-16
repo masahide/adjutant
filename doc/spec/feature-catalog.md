@@ -37,6 +37,9 @@
 
 - `tool_hub`
   - `slack/search`
+  - `slack/list-users`
+  - `slack/resolve-channel-id`
+  - `slack/save-users`
   - `memory/search`
   - `memory/get`
   - `memory/write`

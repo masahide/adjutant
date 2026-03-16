@@ -7,6 +7,7 @@ import test from "node:test";
 import {
   ensureWorkspaceReady,
   resolveRuntimeDirectories,
+  resolveToolDataDir,
   resolveWorkspaceTemplateDir,
 } from "../../../src/runtime/runtime-directories.js";
 
@@ -48,6 +49,28 @@ test("resolveRuntimeDirectories prefers explicit workspace dir override", () => 
   });
 
   assert.equal(dirs.workspaceDir, resolve("../custom-workspace"));
+});
+
+test("resolveToolDataDir uses ~/.adjutant/tools by default", () => {
+  assert.equal(
+    resolveToolDataDir("play-slack-search", {
+      env: {},
+      homedirPath: "/Users/tester",
+    }),
+    "/Users/tester/.adjutant/tools/play-slack-search"
+  );
+});
+
+test("resolveToolDataDir derives from overridden stateDir", () => {
+  assert.equal(
+    resolveToolDataDir("play-slack-search", {
+      env: {
+        ADJUTANT_STATE_DIR: "/tmp/adjutant-state",
+      },
+      homedirPath: "/Users/tester",
+    }),
+    "/tmp/adjutant-state/tools/play-slack-search"
+  );
 });
 
 test("resolveWorkspaceTemplateDir points at assistant/prompts", () => {

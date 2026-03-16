@@ -129,3 +129,100 @@ test("executeAdapterRequest は mode=login で instructions を返す", () => {
   assert.match(result.instructions ?? "", /complete login/i);
   assert.equal(result.sourceUrl, "https://workspace.slack.com");
 });
+
+test("executeAdapterRequest は mode=list-users で user list payload を正規化する", () => {
+  const result = executeAdapterRequest(
+    {
+      mode: "list-users",
+      workspaceUrl: "https://workspace.slack.com",
+      hydrate: true,
+      limit: 10,
+    },
+    {
+      workspaceUrl: "https://workspace.slack.com",
+      session: "auto",
+    },
+    {
+      executeSlackCommand: (() => ({
+        mode: "list-users",
+        users: [
+          {
+            id: "U123",
+            name: "alice",
+            realName: "Alice",
+            isBot: false,
+          },
+        ],
+        listUrl: "https://workspace.slack.com/client/T1",
+        source: "reduxPersistence.users",
+        stateKey: "users",
+        totalUserCount: 1,
+      })) as never,
+      runPermalinkPayload: (() => {
+        throw new Error("permalink path should not be used");
+      }) as never,
+    }
+  );
+
+  assert.deepEqual(result, {
+    mode: "list-users",
+    users: [
+      {
+        id: "U123",
+        name: "alice",
+        realName: "Alice",
+        isBot: false,
+      },
+    ],
+    sourceUrl: "https://workspace.slack.com/client/T1",
+    source: "reduxPersistence.users",
+    stateKey: "users",
+    totalUserCount: 1,
+  });
+});
+
+test("executeAdapterRequest は mode=resolve-channel-id で channel 解決 payload を正規化する", () => {
+  const result = executeAdapterRequest(
+    {
+      mode: "resolve-channel-id",
+      workspaceUrl: "https://workspace.slack.com",
+      channelIds: ["C123"],
+    },
+    {
+      workspaceUrl: "https://workspace.slack.com",
+      session: "auto",
+    },
+    {
+      executeSlackCommand: (() => ({
+        mode: "resolve-channels",
+        channels: [
+          {
+            channelId: "C123",
+            channelName: "general",
+            resolved: true,
+            source: "search.suggestion",
+            stateKey: "channels",
+          },
+        ],
+        listUrl: "https://workspace.slack.com/client/T1",
+      })) as never,
+      runPermalinkPayload: (() => {
+        throw new Error("permalink path should not be used");
+      }) as never,
+    }
+  );
+
+  assert.deepEqual(result, {
+    mode: "resolve-channel-id",
+    channels: [
+      {
+        channelId: "C123",
+        channelName: "general",
+        resolved: true,
+        source: "search.suggestion",
+        stateKey: "channels",
+      },
+    ],
+    sourceUrl: "https://workspace.slack.com/client/T1",
+  });
+});

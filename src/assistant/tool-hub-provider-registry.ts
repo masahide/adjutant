@@ -13,9 +13,14 @@ import {
   type DynamicProvider,
 } from "./dynamic-tool/index.js";
 import {
+  executePlaySlackSearchListUsersRequest,
   executePlaySlackSearchRequest,
+  executePlaySlackSearchResolveChannelRequest,
+  validatePlaySlackSearchListUsersRequest,
   validatePlaySlackSearchRequest,
+  validatePlaySlackSearchResolveChannelRequest,
 } from "./play-slack-search-tool.js";
+import { savePlaySlackSearchUsersResult } from "./play-slack-search-storage.js";
 
 export interface CreateAssistantProviderRegistryOptions {
   workspaceDir: string;
@@ -186,7 +191,10 @@ function createMemoryProvider(options: {
   };
 }
 
-function createSlackProvider(options: { projectRoot: string }): DynamicProvider {
+function createSlackProvider(options: {
+  projectRoot: string;
+  workspaceDir: string;
+}): DynamicProvider {
   const actions: DynamicAction[] = [
     {
       descriptor: {
@@ -218,6 +226,101 @@ function createSlackProvider(options: { projectRoot: string }): DynamicProvider 
         return await executePlaySlackSearchRequest(request, { cwd: options.projectRoot });
       },
     },
+    {
+      descriptor: {
+        name: "list-users",
+        description:
+          "List Slack users from the current workspace state. Use hydrate=true when the member list may need warm-up first.",
+        requiredArgs: [],
+        argsSchema: {
+          type: "object",
+          properties: {
+            workspaceUrl: { type: "string" },
+            limit: { type: "number" },
+            hydrate: { type: "boolean" },
+          },
+          additionalProperties: false,
+        },
+      },
+      validate: (args) => {
+        validatePlaySlackSearchListUsersRequest(args);
+      },
+      execute: async (args) => {
+        const request = validatePlaySlackSearchListUsersRequest(args);
+        return await executePlaySlackSearchListUsersRequest(request, {
+          cwd: options.projectRoot,
+        });
+      },
+    },
+    {
+      descriptor: {
+        name: "resolve-channel-id",
+        description:
+          "Resolve one or more Slack channel IDs to channel names using the current workspace state.",
+        requiredArgs: ["channelIds"],
+        argsSchema: {
+          type: "object",
+          properties: {
+            workspaceUrl: { type: "string" },
+            channelIds: {
+              type: "array",
+              items: { type: "string" },
+              minItems: 1,
+            },
+          },
+          required: ["channelIds"],
+          additionalProperties: false,
+        },
+      },
+      validate: (args) => {
+        validatePlaySlackSearchResolveChannelRequest(args);
+      },
+      execute: async (args) => {
+        const request = validatePlaySlackSearchResolveChannelRequest(args);
+        return await executePlaySlackSearchResolveChannelRequest(request, {
+          cwd: options.projectRoot,
+        });
+      },
+    },
+    {
+      descriptor: {
+        name: "save-users",
+        description:
+          "Fetch the full Slack user list and save it under workspace/tools/play-slack-search/<workspace-host>/users.json.",
+        requiredArgs: [],
+        argsSchema: {
+          type: "object",
+          properties: {
+            workspaceUrl: { type: "string" },
+            hydrate: { type: "boolean" },
+          },
+          additionalProperties: false,
+        },
+      },
+      validate: (args) => {
+        const request = validatePlaySlackSearchListUsersRequest(args);
+        if (request.limit !== undefined) {
+          throw new Error("limit is not supported for slack/save-users");
+        }
+      },
+      execute: async (args) => {
+        const request = validatePlaySlackSearchListUsersRequest(args);
+        const result = await executePlaySlackSearchListUsersRequest(
+          {
+            ...request,
+            limit: undefined,
+          },
+          {
+            cwd: options.projectRoot,
+          }
+        );
+        return await savePlaySlackSearchUsersResult({
+          workspaceDir: options.workspaceDir,
+          requestedWorkspaceUrl: request.workspaceUrl,
+          result,
+        });
+      },
+    },
   ];
   const actionMap = createActionMap(actions);
   return {
@@ -233,7 +336,10 @@ export function createAssistantProviderRegistry(
   options: CreateAssistantProviderRegistryOptions
 ): ProviderRegistry {
   const providers: DynamicProvider[] = [
-    createSlackProvider({ projectRoot: options.projectRoot ?? process.cwd() }),
+    createSlackProvider({
+      projectRoot: options.projectRoot ?? process.cwd(),
+      workspaceDir: options.workspaceDir,
+    }),
   ];
   const memoryProvider = createMemoryProvider({
     workspaceDir: options.workspaceDir,
