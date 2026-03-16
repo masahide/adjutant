@@ -14,9 +14,17 @@ test("Phase F integration: docs sync + CI gate + migration audit contracts stay 
   assert.deepEqual(docSync.violations, []);
 
   const qaWorkflow = await readFile(resolve(process.cwd(), ".github/workflows/qa.yml"), "utf8");
-  assert.match(qaWorkflow, /run: pnpm run check/);
+  assert.match(qaWorkflow, /run: pnpm run qa/);
   assert.match(qaWorkflow, /run: pnpm run verify:config-doc-sync/);
-  assert.match(qaWorkflow, /\n  live-agent:\n[\s\S]*\n    needs: qa\n/);
+  assert.match(qaWorkflow, /\n  live-agent-gate:\n[\s\S]*\n    needs: qa\n/);
+  assert.match(
+    qaWorkflow,
+    /\n  live-agent:\n[\s\S]*\n    needs:\n      - qa\n      - live-agent-gate\n/
+  );
+  assert.match(
+    qaWorkflow,
+    /\n  live-agent:\n[\s\S]*\n    if: \$\{\{ needs\.live-agent-gate\.outputs\.enabled == 'true' \}\}\n/
+  );
 
   const auditMarkdown = await readFile(
     resolve(process.cwd(), "doc/plan/artifacts/260305-s03-phase-f-migration-audit.md"),

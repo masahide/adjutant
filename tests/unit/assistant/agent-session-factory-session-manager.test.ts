@@ -21,10 +21,7 @@ test("createPiSessionManager uses a deterministic persisted session file when se
     stateDir: "/tmp/adjutant-state",
   });
 
-  assert.equal(
-    manager.getSessionFile(),
-    "/tmp/adjutant-state/pi-sessions/sess_main_1.jsonl"
-  );
+  assert.equal(manager.getSessionFile(), "/tmp/adjutant-state/pi-sessions/sess_main_1.jsonl");
 });
 
 test("resolvePiSessionFilePath sanitizes sessionId for filesystem safety", () => {
@@ -33,8 +30,5 @@ test("resolvePiSessionFilePath sanitizes sessionId for filesystem safety", () =>
     stateDir: "/tmp/adjutant-state",
   });
 
-  assert.equal(
-    sessionFile,
-    "/tmp/adjutant-state/pi-sessions/sess_main_thread_1.jsonl"
-  );
+  assert.equal(sessionFile, "/tmp/adjutant-state/pi-sessions/sess_main_thread_1.jsonl");
 });

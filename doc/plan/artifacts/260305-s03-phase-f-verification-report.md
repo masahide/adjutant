@@ -29,7 +29,7 @@
 3. PR 時 `qa` 必須 / `live-agent` 条件 skip
    - 根拠: `tests/contract/ci/qa-workflow-contract.test.ts`
 4. `main` + secret あり時の `qa -> live-agent`
-   - 根拠: `.github/workflows/qa.yml`（`needs: qa`, `if: secrets.OPENAI_API_KEY != ''`）
+   - 根拠: `.github/workflows/qa.yml`（`live-agent-gate` が secret 有無を output 化し、`live-agent` は `needs: [qa, live-agent-gate]` かつ gate output で条件実行）
 5. legacy -> ACP 監査分類
    - 根拠: `doc/plan/artifacts/260305-s03-phase-f-migration-audit.md`
 6. runbook 用語・導線整合

@@ -1389,6 +1389,13 @@ export async function main(): Promise<void> {
           });
         }
         clearRunAccumulators(accepted.runId);
+        await appendTerminalActionRecord({
+          runId: accepted.runId,
+          sessionKey: input.sessionKey,
+          actionType: "assistant_final",
+          ts: done.finishedAt ?? new Date().toISOString(),
+        });
+        await commitIngestCursorForRun(accepted.runId, "completed");
         emitSse("run/completed", {
           runId: accepted.runId,
           sessionId: session.sessionId,
@@ -1408,13 +1415,6 @@ export async function main(): Promise<void> {
           toolCallId: null,
           stopReason: done.stopReason,
         });
-        await appendTerminalActionRecord({
-          runId: accepted.runId,
-          sessionKey: input.sessionKey,
-          actionType: "assistant_final",
-          ts: done.finishedAt ?? new Date().toISOString(),
-        });
-        await commitIngestCursorForRun(accepted.runId, "completed");
         if (origin === "user" && !isHeartbeat) {
           await maybeRunSummaryBatch({
             runId: accepted.runId,
@@ -1442,6 +1442,13 @@ export async function main(): Promise<void> {
             summary,
           })
         );
+        await appendTerminalActionRecord({
+          runId: accepted.runId,
+          sessionKey: input.sessionKey,
+          actionType: "assistant_error",
+          ts: failed.finishedAt ?? new Date().toISOString(),
+        });
+        await commitIngestCursorForRun(accepted.runId, "failed");
         emitSse("run/failed", {
           runId: accepted.runId,
           sessionId: session.sessionId,
@@ -1463,13 +1470,6 @@ export async function main(): Promise<void> {
           errorCode: summary.errorCode,
           message: summary.errorMessage,
         });
-        await appendTerminalActionRecord({
-          runId: accepted.runId,
-          sessionKey: input.sessionKey,
-          actionType: "assistant_error",
-          ts: failed.finishedAt ?? new Date().toISOString(),
-        });
-        await commitIngestCursorForRun(accepted.runId, "failed");
       } finally {
         const finalRun = runLifecycle.runs().get(accepted.runId);
         if (finalRun?.status === "cancelled") {

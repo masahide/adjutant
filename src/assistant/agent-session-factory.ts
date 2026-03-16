@@ -132,10 +132,7 @@ export function createPiSessionManager(options: CreatePiAgentSessionOptions): Se
   return SessionManager.open(sessionFile, resolve(sessionFile, ".."));
 }
 
-export function resolvePiSessionFilePath(input: {
-  sessionId: string;
-  stateDir?: string;
-}): string {
+export function resolvePiSessionFilePath(input: { sessionId: string; stateDir?: string }): string {
   const stateRoot =
     typeof input.stateDir === "string" && input.stateDir.trim().length > 0
       ? resolve(input.stateDir.trim())

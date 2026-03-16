@@ -16,7 +16,8 @@ export function useCurrentThreadListItemState(): CurrentThreadListItemState {
     (s) => s.threads.threadItems.find((item) => item.id === s.threads.mainThreadId)?.title
   );
   const status = useAuiState(
-    (s) => s.threads.threadItems.find((item) => item.id === s.threads.mainThreadId)?.status ?? "regular"
+    (s) =>
+      s.threads.threadItems.find((item) => item.id === s.threads.mainThreadId)?.status ?? "regular"
   );
 
   return {

@@ -2,10 +2,5 @@
   "repo": "agentclientprotocol/agent-client-protocol",
   "ref": "68f5d07fbb77c09776c85e0c2ee2629a7ca0a095",
   "fetchedAt": "2026-03-16T00:00:00.000Z",
-  "files": [
-    "schema.json",
-    "meta.json",
-    "schema.unstable.json",
-    "meta.unstable.json"
-  ]
+  "files": ["schema.json", "meta.json", "schema.unstable.json", "meta.unstable.json"]
 }

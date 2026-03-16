@@ -46,7 +46,9 @@ export async function runSlackSearchInBrowser(
       )
       .first();
   const locateSearchTrigger = async () => {
-    const topNavSearch = page.locator('button[data-qa="top_nav_search"]').first();
+    const topNavSearch = page
+      .locator('button[data-qa="top_nav_search"]')
+      .first();
     if ((await topNavSearch.count().catch(() => 0)) > 0) {
       return topNavSearch;
     }
@@ -173,7 +175,9 @@ export async function runSlackSearchInBrowser(
     ).slice(0, maxItems);
 
     return items.map((element, index) => {
-      const senderNode = element.querySelector('[data-qa="message_sender_name"]');
+      const senderNode = element.querySelector(
+        '[data-qa="message_sender_name"]',
+      );
       const locationNode = element.querySelector(
         '[data-qa="search_result_channel_name"]',
       );
