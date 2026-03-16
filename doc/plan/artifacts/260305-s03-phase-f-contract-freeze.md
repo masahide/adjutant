@@ -31,7 +31,7 @@
 ### 1.3 CI gate 方針
 
 - `qa` job は必須（Required）とし、PR マージ条件に固定する
-- `live-agent` job は `needs: qa` かつ `OPENAI_API_KEY` secret がある場合のみ実行する
+- `live-agent` job は `needs: qa` を維持しつつ、secret 判定は補助 gate job で正規化して条件実行する
 - `live-agent` の fail は原因特定可能な独立ジョブとして扱い、`qa` の成否とは分離する
 - Phase F で追加する docs/config 同期検証は `qa` job 内に統合する
 

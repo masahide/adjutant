@@ -53,8 +53,11 @@ function OpenMainThreadOnLoad() {
 }
 
 function MainHeader() {
-  const { id: threadLocalId, remoteId: threadRemoteId, title: threadTitle } =
-    useCurrentThreadListItemState();
+  const {
+    id: threadLocalId,
+    remoteId: threadRemoteId,
+    title: threadTitle,
+  } = useCurrentThreadListItemState();
   const rawTitle = threadTitle?.trim() ?? "";
   const threadLabel =
     rawTitle.length > 0

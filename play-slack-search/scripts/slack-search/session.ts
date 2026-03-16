@@ -171,7 +171,9 @@ export function runInteractiveLogin(
     `session.list elapsed=${formatElapsedMs(Date.now() - listedAt)} count=${sessionInfos.length}`,
   );
   const reusableSession = sessionInfos.find(
-    (info) => info.status === 'open' && isSameProfile(info.rawUserDataDir, input.profile),
+    (info) =>
+      info.status === 'open' &&
+      isSameProfile(info.rawUserDataDir, input.profile),
   );
   const requestedSessionInfo =
     sessionInfos.find((info) => info.name === input.requestedSession) ??

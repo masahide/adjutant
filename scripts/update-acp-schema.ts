@@ -96,7 +96,11 @@ async function main(): Promise<void> {
     fetchedAt: new Date().toISOString(),
     files: [...SCHEMA_FILES],
   };
-  await writeFile(join(OUTPUT_DIR, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  await writeFile(
+    join(OUTPUT_DIR, "manifest.json"),
+    `${JSON.stringify(manifest, null, 2)}\n`,
+    "utf8"
+  );
   console.log(`wrote ${join(OUTPUT_DIR, "manifest.json")}`);
 }
 

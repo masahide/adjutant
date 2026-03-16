@@ -14,15 +14,7 @@ import {
   RotateCcwIcon,
   XIcon,
 } from "lucide-react";
-import {
-  createContext,
-  type FC,
-  use,
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import { createContext, type FC, use, useCallback, useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";

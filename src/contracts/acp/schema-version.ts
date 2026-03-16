@@ -20,6 +20,9 @@ export interface AcpSchemaMeta {
 }
 
 export async function loadAcpSchemaMeta(unstable = false): Promise<AcpSchemaMeta> {
-  const raw = await readFile(unstable ? ACP_UNSTABLE_SCHEMA_META_PATH : ACP_SCHEMA_META_PATH, "utf8");
+  const raw = await readFile(
+    unstable ? ACP_UNSTABLE_SCHEMA_META_PATH : ACP_SCHEMA_META_PATH,
+    "utf8"
+  );
   return JSON.parse(raw) as AcpSchemaMeta;
 }

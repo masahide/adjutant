@@ -12,7 +12,7 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --check .",
     "format:write": "prettier --write .",
-    "test": "bash -lc 'files=$(find tests -type f -name \"*.test.ts\"); if [ -z \"$files\" ]; then echo \"No tests found\"; exit 1; fi; node --import tsx --test --test-force-exit --test-timeout=180000 --test-concurrency=1 $files'",
+    "test": "bash -lc 'files=$(find tests -type f -name \"*.test.ts\"); if [ -z \"$files\" ]; then echo \"No tests found\"; exit 1; fi; if docker version >/dev/null 2>&1; then node --import tsx --test --test-force-exit --test-timeout=180000 --test-concurrency=1 $files; else ADJUTANT_TEST_NO_DOCKER=1 node --import tsx --test --test-force-exit --test-timeout=180000 --test-concurrency=1 $files; fi'",
     "test:no-docker": "bash -lc 'ADJUTANT_TEST_NO_DOCKER=1 pnpm run test'",
     "test:live-agent": "bash scripts/test-live-agent.sh",
     "rawlog:prepare": "node --import tsx scripts/prepare-raw-fetch-capture.ts",
