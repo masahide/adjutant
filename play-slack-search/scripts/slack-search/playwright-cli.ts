@@ -24,6 +24,19 @@ export function runPlaywright(args: string[]): string {
   return combined;
 }
 
+export function runPlaywrightInteractive(args: string[]): void {
+  const result = spawnSync('playwright-cli', args, {
+    stdio: 'inherit',
+  });
+
+  if (result.error) {
+    throw result.error;
+  }
+  if (result.status !== 0) {
+    throw new Error(`playwright-cli exited with code ${result.status}`);
+  }
+}
+
 export function runJson<T>(args: string[]): T {
   const output = runPlaywright(args);
   return parseRunCodeJsonOutput<T>(output);

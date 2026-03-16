@@ -38,6 +38,20 @@ interface SessionDependencies {
   log(message: string): void;
 }
 
+interface InteractiveLoginDependencies {
+  listSessions(): SessionInfo[];
+  log(message: string): void;
+  navigateSession(
+    session: string,
+    workspaceUrl: string,
+    log: (message: string) => void,
+  ): void;
+  openSession(
+    input: PrepareSessionInput,
+    log: (message: string) => void,
+  ): string;
+}
+
 const defaultSessionDependencies: SessionDependencies = {
   closeSession: safeCloseSession,
   listSessions,
@@ -49,6 +63,15 @@ const defaultSessionDependencies: SessionDependencies = {
       cloneProfileForReadOnlyUse,
       log,
     ),
+};
+
+const defaultInteractiveLoginDependencies: InteractiveLoginDependencies = {
+  listSessions,
+  log: logSessionMessage,
+  navigateSession: (session, workspaceUrl, log) =>
+    navigatePlaywrightSession(session, workspaceUrl, runPlaywright, log),
+  openSession: (input, log) =>
+    openPlaywrightSessionForLogin(input, runPlaywright, log),
 };
 
 export function prepareSession(
@@ -129,6 +152,70 @@ export function safeCloseSession(session: string): void {
   } catch {
     // Best-effort cleanup only.
   }
+}
+
+export function runInteractiveLogin(
+  input: PrepareSessionInput,
+  dependencies: InteractiveLoginDependencies = defaultInteractiveLoginDependencies,
+): PreparedSession {
+  const startedAt = Date.now();
+  const sessionMessages: string[] = [];
+  const log = (message: string) => {
+    sessionMessages.push(message);
+    dependencies.log(message);
+  };
+
+  const listedAt = Date.now();
+  const sessionInfos = dependencies.listSessions();
+  log(
+    `session.list elapsed=${formatElapsedMs(Date.now() - listedAt)} count=${sessionInfos.length}`,
+  );
+  const reusableSession = sessionInfos.find(
+    (info) => info.status === 'open' && isSameProfile(info.rawUserDataDir, input.profile),
+  );
+  const requestedSessionInfo =
+    sessionInfos.find((info) => info.name === input.requestedSession) ??
+    createUnknownSessionInfo(input.requestedSession);
+  let session = input.requestedSession;
+  let openedSession: string | null = null;
+  if (reusableSession) {
+    session = reusableSession.name;
+    log(
+      `session.ready reused=${session} elapsed=${formatElapsedMs(Date.now() - startedAt)}`,
+    );
+    dependencies.navigateSession(session, input.workspaceUrl, log);
+  } else {
+    if (
+      requestedSessionInfo.status === 'open' &&
+      !isSameProfile(requestedSessionInfo.rawUserDataDir, input.profile)
+    ) {
+      throw new Error(
+        `Playwright session ${input.requestedSession} is already open with a different profile (${requestedSessionInfo.rawUserDataDir ?? 'unknown'}). Close it manually and retry.`,
+      );
+    }
+    const openedAt = Date.now();
+    session = dependencies.openSession(input, log);
+    openedSession = session;
+    log(
+      `session.ready opened=${session} profile=${input.profile} elapsed=${formatElapsedMs(Date.now() - startedAt)} open_elapsed=${formatElapsedMs(Date.now() - openedAt)}`,
+    );
+  }
+
+  log(
+    `login.instructions session=${session} profile=${input.profile} action=open-browser-and-return-control`,
+  );
+  log(
+    `login.done session=${session} elapsed=${formatElapsedMs(Date.now() - startedAt)}`,
+  );
+
+  return {
+    debug: {
+      sessionMessages,
+    },
+    openedSession,
+    profile: input.profile,
+    session,
+  };
 }
 
 export function openPlaywrightSession(
@@ -234,6 +321,41 @@ export function openPlaywrightSession(
   }
 }
 
+export function openPlaywrightSessionForLogin(
+  input: PrepareSessionInput,
+  runPlaywrightCommand: typeof runPlaywright = runPlaywright,
+  log: (message: string) => void = logSessionMessage,
+): string {
+  const startedAt = Date.now();
+  try {
+    runPlaywrightCommand(buildLoginOpenSessionArgs(input));
+    log(
+      `session.open path=interactive-login elapsed=${formatElapsedMs(Date.now() - startedAt)} session=${input.requestedSession}`,
+    );
+    return input.requestedSession;
+  } catch (error) {
+    if (isBrowserAlreadyInUseError(error)) {
+      throw new Error(
+        `Browser profile is already in use: ${input.profile}. Close the existing browser or Playwright session manually and retry.`,
+      );
+    }
+    throw error;
+  }
+}
+
+export function navigatePlaywrightSession(
+  session: string,
+  workspaceUrl: string,
+  runPlaywrightCommand: typeof runPlaywright = runPlaywright,
+  log: (message: string) => void = logSessionMessage,
+): void {
+  const startedAt = Date.now();
+  runPlaywrightCommand([`-s=${session}`, 'goto', workspaceUrl]);
+  log(
+    `session.goto elapsed=${formatElapsedMs(Date.now() - startedAt)} session=${session}`,
+  );
+}
+
 function logSessionMessage(message: string): void {
   process.stderr.write(`[slack-search] ${message}\n`);
 }
@@ -307,6 +429,16 @@ function buildOpenSessionArgs(input: PrepareSessionInput): string[] {
   return [
     `-s=${input.requestedSession}`,
     'open',
+    `--profile=${input.profile}`,
+    input.workspaceUrl,
+  ];
+}
+
+function buildLoginOpenSessionArgs(input: PrepareSessionInput): string[] {
+  return [
+    `-s=${input.requestedSession}`,
+    'open',
+    '--headed',
     `--profile=${input.profile}`,
     input.workspaceUrl,
   ];

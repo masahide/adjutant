@@ -19,6 +19,7 @@ export function parseArgs(
   const parsedOptions: Options = {
     close: false,
     hydrate: false,
+    login: false,
     limit: null,
     listChannels: false,
     listUsers: false,
@@ -53,6 +54,10 @@ export function parseArgs(
     }
     if (arg === '--list-channels') {
       parsedOptions.listChannels = true;
+      continue;
+    }
+    if (arg === '--login') {
+      parsedOptions.login = true;
       continue;
     }
     if (arg === '--list-users' || arg === '--list-user') {
@@ -136,6 +141,7 @@ export function parseArgs(
   }
 
   const activeModeCount = [
+    parsedOptions.login,
     parsedOptions.listChannels,
     parsedOptions.listUsers,
     parsedOptions.resolveChannelIds.length > 0,
@@ -143,11 +149,12 @@ export function parseArgs(
 
   if (activeModeCount > 1) {
     throw new Error(
-      '`--list-channels`, `--list-users`, and `--resolve-channel-id` cannot be used together.',
+      '`--login`, `--list-channels`, `--list-users`, and `--resolve-channel-id` cannot be used together.',
     );
   }
   if (
     (parsedOptions.listChannels ||
+      parsedOptions.login ||
       parsedOptions.listUsers ||
       parsedOptions.resolveChannelIds.length > 0) &&
     parsedOptions.query.trim()
@@ -155,6 +162,7 @@ export function parseArgs(
     throw new Error('`--query` cannot be used together with list modes.');
   }
   if (
+    !parsedOptions.login &&
     !parsedOptions.listChannels &&
     !parsedOptions.listUsers &&
     parsedOptions.resolveChannelIds.length === 0 &&
@@ -193,10 +201,12 @@ function printHelp(env: NodeJS.ProcessEnv): void {
     '  node --experimental-strip-types ./scripts/slack-search.ts --query "from:<@UTEST0001> after:2026-03-03"',
     '  node --experimental-strip-types ./scripts/slack-search.ts --list-channels',
     '  node --experimental-strip-types ./scripts/slack-search.ts --list-users',
+    '  node --experimental-strip-types ./scripts/slack-search.ts --login',
     '  node --experimental-strip-types ./scripts/slack-search.ts --resolve-channel-id C12345678 --resolve-channel-id C23456789',
     '',
     'Options:',
     '  --query, -q          Slack search query. Required unless --list-channels, --list-users, or --resolve-channel-id is used.',
+    '  --login              Open Slack in a visible persistent Playwright browser, return immediately, and let the user log in manually.',
     '  --list-channels      Emit channel info list from Slack client state.',
     '  --list-users         Emit user info list from Slack client state.',
     '  --list-user          Alias for --list-users.',

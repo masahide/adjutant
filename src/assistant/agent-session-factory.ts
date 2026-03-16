@@ -7,6 +7,8 @@ import {
   SettingsManager,
   type ToolDefinition,
 } from "@mariozechner/pi-coding-agent";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 
 import type { MemoryScope } from "./memory/types.js";
 import { createDockerBashOperations, shouldSandbox } from "../sandbox/docker-bash-operations.js";
@@ -31,6 +33,7 @@ export interface CreatePiAgentSessionOptions {
   workspaceDir: string;
   projectRoot?: string;
   model?: string;
+  sessionId?: string;
   memoryScope?: MemoryScope;
   memoryWriteEnabled?: boolean;
   stateDir?: string;
@@ -94,6 +97,7 @@ export async function createPiAgentSession(
   const authStorage = new AuthStorage();
   const modelRegistry = new ModelRegistry(authStorage);
   const settingsManager = SettingsManager.inMemory();
+  const sessionManager = createPiSessionManager(options);
 
   const modelSpec = options.model?.trim();
   const parsed = modelSpec ? parseModelSpecifier(modelSpec) : null;
@@ -102,7 +106,7 @@ export async function createPiAgentSession(
 
   const created = await createAgentSession({
     cwd: options.workspaceDir,
-    sessionManager: SessionManager.inMemory(options.workspaceDir),
+    sessionManager,
     authStorage,
     modelRegistry,
     settingsManager,
@@ -115,11 +119,37 @@ export async function createPiAgentSession(
   };
 }
 
+export function createPiSessionManager(options: CreatePiAgentSessionOptions): SessionManager {
+  const sessionId = options.sessionId?.trim();
+  if (!sessionId) {
+    return SessionManager.inMemory(options.workspaceDir);
+  }
+
+  const sessionFile = resolvePiSessionFilePath({
+    sessionId,
+    stateDir: options.stateDir,
+  });
+  return SessionManager.open(sessionFile, resolve(sessionFile, ".."));
+}
+
+export function resolvePiSessionFilePath(input: {
+  sessionId: string;
+  stateDir?: string;
+}): string {
+  const stateRoot =
+    typeof input.stateDir === "string" && input.stateDir.trim().length > 0
+      ? resolve(input.stateDir.trim())
+      : resolve(homedir(), ".adjutant");
+  const sanitizedSessionId = sanitizeSessionIdForFilePath(input.sessionId);
+  return join(stateRoot, "pi-sessions", `${sanitizedSessionId}.jsonl`);
+}
+
+function sanitizeSessionIdForFilePath(sessionId: string): string {
+  return sessionId.replace(/[^A-Za-z0-9._-]/g, "_");
+}
+
 export function buildCustomToolDefinitions(options: CreatePiAgentSessionOptions): ToolDefinition[] {
   const customTools: ToolDefinition[] = [];
-  if (options.isHeartbeat === true) {
-    return customTools;
-  }
   const rolloutScope = resolvePhaseBRolloutScope(options.phaseBRolloutScope, process.env);
   const phaseBEnabled = isPhaseBEnabledForScope(rolloutScope, options.memoryScope);
 

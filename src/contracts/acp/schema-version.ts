@@ -6,22 +6,11 @@ const REPO_ROOT = resolve(fileURLToPath(new URL("../../..", import.meta.url)));
 
 export const ACP_SCHEMA_VERSION = 1 as const;
 
-export const ACP_VENDOR_SCHEMA_PATH = join(
-  REPO_ROOT,
-  "vendor/agent-client-protocol/schema/schema.json"
-);
-export const ACP_VENDOR_SCHEMA_META_PATH = join(
-  REPO_ROOT,
-  "vendor/agent-client-protocol/schema/meta.json"
-);
-export const ACP_VENDOR_UNSTABLE_SCHEMA_PATH = join(
-  REPO_ROOT,
-  "vendor/agent-client-protocol/schema/schema.unstable.json"
-);
-export const ACP_VENDOR_UNSTABLE_SCHEMA_META_PATH = join(
-  REPO_ROOT,
-  "vendor/agent-client-protocol/schema/meta.unstable.json"
-);
+export const ACP_SCHEMA_DIR = join(REPO_ROOT, "third_party", "acp-schema");
+export const ACP_SCHEMA_PATH = join(ACP_SCHEMA_DIR, "schema.json");
+export const ACP_SCHEMA_META_PATH = join(ACP_SCHEMA_DIR, "meta.json");
+export const ACP_UNSTABLE_SCHEMA_PATH = join(ACP_SCHEMA_DIR, "schema.unstable.json");
+export const ACP_UNSTABLE_SCHEMA_META_PATH = join(ACP_SCHEMA_DIR, "meta.unstable.json");
 
 export interface AcpSchemaMeta {
   version: number;
@@ -31,9 +20,6 @@ export interface AcpSchemaMeta {
 }
 
 export async function loadAcpSchemaMeta(unstable = false): Promise<AcpSchemaMeta> {
-  const raw = await readFile(
-    unstable ? ACP_VENDOR_UNSTABLE_SCHEMA_META_PATH : ACP_VENDOR_SCHEMA_META_PATH,
-    "utf8"
-  );
+  const raw = await readFile(unstable ? ACP_UNSTABLE_SCHEMA_META_PATH : ACP_SCHEMA_META_PATH, "utf8");
   return JSON.parse(raw) as AcpSchemaMeta;
 }

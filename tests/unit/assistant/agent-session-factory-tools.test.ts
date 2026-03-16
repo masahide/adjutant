@@ -38,7 +38,8 @@ test("buildCustomToolDefinitions enables tool_hub and memory provider only for m
       providers: [
         {
           name: "slack",
-          description: "Resolve Slack thread/message context via play-slack-search.",
+          description:
+            "Search Slack messages and resolve thread/message context. For your own posts use query=from:me.",
         },
         {
           name: "memory",
@@ -65,7 +66,8 @@ test("buildCustomToolDefinitions enables tool_hub and memory provider only for m
       providers: [
         {
           name: "slack",
-          description: "Resolve Slack thread/message context via play-slack-search.",
+          description:
+            "Search Slack messages and resolve thread/message context. For your own posts use query=from:me.",
         },
       ],
       usage: "set provider to get actions",
@@ -175,7 +177,7 @@ test("buildCustomToolDefinitions enables sandboxed bash by mode and memoryScope"
   configureSandbox(null);
 });
 
-test("buildCustomToolDefinitions excludes tool_hub from heartbeat sessions", () => {
+test("buildCustomToolDefinitions includes tool_hub for heartbeat sessions", () => {
   const tools = buildCustomToolDefinitions({
     workspaceDir: process.cwd(),
     memoryScope: "main",
@@ -184,7 +186,6 @@ test("buildCustomToolDefinitions excludes tool_hub from heartbeat sessions", () 
 
   assert.equal(
     tools.some((tool) => tool.name === "tool_hub"),
-    false
+    true
   );
-  assert.equal(tools.length, 0);
 });

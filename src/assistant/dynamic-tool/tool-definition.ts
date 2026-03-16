@@ -7,7 +7,7 @@ export function createToolHubToolDefinition(toolHub: ToolHub): ToolDefinition {
     name: "tool_hub",
     label: "Tool Hub",
     description:
-      "Single entrypoint for discovering and using custom tools. If you think a specialized integration may exist but do not see a direct tool, start with tool_hub. Use no args to list providers, provider only to list actions, provider+action for help, and provider+action+args to execute.",
+      "Additional tools are discoverable through tool_hub. If file search does not find what you need, or the task may require searching an external service such as Slack, inspect tool_hub first. Call tool_hub with no arguments to inspect the provider catalog, then call it again with the provider/action you want to use.",
     parameters: {
       type: "object",
       properties: {

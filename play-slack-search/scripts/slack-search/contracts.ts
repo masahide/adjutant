@@ -13,6 +13,7 @@ export interface SessionInfo {
 export interface Options {
   close: boolean;
   hydrate: boolean;
+  login: boolean;
   limit: number | null;
   listChannels: boolean;
   listUsers: boolean;
@@ -96,6 +97,12 @@ export interface ResolveChannelsPayload {
   listUrl: string;
   mode: 'resolve-channels';
   pageTitle: string;
+}
+
+export interface LoginPayload {
+  completed: true;
+  instructions: string;
+  mode: 'login';
 }
 
 export type ChannelType =
@@ -223,12 +230,14 @@ export interface OutputMetadata {
 }
 
 export type PayloadBody =
+  | LoginPayload
   | SearchPayload
   | ChannelListPayload
   | UserListPayload
   | ResolveChannelsPayload;
 
 export type OutputPayload =
+  | (LoginPayload & OutputMetadata & { query: null })
   | (SearchPayload & OutputMetadata & { query: string })
   | (ChannelListPayload & OutputMetadata & { query: null })
   | (UserListPayload & OutputMetadata & { query: null })

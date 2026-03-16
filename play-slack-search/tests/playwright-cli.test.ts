@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   parseRunCodeJsonOutput,
+  runPlaywrightInteractive,
   serializeBrowserCode,
 } from '../scripts/slack-search/playwright-cli.ts';
 import { runSlackSearchInBrowser } from '../scripts/slack-search/browser/search.ts';
@@ -60,4 +61,8 @@ test('serializeBrowserCode は TS 変換由来の __name helper を shim する'
   ) => Promise<unknown>;
 
   assert.equal(typeof runner, 'function');
+});
+
+test('runPlaywrightInteractive が export されている', () => {
+  assert.equal(typeof runPlaywrightInteractive, 'function');
 });

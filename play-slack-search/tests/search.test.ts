@@ -139,3 +139,111 @@ test('runSlackSearchInBrowser は top_nav_search を優先し Nothing turned up 
   assert.equal(result.noResults, true);
   assert.equal(result.results.length, 0);
 });
+
+test('runSlackSearchInBrowser は検索 dialog に残ったとき suggestion click で確定を試みる', async () => {
+  const queryBox = new FakeLocator();
+  queryBox.visible = true;
+
+  const dialog = new FakeLocator();
+  dialog.visible = true;
+
+  const suggestion = new FakeLocator(() => {
+    dialog.visible = false;
+  });
+  suggestion.visible = true;
+  suggestion.countValue = 1;
+
+  const sortButton = new FakeLocator();
+  sortButton.visible = true;
+  sortButton.countValue = 1;
+  sortButton.textContentValue = 'Sort: Newest';
+
+  const body = new FakeLocator();
+  body.textContentValue = '1 result';
+
+  const searchResults = new FakeLocator();
+  searchResults.countValue = 1;
+
+  let currentUrl = 'https://app.slack.com/client/T123/C1';
+  const page = {
+    async goto(_url: string) {},
+    async waitForTimeout(_ms: number) {},
+    locator(selector: string) {
+      if (selector === 'body') {
+        return body;
+      }
+      if (selector === '[role="dialog"]') {
+        return dialog;
+      }
+      if (
+        selector ===
+        '[role="dialog"] [role="option"], [role="dialog"] [role="listitem"], [role="dialog"] button'
+      ) {
+        return suggestion;
+      }
+      if (selector === 'button[data-qa="top_nav_search"]') {
+        const trigger = new FakeLocator();
+        trigger.countValue = 0;
+        return trigger;
+      }
+      if (selector === 'button') {
+        return {
+          filter: ({ hasText }: { hasText: RegExp }) => {
+            if (String(hasText) === '/^Sort:/') {
+              return sortButton;
+            }
+            const empty = new FakeLocator();
+            empty.countValue = 0;
+            return empty;
+          },
+        };
+      }
+      if (selector === '[data-qa="search_result"]') {
+        return searchResults;
+      }
+      return queryBox;
+    },
+    async title() {
+      return 'Search - Slack';
+    },
+    url() {
+      return currentUrl;
+    },
+    async waitForURL() {
+      if (dialog.visible) {
+        throw new Error('still in dialog');
+      }
+      currentUrl = 'https://app.slack.com/client/T123/search';
+    },
+    async waitForFunction() {},
+    async evaluate<T>(_fn: (...args: any[]) => T, ...args: any[]) {
+      if (args.length === 1 && typeof args[0] === 'number') {
+        return [
+          {
+            index: 1,
+            sender: 'masahide',
+            location: '#general',
+            channelName: 'general',
+            timestampLabel: 'today',
+            slackTs: '1.0',
+            messageUrl: 'https://example.slack.com/archives/C1/p1',
+            text: 'hello',
+            links: [],
+          },
+        ] as unknown as T;
+      }
+      return undefined as T;
+    },
+  };
+
+  const result = await runSlackSearchInBrowser(page, {
+    limit: 1,
+    query: 'from:@masahide',
+    workspaceUrl: 'https://example.slack.com',
+  });
+
+  assert.deepEqual(queryBox.presses, ['Enter']);
+  assert.equal(suggestion.clicked, 1);
+  assert.equal(result.results.length, 1);
+  assert.equal(result.searchUrl, 'https://app.slack.com/client/T123/search');
+});

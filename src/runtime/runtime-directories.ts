@@ -69,7 +69,7 @@ export function resolveRuntimeDirectories(
 }
 
 export function resolveWorkspaceTemplateDir(projectRoot: string): string {
-  return resolve(projectRoot, "vendor", "openclaw", "docs", "reference", "templates");
+  return resolve(projectRoot, "assistant", "prompts");
 }
 
 export async function ensureWorkspaceReady(workspaceDir: string): Promise<void> {

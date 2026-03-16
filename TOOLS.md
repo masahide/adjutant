@@ -18,6 +18,8 @@ Tips / 注意事項:
 
 - Slack、memory、今後追加される custom integration は基本的にここから辿ります
 - 専用ツール名が分からないときの最初の確認先として使います
+- 必要なツールが見当たらなければ、まず `tool_hub` を引数なしで呼んで利用可能な provider を確認し、使いたいものを `provider/action` 付きで再度呼び出します
+- ファイル検索で見つからないものを探すときや、Slack など外部サービス上を検索したいときも、まず `tool_hub` の provider catalog を確認します
 
 ## Slack Search
 

@@ -136,7 +136,7 @@ collector 標準経路では raw fetch / CDP debug log 系の env は使って�
 
 | 変数                      | 既定値  | 用途                           |
 | ------------------------- | ------- | ------------------------------ |
-| `ACP_ENABLE_LOAD_SESSION` | `false` | `session/load` capability gate |
+| `ACP_ENABLE_LOAD_SESSION` | `true`  | `session/load` capability gate |
 
 `ACP_WORKER_*` は control-plane から worker に bridge される内部 env であり、ユーザー向け設定としては扱わない。
 

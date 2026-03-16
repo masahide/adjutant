@@ -38,6 +38,16 @@ test("validatePlaySlackSearchRequest keeps workspaceUrl for multi-workspace rout
   assert.equal(request.permalink, "https://workspace-b.slack.com/archives/C1/p1773481739636659");
 });
 
+test("validatePlaySlackSearchRequest accepts login mode without extra args", () => {
+  const request = validatePlaySlackSearchRequest({
+    mode: "login",
+    workspaceUrl: "https://workspace-b.slack.com",
+  });
+
+  assert.equal(request.mode, "login");
+  assert.equal(request.workspaceUrl, "https://workspace-b.slack.com");
+});
+
 test("validatePlaySlackSearchRequest rejects message mode without channelId", () => {
   assert.throws(
     () =>
@@ -134,6 +144,37 @@ test("createPlaySlackSearchToolDefinition exposes tool name and returns details"
     firstContent?.type === "text" ? firstContent.text : "",
     /play_slack_search completed/
   );
+});
+
+test("createPlaySlackSearchToolDefinition supports login mode", async () => {
+  const tool = createPlaySlackSearchToolDefinition("/tmp/workspace", {
+    runCommand: async () => ({
+      mode: "login",
+      items: [],
+      instructions: "complete login and close the browser",
+      sourceUrl: "https://example.slack.com",
+    }),
+  });
+
+  const result = await tool.execute!(
+    "call-2",
+    {
+      mode: "login",
+      workspaceUrl: "https://example.slack.com",
+    },
+    new AbortController().signal,
+    async () => {},
+    {} as never
+  );
+
+  const details = result.details as {
+    mode: string;
+    instructions?: string;
+    items: Array<{ text: string }>;
+  };
+  assert.equal(details.mode, "login");
+  assert.equal(details.instructions, "complete login and close the browser");
+  assert.equal(details.items.length, 0);
 });
 
 test("executePlaySlackSearchRequest uses default timeout when not overridden", async () => {

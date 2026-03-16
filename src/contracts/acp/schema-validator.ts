@@ -10,7 +10,7 @@ export interface AcpSchemaValidationResult {
   error?: AcpSchemaValidationError;
 }
 
-export interface AcpVendorValidationOptions {
+export interface AcpSchemaValidationOptions {
   allowUnstable?: boolean;
   allowProtocolMethods?: boolean;
 }
@@ -28,7 +28,7 @@ function isObject(value: unknown): value is Record<string, unknown> {
 let stableMethodCache: Set<string> | undefined;
 let unstableMethodCache: Set<string> | undefined;
 
-async function loadAllowedMethods(options: AcpVendorValidationOptions): Promise<Set<string>> {
+async function loadAllowedMethods(options: AcpSchemaValidationOptions): Promise<Set<string>> {
   if (stableMethodCache === undefined) {
     const stableMeta = await loadAcpSchemaMeta(false);
     stableMethodCache = new Set([
@@ -62,9 +62,9 @@ async function loadAllowedMethods(options: AcpVendorValidationOptions): Promise<
   return new Set(unstableMethodCache);
 }
 
-export async function validateAcpEnvelopeWithVendorSchema(
+export async function validateAcpEnvelopeWithSchema(
   envelope: unknown,
-  options: AcpVendorValidationOptions = {}
+  options: AcpSchemaValidationOptions = {}
 ): Promise<AcpSchemaValidationResult> {
   if (!isObject(envelope)) {
     return {
@@ -113,7 +113,7 @@ export async function validateAcpEnvelopeWithVendorSchema(
       ok: false,
       error: {
         code: "UNKNOWN_METHOD",
-        message: `Method is not defined by vendor schema: ${rpc.method}`,
+        message: `Method is not defined by ACP schema: ${rpc.method}`,
       },
     };
   }

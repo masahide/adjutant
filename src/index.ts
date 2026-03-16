@@ -103,6 +103,7 @@ function createWorkerSupervisor(
     ...process.env,
     ADJUTANT_STATE_DIR: stateDir,
     ADJUTANT_WORKSPACE_DIR: workspaceDir,
+    ACP_ENABLE_LOAD_SESSION: process.env.ACP_ENABLE_LOAD_SESSION ?? "1",
     ACP_WORKER_SESSION_STORE_PATH: join(stateDir, "worker", "session-store.json"),
   };
 
