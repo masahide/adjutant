@@ -23,12 +23,28 @@ export async function runSlackSearchInBrowser(
   ].join(', ');
   const noResultsPattern = /No results|Nothing turned up/i;
   const sleep = (ms: number) => page.waitForTimeout(ms);
+  const waitForSearchRoute = async (timeout: number) =>
+    await page
+      .waitForURL(/\/search/, { timeout })
+      .then(() => true)
+      .catch(() => false);
   const bodyText = async () =>
     await page
       .locator('body')
       .innerText()
       .catch(() => '');
   const locateSearchInput = () => page.locator(searchInputSelector).first();
+  const locateSearchDialog = () => page.locator('[role="dialog"]').first();
+  const locateSearchSuggestion = () =>
+    page
+      .locator(
+        [
+          '[role="dialog"] [role="option"]',
+          '[role="dialog"] [role="listitem"]',
+          '[role="dialog"] button',
+        ].join(', '),
+      )
+      .first();
   const locateSearchTrigger = async () => {
     const topNavSearch = page.locator('button[data-qa="top_nav_search"]').first();
     if ((await topNavSearch.count().catch(() => 0)) > 0) {
@@ -68,6 +84,23 @@ export async function runSlackSearchInBrowser(
   await queryBox.fill('');
   await queryBox.fill(query);
   await queryBox.press('Enter');
+
+  let navigatedToSearch = await waitForSearchRoute(3000);
+  if (!navigatedToSearch) {
+    const searchDialog = locateSearchDialog();
+    const dialogVisible = await searchDialog.isVisible().catch(() => false);
+    if (dialogVisible) {
+      const suggestion = locateSearchSuggestion();
+      if ((await suggestion.count().catch(() => 0)) > 0) {
+        await suggestion.click().catch(() => null);
+        navigatedToSearch = await waitForSearchRoute(3000);
+      }
+      if (!navigatedToSearch) {
+        await queryBox.press('ArrowDown').catch(() => null);
+        await queryBox.press('Enter').catch(() => null);
+      }
+    }
+  }
 
   await page.waitForURL(/\/search/, { timeout: 20000 }).catch(() => null);
   await page

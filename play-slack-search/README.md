@@ -44,6 +44,7 @@ PLAY_SLACK_SEARCH_PROFILE=~/.playwright-cli/slack
 
 ```bash
 pnpm slack-search --query 'from:me'
+pnpm slack-search --login
 pnpm slack-search --list-channels --limit 10
 pnpm slack-search --list-users --limit 10
 pnpm slack-search --list-users --hydrate
@@ -78,6 +79,12 @@ pnpm slack-search --query 'from:me' --limit 1
 
 ```bash
 pnpm slack-search --workspace-url https://your-workspace.slack.com --query 'from:me'
+```
+
+ログイン済みセッションを作りたい場合は `--login` を使います。Slack のトップページを persistent profile 付きの visible browser で開いてすぐ戻るので、そのブラウザでログインしてください。セッション情報は profile に保存されます。
+
+```bash
+pnpm slack-search --workspace-url https://your-workspace.slack.com --login
 ```
 
 チャンネル一覧をファイルへ保存する例です。

@@ -19,6 +19,7 @@ test('parseArgs は検索実行時のデフォルト値を補完する', () => {
   assert.deepEqual(options, {
     close: false,
     hydrate: false,
+    login: false,
     limit: null,
     listChannels: false,
     listUsers: false,
@@ -43,6 +44,7 @@ test('parseArgs は .env 相当のデフォルト値を補完する', () => {
   assert.equal(options.profile, '~/custom-profile');
   assert.equal(options.session, 'shared-session');
   assert.equal(options.workspaceUrl, 'https://example.slack.com');
+  assert.equal(options.login, false);
 });
 
 test('parseArgs は equals 形式と一覧取得オプションを解釈する', () => {
@@ -59,6 +61,7 @@ test('parseArgs は equals 形式と一覧取得オプションを解釈する',
 
   assert.equal(options.listChannels, true);
   assert.equal(options.hydrate, true);
+  assert.equal(options.login, false);
   assert.equal(options.limit, 3);
   assert.equal(options.session, 'my-session');
   assert.equal(options.profile, '~/custom-profile');
@@ -75,6 +78,7 @@ test('parseArgs は list-users を解釈する', () => {
   ]);
 
   assert.equal(options.listChannels, false);
+  assert.equal(options.login, false);
   assert.equal(options.listUsers, true);
   assert.equal(options.hydrate, false);
   assert.equal(options.limit, 5);
@@ -88,6 +92,7 @@ test('parseArgs は resolve-channel-id を解釈する', () => {
   ]);
 
   assert.equal(options.listChannels, false);
+  assert.equal(options.login, false);
   assert.equal(options.listUsers, false);
   assert.deepEqual(options.resolveChannelIds, ['C12345678']);
   assert.equal(options.query, '');
@@ -116,6 +121,7 @@ test('parseArgs は list-user を list-users の alias として解釈する', (
   ]);
 
   assert.equal(options.listChannels, false);
+  assert.equal(options.login, false);
   assert.equal(options.listUsers, true);
   assert.equal(options.hydrate, false);
   assert.equal(options.limit, 5);
@@ -123,6 +129,18 @@ test('parseArgs は list-user を list-users の alias として解釈する', (
 
 test('parseArgs は query なしの検索実行を拒否する', () => {
   assert.throws(() => parseArgs([]), /`--query` is required/);
+});
+
+test('parseArgs は login モードを解釈する', () => {
+  const options = parseArgs([
+    '--login',
+    '--workspace-url=https://example.slack.com',
+  ]);
+
+  assert.equal(options.login, true);
+  assert.equal(options.query, '');
+  assert.equal(options.listChannels, false);
+  assert.equal(options.listUsers, false);
 });
 
 test('parseArgs は workspaceUrl 未設定を拒否する', () => {
@@ -136,6 +154,18 @@ test('parseArgs は list-channels と query の併用を拒否する', () => {
   assert.throws(
     () =>
       parseArgs(['--list-channels', '--query', 'from:me'], {
+        env: {
+          [PLAY_SLACK_SEARCH_WORKSPACE_URL_ENV]: 'https://example.slack.com',
+        },
+      }),
+    /cannot be used together/,
+  );
+});
+
+test('parseArgs は login と query の併用を拒否する', () => {
+  assert.throws(
+    () =>
+      parseArgs(['--login', '--query', 'from:me'], {
         env: {
           [PLAY_SLACK_SEARCH_WORKSPACE_URL_ENV]: 'https://example.slack.com',
         },

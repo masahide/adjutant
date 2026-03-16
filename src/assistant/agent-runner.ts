@@ -81,6 +81,7 @@ type AgentRunnerRuntime = {
   createSession: (input: {
     workspaceDir: string;
     model?: string;
+    sessionId?: string;
     memoryScope?: "main" | "spoke";
     memoryWriteEnabled?: boolean;
     stateDir?: string;
@@ -135,6 +136,7 @@ const defaultRuntime: AgentRunnerRuntime = {
   createSession: async ({
     workspaceDir,
     model,
+    sessionId,
     memoryScope,
     memoryWriteEnabled,
     stateDir,
@@ -144,6 +146,7 @@ const defaultRuntime: AgentRunnerRuntime = {
     return await module.createPiAgentSession({
       workspaceDir,
       model,
+      sessionId,
       memoryScope,
       memoryWriteEnabled,
       stateDir,
@@ -199,6 +202,7 @@ async function resolveAgentSession(params: {
   const created = await params.runtime.createSession({
     workspaceDir: params.workspaceDir,
     model: process.env.ADJUTANT_MODEL,
+    sessionId,
     memoryScope: params.memoryScope,
     memoryWriteEnabled: params.options.memoryWriteEnabled,
     stateDir: params.stateDir,

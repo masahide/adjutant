@@ -3,16 +3,48 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { executeSlackCommand } from './slack-search/command.ts';
-import type { OutputPayload, PayloadBody } from './slack-search/contracts.ts';
+import type {
+  LoginPayload,
+  OutputPayload,
+  PayloadBody,
+} from './slack-search/contracts.ts';
 import { loadPackageEnv } from './slack-search/env.ts';
 import { parseArgs } from './slack-search/options.ts';
 import { normalizeProfilePath } from './slack-search/profile.ts';
-import { prepareSession, safeCloseSession } from './slack-search/session.ts';
+import {
+  prepareSession,
+  runInteractiveLogin,
+  safeCloseSession,
+} from './slack-search/session.ts';
 
 function main(): void {
   loadPackageEnv();
   const options = parseArgs(process.argv.slice(2));
   const profile = normalizeProfilePath(options.profile);
+  if (options.login) {
+    const login = runInteractiveLogin({
+      profile,
+      requestedSession: options.session,
+      workspaceUrl: options.workspaceUrl,
+    });
+    const payload = buildOutputPayload(
+      {
+        completed: true,
+        instructions:
+          'A persistent Playwright browser was opened with your Slack profile. Log in there; the session data is stored in that profile. Close the browser yourself when you are done.',
+        mode: 'login',
+      },
+      {
+        debug: login.debug,
+        profile: login.profile,
+        query: '',
+        session: login.session,
+        workspaceUrl: options.workspaceUrl,
+      },
+    );
+    writeOutput(payload, options.output);
+    return;
+  }
   const {
     debug,
     openedSession,
@@ -43,7 +75,7 @@ function main(): void {
 }
 
 function buildOutputPayload(
-  payloadBody: PayloadBody,
+  payloadBody: PayloadBody | LoginPayload,
   metadata: {
     debug?: {
       sessionMessages: string[];

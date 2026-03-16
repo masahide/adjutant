@@ -4,16 +4,16 @@ import test from "node:test";
 
 import {
   ACP_SCHEMA_VERSION,
-  ACP_VENDOR_SCHEMA_META_PATH,
-  ACP_VENDOR_SCHEMA_PATH,
-  ACP_VENDOR_UNSTABLE_SCHEMA_PATH,
+  ACP_SCHEMA_META_PATH,
+  ACP_SCHEMA_PATH,
+  ACP_UNSTABLE_SCHEMA_PATH,
   loadAcpSchemaMeta,
 } from "../../../src/contracts/acp/schema-version.js";
 
 test("ACP schema metadata is pinned and loadable", async () => {
-  await access(ACP_VENDOR_SCHEMA_PATH);
-  await access(ACP_VENDOR_UNSTABLE_SCHEMA_PATH);
-  await access(ACP_VENDOR_SCHEMA_META_PATH);
+  await access(ACP_SCHEMA_PATH);
+  await access(ACP_UNSTABLE_SCHEMA_PATH);
+  await access(ACP_SCHEMA_META_PATH);
 
   const stableMeta = await loadAcpSchemaMeta();
   const unstableMeta = await loadAcpSchemaMeta(true);
@@ -25,7 +25,7 @@ test("ACP schema metadata is pinned and loadable", async () => {
 });
 
 test("ACP stable schema JSON is present and parsable", async () => {
-  const raw = await readFile(ACP_VENDOR_SCHEMA_PATH, "utf8");
+  const raw = await readFile(ACP_SCHEMA_PATH, "utf8");
   const schema = JSON.parse(raw) as Record<string, unknown>;
 
   assert.equal(typeof schema.$schema, "string");

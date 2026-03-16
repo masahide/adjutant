@@ -50,11 +50,8 @@ test("resolveRuntimeDirectories prefers explicit workspace dir override", () => 
   assert.equal(dirs.workspaceDir, resolve("../custom-workspace"));
 });
 
-test("resolveWorkspaceTemplateDir points at vendor/openclaw templates", () => {
-  assert.equal(
-    resolveWorkspaceTemplateDir("/repo/adjutant"),
-    "/repo/adjutant/vendor/openclaw/docs/reference/templates"
-  );
+test("resolveWorkspaceTemplateDir points at assistant/prompts", () => {
+  assert.equal(resolveWorkspaceTemplateDir("/repo/adjutant"), "/repo/adjutant/assistant/prompts");
 });
 
 test("ensureWorkspaceReady creates missing workspace directories", async () => {

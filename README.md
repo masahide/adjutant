@@ -167,7 +167,7 @@ pnpm start
 ## AI セッションコンテキスト方針
 
 - assistant workspace の既定値は `~/.adjutant/workspace` です。`ADJUTANT_WORKSPACE_DIR` 未指定時は `<stateDir>/workspace` に解決されます
-- bootstrap seed は `vendor/openclaw/docs/reference/templates` の `AGENTS.md`, `SOUL.md`, `TOOLS.md`, `IDENTITY.md`, `USER.md`, `HEARTBEAT.md`, `BOOTSTRAP.md` を使います
+- bootstrap seed は `assistant/prompts` の `AGENTS.md`, `SOUL.md`, `TOOLS.md`, `IDENTITY.md`, `USER.md`, `HEARTBEAT.md`, `BOOTSTRAP.md` を使います（`vendor/openclaw/docs/reference/templates` の取り込み元を repo 管理下へ複製）
 - main session の Project Context には `AGENTS.md`, `SOUL.md`, `TOOLS.md`, `IDENTITY.md`, `USER.md`, `HEARTBEAT.md`, `BOOTSTRAP.md`, `MEMORY.md` を注入し、`memory/YYYY-MM-DD.md` は自動注入しません
 - 会話履歴の復元は `SessionManager.buildSessionContext()` に委譲します。
 - `ChatHandler` は transcript/memory を再注入せず、`system event`（ある場合）+ `## User Message` のみを送信します。

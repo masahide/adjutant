@@ -13,6 +13,16 @@ export type ExecuteSlackCommandExport = {
   ) => unknown;
 };
 
+export type RunInteractiveLoginExport = {
+  runInteractiveLogin: (input: {
+    profile: string;
+    requestedSession: string;
+    workspaceUrl: string;
+  }) => {
+    session: string;
+  };
+};
+
 export type LoadPackageEnvExport = {
   loadPackageEnv: () => void;
   PLAY_SLACK_SEARCH_WORKSPACE_URL_ENV: string;

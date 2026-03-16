@@ -192,12 +192,12 @@ function createSlackProvider(options: { projectRoot: string }): DynamicProvider 
       descriptor: {
         name: "search",
         description:
-          "Search or resolve Slack message context via play-slack-search. For mode=search, pass Slack query syntax like from:me, from:@やまさき after:2026-03-03, or in:#channel. Supports thread, message, search, and permalink modes.",
+          "Search or resolve Slack message context via play-slack-search. For mode=search, pass Slack query syntax like from:me, from:@やまさき after:2026-03-03, or in:#channel. For mode=login, open a visible persistent Slack browser, return control immediately, and let the user log in manually. Supports thread, message, search, permalink, and login modes.",
         requiredArgs: ["mode"],
         argsSchema: {
           type: "object",
           properties: {
-            mode: { enum: ["thread", "message", "search", "permalink"] },
+            mode: { enum: ["thread", "message", "search", "permalink", "login"] },
             channelId: { type: "string" },
             threadTs: { type: "string" },
             messageTs: { type: "string" },

@@ -19,6 +19,7 @@ import {
   type NormalizeProfilePathExport,
   type PlaywrightCliExport,
   type PrepareSessionExport,
+  type RunInteractiveLoginExport,
   type SafeCloseSessionExport,
 } from "./play-slack-search-adapter.types.js";
 
@@ -34,6 +35,8 @@ const { runJson, serializeBrowserCode } =
 const { prepareSession, safeCloseSession } =
   require("../play-slack-search/scripts/slack-search/session.ts") as PrepareSessionExport &
     SafeCloseSessionExport;
+const { runInteractiveLogin } =
+  require("../play-slack-search/scripts/slack-search/session.ts") as RunInteractiveLoginExport;
 const { DEFAULT_SESSION } =
   require("../play-slack-search/scripts/slack-search/contracts.ts") as DefaultSessionExport;
 
@@ -292,6 +295,15 @@ export function executeAdapterRequest(
   }
 ): PlaySlackSearchResult {
   const limit = request.limit ?? 20;
+  if (request.mode === "login") {
+    return {
+      mode: "login",
+      items: [],
+      instructions:
+        "Slack login browser was opened. Ask the user to complete login in the browser and close it when finished.",
+      sourceUrl: context.workspaceUrl,
+    };
+  }
   if (request.mode === "search") {
     const payload = deps.executeSlackCommand(
       {
@@ -367,6 +379,24 @@ function main(): void {
     const workspaceUrl = resolveWorkspaceUrl(request);
     const profile = getSearchProfile();
     const sessionName = getSearchSessionName();
+    if (request.mode === "login") {
+      const login = runInteractiveLogin({
+        profile,
+        requestedSession: sessionName,
+        workspaceUrl,
+      });
+      process.stdout.write(
+        `${JSON.stringify({
+          instructions:
+            "Slack login browser was opened. Ask the user to complete login in the browser and close it when finished.",
+          items: [],
+          mode: "login",
+          sourceUrl: workspaceUrl,
+          warnings: [`session=${login.session}`],
+        })}\n`
+      );
+      return;
+    }
     const prepared = prepareSession({
       profile,
       requestedSession: sessionName,

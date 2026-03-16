@@ -62,7 +62,7 @@ custom tool の公開面は `tool_hub` 1 本に統一されている。sandbox �
 
 ### 5.1 seed 対象
 
-workspace 初期化では `vendor/openclaw/docs/reference/templates` から次を seed する。
+workspace 初期化では `assistant/prompts` から次を seed する。これらは `vendor/openclaw/docs/reference/templates` の取り込み元を repo 管理下へ複製したものとする。
 
 - `AGENTS.md`
 - `SOUL.md`

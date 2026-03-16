@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { validateAcpEnvelopeWithVendorSchema } from "../../../src/contracts/acp/schema-validator.js";
+import { validateAcpEnvelopeWithSchema } from "../../../src/contracts/acp/schema-validator.js";
 
-test("vendor schema validator accepts stable ACP method", async () => {
-  const result = await validateAcpEnvelopeWithVendorSchema({
+test("ACP schema validator accepts stable method", async () => {
+  const result = await validateAcpEnvelopeWithSchema({
     jsonrpc: "2.0",
     id: "1",
     method: "session/new",
@@ -14,11 +14,11 @@ test("vendor schema validator accepts stable ACP method", async () => {
   assert.equal(result.ok, true);
 });
 
-test("vendor schema validator rejects unstable method in stable mode", async () => {
-  const result = await validateAcpEnvelopeWithVendorSchema({
+test("ACP schema validator rejects unstable-only method in stable mode", async () => {
+  const result = await validateAcpEnvelopeWithSchema({
     jsonrpc: "2.0",
     id: "1",
-    method: "session/list",
+    method: "session/close",
     params: {},
   });
 
@@ -26,12 +26,12 @@ test("vendor schema validator rejects unstable method in stable mode", async () 
   assert.equal(result.error?.code, "UNKNOWN_METHOD");
 });
 
-test("vendor schema validator accepts unstable method when enabled", async () => {
-  const result = await validateAcpEnvelopeWithVendorSchema(
+test("ACP schema validator accepts unstable-only method when enabled", async () => {
+  const result = await validateAcpEnvelopeWithSchema(
     {
       jsonrpc: "2.0",
       id: "1",
-      method: "session/list",
+      method: "session/close",
       params: {},
     },
     { allowUnstable: true }
@@ -40,8 +40,8 @@ test("vendor schema validator accepts unstable method when enabled", async () =>
   assert.equal(result.ok, true);
 });
 
-test("vendor schema validator rejects invalid json-rpc envelope", async () => {
-  const result = await validateAcpEnvelopeWithVendorSchema({
+test("ACP schema validator rejects invalid json-rpc envelope", async () => {
+  const result = await validateAcpEnvelopeWithSchema({
     id: "1",
     method: "session/new",
   });

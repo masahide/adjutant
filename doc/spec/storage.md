@@ -139,7 +139,7 @@ control-plane の durable state は append-only journal と cursor / snapshot �
 
 ### 5.1 Bootstrap seed
 
-workspace 初期化では `vendor/openclaw/docs/reference/templates` から seed する。
+workspace 初期化では `assistant/prompts` から seed する。これらは `vendor/openclaw/docs/reference/templates` の取り込み元を repo 管理下へ複製したものとする。
 
 - 常時 seed 対象
   - `AGENTS.md`

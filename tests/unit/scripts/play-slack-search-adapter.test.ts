@@ -111,3 +111,21 @@ test("executeAdapterRequest は mode=message で message -> thread へ昇格し�
   assert.equal(result.items[0]?.text, "thread root");
   assert.equal(result.warnings, undefined);
 });
+
+test("executeAdapterRequest は mode=login で instructions を返す", () => {
+  const result = executeAdapterRequest(
+    {
+      mode: "login",
+      workspaceUrl: "https://workspace.slack.com",
+    },
+    {
+      workspaceUrl: "https://workspace.slack.com",
+      session: "auto",
+    }
+  );
+
+  assert.equal(result.mode, "login");
+  assert.equal(result.items.length, 0);
+  assert.match(result.instructions ?? "", /complete login/i);
+  assert.equal(result.sourceUrl, "https://workspace.slack.com");
+});

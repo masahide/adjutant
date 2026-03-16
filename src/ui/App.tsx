@@ -1,4 +1,5 @@
-import { AssistantRuntimeProvider } from "@assistant-ui/react";
+import { AssistantRuntimeProvider, useAui, useAuiState } from "@assistant-ui/react";
+import { useEffect, useRef } from "react";
 
 import { TooltipProvider } from "./components/ui/tooltip.js";
 import { Thread } from "./components/assistant-ui/thread.js";
@@ -11,6 +12,7 @@ export default function App() {
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
+      <OpenMainThreadOnLoad />
       <TooltipProvider>
         <main className="adj-layout">
           <ThreadListSidebar />
@@ -22,6 +24,32 @@ export default function App() {
       </TooltipProvider>
     </AssistantRuntimeProvider>
   );
+}
+
+function OpenMainThreadOnLoad() {
+  const aui = useAui();
+  const selectedThreadRemoteId = useAuiState(
+    (s) => s.threads.threadItems.find((item) => item.id === s.threads.mainThreadId)?.remoteId
+  );
+  const selectedThreadId = useAuiState((s) => s.threads.mainThreadId);
+  const didSwitchRef = useRef(false);
+
+  useEffect(() => {
+    if (didSwitchRef.current) {
+      return;
+    }
+
+    const activeThreadId = selectedThreadRemoteId ?? selectedThreadId;
+    if (activeThreadId === "main") {
+      didSwitchRef.current = true;
+      return;
+    }
+
+    didSwitchRef.current = true;
+    void aui.threads().switchToThread("main");
+  }, [aui, selectedThreadId, selectedThreadRemoteId]);
+
+  return null;
 }
 
 function MainHeader() {

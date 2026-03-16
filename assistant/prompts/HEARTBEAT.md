@@ -1,7 +1,12 @@
-# HEARTBEAT
+---
+title: "HEARTBEAT.md Template"
+summary: "Workspace template for HEARTBEAT.md"
+read_when:
+  - Bootstrapping a workspace manually
+---
 
-- 直近の重要イベントを確認する
-- ユーザー通知が必要なときだけ `notify=true` にする
-- 必ず `report_heartbeat_status` ツールを 1 回だけ呼び出す
-- `status` は `no_action_needed` / `needs_attention` / `task_completed` のいずれかを使う
-- `reason` には判断根拠を簡潔に書く
+# HEARTBEAT.md
+
+# Keep this file empty (or with only comments) to skip heartbeat API calls.
+
+# Add tasks below when you want the agent to check something periodically.

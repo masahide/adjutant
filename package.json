@@ -18,6 +18,7 @@
     "rawlog:prepare": "node --import tsx scripts/prepare-raw-fetch-capture.ts",
     "rawlog:capture": "node --import tsx scripts/capture-raw-fetch-log.ts",
     "rawlog:analyze": "node --import tsx scripts/analyze-raw-fetch-log.ts",
+    "acp-schema:update": "node --import tsx scripts/update-acp-schema.ts",
     "verify:config-doc-sync": "node --import tsx scripts/verify-config-doc-sync.ts",
     "test:slack": "node --import tsx --test \"tests/slack/**/*.test.ts\"",
     "sandbox:build": "docker build -f Dockerfile.sandbox -t adjutant-sandbox:trixie-slim .",

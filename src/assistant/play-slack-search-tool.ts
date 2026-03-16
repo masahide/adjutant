@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 
-export type PlaySlackSearchMode = "thread" | "message" | "search" | "permalink";
+export type PlaySlackSearchMode = "thread" | "message" | "search" | "permalink" | "login";
 
 export type PlaySlackSearchRequest = {
   mode: PlaySlackSearchMode;
@@ -27,6 +27,7 @@ export type PlaySlackSearchItem = {
 export type PlaySlackSearchResult = {
   mode: PlaySlackSearchMode;
   items: PlaySlackSearchItem[];
+  instructions?: string;
   warnings?: string[];
   sourceUrl?: string;
 };
@@ -53,12 +54,12 @@ export function createPlaySlackSearchToolDefinition(
     name: PLAY_SLACK_SEARCH_TOOL_NAME,
     label: PLAY_SLACK_SEARCH_TOOL_NAME,
     description:
-      "Search or resolve Slack message context via play-slack-search. Use mode=search with Slack query syntax such as from:me, from:@やまさき after:2026-03-03, or in:#channel. Supports thread, message, search, and permalink modes.",
+      "Search or resolve Slack message context via play-slack-search. Use mode=search with Slack query syntax such as from:me, from:@やまさき after:2026-03-03, or in:#channel. Use mode=login to open a visible persistent Slack browser, return control immediately, and let the user log in manually. Supports thread, message, search, permalink, and login modes.",
     parameters: {
       type: "object",
       properties: {
         mode: {
-          enum: ["thread", "message", "search", "permalink"],
+          enum: ["thread", "message", "search", "permalink", "login"],
         },
         channelId: { type: "string" },
         threadTs: { type: "string" },
@@ -95,7 +96,7 @@ export function validatePlaySlackSearchRequest(rawParams: unknown): PlaySlackSea
   const params = (rawParams ?? {}) as Record<string, unknown>;
   const mode = asMode(params.mode);
   if (mode === undefined) {
-    throw new Error("mode must be one of thread|message|search|permalink");
+    throw new Error("mode must be one of thread|message|search|permalink|login");
   }
   const request: PlaySlackSearchRequest = {
     mode,
@@ -110,6 +111,9 @@ export function validatePlaySlackSearchRequest(rawParams: unknown): PlaySlackSea
 
   if (mode === "search" && request.query === undefined) {
     throw new Error("query required for play_slack_search mode=search");
+  }
+  if (mode === "login") {
+    return request;
   }
   if (mode === "permalink" && request.permalink === undefined) {
     throw new Error("permalink required for play_slack_search mode=permalink");
@@ -237,10 +241,12 @@ function validatePlaySlackSearchResult(value: unknown): PlaySlackSearchResult {
   const warnings = Array.isArray(candidate.warnings)
     ? candidate.warnings.filter((item): item is string => typeof item === "string")
     : undefined;
+  const instructions = asNonEmptyString(candidate.instructions);
   const sourceUrl = asNonEmptyString(candidate.sourceUrl);
   return {
     mode,
     items,
+    ...(instructions ? { instructions } : {}),
     ...(warnings && warnings.length > 0 ? { warnings } : {}),
     ...(sourceUrl ? { sourceUrl } : {}),
   };
@@ -276,7 +282,11 @@ function buildProcessFailureMessage(code: number | null, stderr: string, stdout:
 }
 
 function asMode(value: unknown): PlaySlackSearchMode | undefined {
-  return value === "thread" || value === "message" || value === "search" || value === "permalink"
+  return value === "thread" ||
+    value === "message" ||
+    value === "search" ||
+    value === "permalink" ||
+    value === "login"
     ? value
     : undefined;
 }
