@@ -115,6 +115,93 @@ test("buildCustomToolDefinitions enables memory write action only when memoryWri
   await assert.rejects(() => executeToolHub(disabled, { provider: "memory" }), /unknown provider/);
 });
 
+test("slack provider exposes search, list-users, resolve-channel-id, and save-users actions", async () => {
+  const tools = buildCustomToolDefinitions({
+    workspaceDir: process.cwd(),
+    memoryScope: "spoke",
+  });
+
+  const providerHelp = await executeToolHub(tools, { provider: "slack" });
+  assert.deepEqual(providerHelp, {
+    ok: true,
+    mode: "provider_help",
+    provider: "slack",
+    data: {
+      actions: [
+        {
+          name: "search",
+          description:
+            "Search or resolve Slack message context via play-slack-search. For mode=search, pass Slack query syntax like from:me, from:@やまさき after:2026-03-03, or in:#channel. For mode=login, open a visible persistent Slack browser, return control immediately, and let the user log in manually. Supports thread, message, search, permalink, and login modes.",
+          requiredArgs: ["mode"],
+          argsSchema: {
+            type: "object",
+            properties: {
+              mode: { enum: ["thread", "message", "search", "permalink", "login"] },
+              channelId: { type: "string" },
+              threadTs: { type: "string" },
+              messageTs: { type: "string" },
+              permalink: { type: "string" },
+              workspaceUrl: { type: "string" },
+              query: { type: "string" },
+              limit: { type: "number" },
+            },
+            required: ["mode"],
+            additionalProperties: false,
+          },
+        },
+        {
+          name: "list-users",
+          description:
+            "List Slack users from the current workspace state. Use hydrate=true when the member list may need warm-up first.",
+          requiredArgs: [],
+          argsSchema: {
+            type: "object",
+            properties: {
+              workspaceUrl: { type: "string" },
+              limit: { type: "number" },
+              hydrate: { type: "boolean" },
+            },
+            additionalProperties: false,
+          },
+        },
+        {
+          name: "resolve-channel-id",
+          description:
+            "Resolve one or more Slack channel IDs to channel names using the current workspace state.",
+          requiredArgs: ["channelIds"],
+          argsSchema: {
+            type: "object",
+            properties: {
+              workspaceUrl: { type: "string" },
+              channelIds: {
+                type: "array",
+                items: { type: "string" },
+                minItems: 1,
+              },
+            },
+            required: ["channelIds"],
+            additionalProperties: false,
+          },
+        },
+        {
+          name: "save-users",
+          description:
+            "Fetch the full Slack user list and save it under workspace/tools/play-slack-search/<workspace-host>/users.json.",
+          requiredArgs: [],
+          argsSchema: {
+            type: "object",
+            properties: {
+              workspaceUrl: { type: "string" },
+              hydrate: { type: "boolean" },
+            },
+            additionalProperties: false,
+          },
+        },
+      ],
+    },
+  });
+});
+
 test("buildCustomToolDefinitions defaults phase B rollout to main-only", async () => {
   const spokeTools = buildCustomToolDefinitions({
     workspaceDir: process.cwd(),

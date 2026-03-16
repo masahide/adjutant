@@ -5,9 +5,13 @@ import { pathToFileURL } from "node:url";
 import process from "node:process";
 
 import {
+  type PlaySlackSearchAdapterRequest,
+  type PlaySlackSearchAdapterResult,
   type PlaySlackSearchItem,
+  type PlaySlackSearchListUsersResult,
   type PlaySlackSearchRequest,
   type PlaySlackSearchResult,
+  type PlaySlackSearchResolveChannelResult,
 } from "../src/assistant/play-slack-search-tool.js";
 import { deriveSlackPermalink } from "../src/collector-slack/notification-derived-fields.js";
 import { loadProjectEnv } from "../src/runtime/load-project-env.js";
@@ -67,6 +71,25 @@ type SearchPayloadLike = {
   }>;
   searchUrl?: string;
   noResults?: boolean;
+};
+
+type UserListPayloadLike = {
+  listUrl?: string;
+  source?: string;
+  stateKey?: string | null;
+  totalUserCount?: number;
+  users: Array<Record<string, unknown>>;
+};
+
+type ResolveChannelsPayloadLike = {
+  channels: Array<{
+    channelId?: string;
+    channelName?: string | null;
+    resolved?: boolean;
+    source?: string;
+    stateKey?: string | null;
+  }>;
+  listUrl?: string;
 };
 
 type AdapterDeps = {
@@ -139,7 +162,7 @@ async function runSlackPermalinkInBrowser(
   };
 }
 
-async function readJsonFromStdin(): Promise<PlaySlackSearchRequest> {
+async function readJsonFromStdin(): Promise<PlaySlackSearchAdapterRequest> {
   const chunks: Buffer[] = [];
   for await (const chunk of process.stdin) {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
@@ -148,10 +171,10 @@ async function readJsonFromStdin(): Promise<PlaySlackSearchRequest> {
   if (!raw) {
     throw new Error("play-slack-search-adapter request body is empty");
   }
-  return JSON.parse(raw) as PlaySlackSearchRequest;
+  return JSON.parse(raw) as PlaySlackSearchAdapterRequest;
 }
 
-function resolveWorkspaceUrl(request: PlaySlackSearchRequest): string {
+function resolveWorkspaceUrl(request: PlaySlackSearchAdapterRequest): string {
   if (request.workspaceUrl) {
     try {
       const url = new URL(request.workspaceUrl);
@@ -160,7 +183,7 @@ function resolveWorkspaceUrl(request: PlaySlackSearchRequest): string {
       throw new Error(`invalid workspaceUrl: ${request.workspaceUrl}`);
     }
   }
-  if (request.permalink) {
+  if ("permalink" in request && request.permalink) {
     try {
       const url = new URL(request.permalink);
       return `${url.protocol}//${url.host}`;
@@ -228,6 +251,79 @@ function normalizePermalinkPayload(payload: PermalinkPayload): PlaySlackSearchRe
   };
 }
 
+function normalizeListUsersPayload(payload: UserListPayloadLike): PlaySlackSearchListUsersResult {
+  const users = Array.isArray(payload.users)
+    ? payload.users.map((user) => ({
+        ...(typeof user.id === "string" ? { id: user.id } : {}),
+        ...(typeof user.teamId === "string" ? { teamId: user.teamId } : {}),
+        ...(typeof user.name === "string" ? { name: user.name } : {}),
+        ...(typeof user.realName === "string" ? { realName: user.realName } : {}),
+        ...(typeof user.displayName === "string" ? { displayName: user.displayName } : {}),
+        ...(typeof user.displayNameNormalized === "string"
+          ? { displayNameNormalized: user.displayNameNormalized }
+          : {}),
+        ...(typeof user.title === "string" ? { title: user.title } : {}),
+        ...(typeof user.email === "string" ? { email: user.email } : {}),
+        ...(typeof user.tz === "string" ? { tz: user.tz } : {}),
+        ...(typeof user.updated === "number" ? { updated: user.updated } : {}),
+        ...(typeof user.isAdmin === "boolean" ? { isAdmin: user.isAdmin } : {}),
+        ...(typeof user.isAppUser === "boolean" ? { isAppUser: user.isAppUser } : {}),
+        ...(typeof user.isBot === "boolean" ? { isBot: user.isBot } : {}),
+        ...(typeof user.isDeleted === "boolean" ? { isDeleted: user.isDeleted } : {}),
+        ...(typeof user.isOwner === "boolean" ? { isOwner: user.isOwner } : {}),
+        ...(typeof user.isPrimaryOwner === "boolean"
+          ? { isPrimaryOwner: user.isPrimaryOwner }
+          : {}),
+        ...(typeof user.isRestricted === "boolean" ? { isRestricted: user.isRestricted } : {}),
+        ...(typeof user.isStranger === "boolean" ? { isStranger: user.isStranger } : {}),
+        ...(typeof user.isUltraRestricted === "boolean"
+          ? { isUltraRestricted: user.isUltraRestricted }
+          : {}),
+      }))
+    : [];
+  return {
+    mode: "list-users",
+    users,
+    ...(typeof payload.listUrl === "string" ? { sourceUrl: payload.listUrl } : {}),
+    ...(typeof payload.source === "string" ? { source: payload.source } : {}),
+    ...(typeof payload.stateKey === "string" ? { stateKey: payload.stateKey } : {}),
+    ...(typeof payload.totalUserCount === "number"
+      ? { totalUserCount: payload.totalUserCount }
+      : {}),
+  };
+}
+
+function normalizeResolveChannelsPayload(
+  payload: ResolveChannelsPayloadLike
+): PlaySlackSearchResolveChannelResult {
+  const channels = Array.isArray(payload.channels)
+    ? payload.channels
+        .filter(
+          (
+            channel
+          ): channel is {
+            channelId: string;
+            channelName?: string | null;
+            resolved: boolean;
+            source?: string;
+            stateKey?: string | null;
+          } => typeof channel.channelId === "string" && typeof channel.resolved === "boolean"
+        )
+        .map((channel) => ({
+          channelId: channel.channelId,
+          resolved: channel.resolved,
+          ...(typeof channel.channelName === "string" ? { channelName: channel.channelName } : {}),
+          ...(typeof channel.source === "string" ? { source: channel.source } : {}),
+          ...(typeof channel.stateKey === "string" ? { stateKey: channel.stateKey } : {}),
+        }))
+    : [];
+  return {
+    mode: "resolve-channel-id",
+    channels,
+    ...(typeof payload.listUrl === "string" ? { sourceUrl: payload.listUrl } : {}),
+  };
+}
+
 export function extractThreadTsFromUrl(urlValue: string | undefined): string | undefined {
   if (!urlValue) {
     return undefined;
@@ -287,14 +383,14 @@ function runPermalinkPayload(permalink: string, limit: number, session: string):
 }
 
 export function executeAdapterRequest(
-  request: PlaySlackSearchRequest,
+  request: PlaySlackSearchAdapterRequest,
   context: { workspaceUrl: string; session: string },
   deps: AdapterDeps = {
     executeSlackCommand,
     runPermalinkPayload,
   }
-): PlaySlackSearchResult {
-  const limit = request.limit ?? 20;
+): PlaySlackSearchAdapterResult {
+  const limit = "limit" in request ? (request.limit ?? 20) : 20;
   if (request.mode === "login") {
     return {
       mode: "login",
@@ -303,6 +399,36 @@ export function executeAdapterRequest(
         "Slack login browser was opened. Ask the user to complete login in the browser and close it when finished.",
       sourceUrl: context.workspaceUrl,
     };
+  }
+  if (request.mode === "list-users") {
+    const payload = deps.executeSlackCommand(
+      {
+        hydrate: request.hydrate ?? false,
+        limit: request.limit ?? Number.MAX_SAFE_INTEGER,
+        listChannels: false,
+        listUsers: true,
+        query: "",
+        resolveChannelIds: [],
+        workspaceUrl: context.workspaceUrl,
+      },
+      context.session
+    ) as UserListPayloadLike;
+    return normalizeListUsersPayload(payload);
+  }
+  if (request.mode === "resolve-channel-id") {
+    const payload = deps.executeSlackCommand(
+      {
+        hydrate: false,
+        limit: Number.MAX_SAFE_INTEGER,
+        listChannels: false,
+        listUsers: false,
+        query: "",
+        resolveChannelIds: request.channelIds,
+        workspaceUrl: context.workspaceUrl,
+      },
+      context.session
+    ) as ResolveChannelsPayloadLike;
+    return normalizeResolveChannelsPayload(payload);
   }
   if (request.mode === "search") {
     const payload = deps.executeSlackCommand(

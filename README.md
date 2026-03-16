@@ -158,7 +158,7 @@ pnpm start
 - workspace は `/workspace` に bind mount し、`HOME=/home/agent` は uid/gid を合わせた tmpfs を割り当てる
 - `ADJUTANT_SANDBOX_USER` 未指定時は POSIX でホスト UID/GID を使い、取得できない環境では `1000:1000` に fallback する
 - `read` / `edit` / `write` / `grep` / `find` / `ls` も `SandboxRunSpec` を共有し、workspace 外 path は拒否する
-- custom tool 公開面は `tool_hub` 1 本のみで、`slack/search`, `memory/search`, `memory/get`, `memory/write` を provider/action として dispatch する
+- custom tool 公開面は `tool_hub` 1 本のみで、`slack/search`, `slack/list-users`, `slack/resolve-channel-id`, `slack/save-users`, `memory/search`, `memory/get`, `memory/write` を provider/action として dispatch する
 - Mac の Docker Desktop では root 所有問題が見えにくいことがありますが、設計基準は WSL の Linux filesystem 側と将来の Linux 実行です
 - 既定 sandbox イメージには `bash` / `git` / `curl` / `jq` / `python3` / `python3-pip` / `rg`（ripgrep）を同梱
 - Docker 利用不可またはイメージ未ビルド時は fail-safe で起動中断します

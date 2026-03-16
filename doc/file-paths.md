@@ -135,13 +135,23 @@ ACP ランタイムでは timeline / watermarks ともに `stateDir` 直下固�
 | ------------------------------------ | --- | -------------------------------- | --------------------------------------------------------------------------------- |
 | `{stateDir}/memory/{agentId}.sqlite` | R/W | `ADJUTANT_MEMORY_SEARCH_DB_PATH` | `src/assistant/memory-search/config.ts`, `src/assistant/memory-search/manager.ts` |
 
-## 13. UI / Vite
+## 13. ツール専用データ
+
+| パス                                                                | R/W | 環境変数での上書き          | 定義箇所                                                                                    |
+| ------------------------------------------------------------------- | --- | --------------------------- | ------------------------------------------------------------------------------------------- |
+| `{stateDir}/tools/play-slack-search/profile`                        | R/W | `PLAY_SLACK_SEARCH_PROFILE` | `play-slack-search/scripts/slack-search/profile.ts`, `scripts/play-slack-search-adapter.ts` |
+| `{workspaceDir}/tools/play-slack-search/{workspaceHost}/users.json` | R/W | -                           | `src/assistant/play-slack-search-storage.ts`, `src/assistant/tool-hub-provider-registry.ts` |
+
+ツールがブラウザプロファイルやキャッシュなどの専用データを持つ場合は、原則として `{stateDir}/tools/<toolName>/` 配下へ保存する。
+workspace に紐づく取得結果を永続化する場合は、`{workspaceDir}/tools/<toolName>/<workspaceHost>/` 配下へ保存する。
+
+## 14. UI / Vite
 
 | パス                           | R/W  | 定義箇所                    |
 | ------------------------------ | ---- | --------------------------- |
 | `{cwd}/node_modules/.bin/vite` | 実行 | `src/assistant/main.ts:631` |
 
-## 14. JSONL リカバリ
+## 15. JSONL リカバリ
 
 起動時に以下のパスから `.jsonl` ファイルを自動スキャン・修復する (`src/assistant/main.ts:214-235`, `src/index.ts:57-71`)。
 
@@ -150,7 +160,7 @@ ACP ランタイムでは timeline / watermarks ともに `stateDir` 直下固�
 - `{timelinePath}` (timeline.jsonl)
 - `{idempotencyStorePath}` (idempotency.jsonl)
 
-## 15. コントロールプレーン永続化 (JSONL ジャーナル)
+## 16. コントロールプレーン永続化 (JSONL ジャーナル)
 
 | パス                                                      | R/W | 定義箇所                                             | 説明                                                                     |
 | --------------------------------------------------------- | --- | ---------------------------------------------------- | ------------------------------------------------------------------------ |

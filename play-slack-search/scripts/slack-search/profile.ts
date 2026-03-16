@@ -2,7 +2,13 @@ import { homedir } from 'node:os';
 import { isAbsolute, resolve } from 'node:path';
 
 export function defaultProfilePath(): string {
-  return resolve(homedir(), '.playwright-cli/slack');
+  return resolve(
+    homedir(),
+    '.adjutant',
+    'tools',
+    'play-slack-search',
+    'profile',
+  );
 }
 
 export function normalizeProfilePath(input: string): string {

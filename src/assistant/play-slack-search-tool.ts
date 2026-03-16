@@ -32,13 +32,78 @@ export type PlaySlackSearchResult = {
   sourceUrl?: string;
 };
 
-type ExecuteDeps = {
+export type PlaySlackSearchListUsersRequest = {
+  mode: "list-users";
+  workspaceUrl?: string;
+  limit?: number;
+  hydrate?: boolean;
+};
+
+export type PlaySlackSearchUser = {
+  id?: string;
+  teamId?: string;
+  name?: string;
+  realName?: string;
+  displayName?: string;
+  displayNameNormalized?: string;
+  title?: string;
+  email?: string;
+  tz?: string;
+  updated?: number;
+  isAdmin?: boolean;
+  isAppUser?: boolean;
+  isBot?: boolean;
+  isDeleted?: boolean;
+  isOwner?: boolean;
+  isPrimaryOwner?: boolean;
+  isRestricted?: boolean;
+  isStranger?: boolean;
+  isUltraRestricted?: boolean;
+};
+
+export type PlaySlackSearchListUsersResult = {
+  mode: "list-users";
+  users: PlaySlackSearchUser[];
+  sourceUrl?: string;
+  source?: string;
+  stateKey?: string;
+  totalUserCount?: number;
+};
+
+export type PlaySlackSearchResolveChannelRequest = {
+  mode: "resolve-channel-id";
+  workspaceUrl?: string;
+  channelIds: string[];
+};
+
+export type PlaySlackSearchResolvedChannel = {
+  channelId: string;
+  channelName?: string;
+  resolved: boolean;
+  source?: string;
+  stateKey?: string;
+};
+
+export type PlaySlackSearchResolveChannelResult = {
+  mode: "resolve-channel-id";
+  channels: PlaySlackSearchResolvedChannel[];
+  sourceUrl?: string;
+};
+
+export type PlaySlackSearchAdapterRequest =
+  | PlaySlackSearchRequest
+  | PlaySlackSearchListUsersRequest
+  | PlaySlackSearchResolveChannelRequest;
+
+export type PlaySlackSearchAdapterResult =
+  | PlaySlackSearchResult
+  | PlaySlackSearchListUsersResult
+  | PlaySlackSearchResolveChannelResult;
+
+type ExecuteDeps<TRequest, TResult> = {
   cwd: string;
   timeoutMs?: number;
-  runCommand?: (
-    request: PlaySlackSearchRequest,
-    options: { cwd: string; timeoutMs: number }
-  ) => Promise<PlaySlackSearchResult>;
+  runCommand?: (request: TRequest, options: { cwd: string; timeoutMs: number }) => Promise<TResult>;
 };
 
 const PLAY_SLACK_SEARCH_TOOL_NAME = "play_slack_search";
@@ -48,7 +113,7 @@ const PLAY_SLACK_SEARCH_ADAPTER_ENTRY_ENV = "ADJUTANT_PLAY_SLACK_SEARCH_ADAPTER_
 
 export function createPlaySlackSearchToolDefinition(
   cwd: string,
-  deps: Omit<ExecuteDeps, "cwd"> = {}
+  deps: Omit<ExecuteDeps<PlaySlackSearchRequest, PlaySlackSearchResult>, "cwd"> = {}
 ): ToolDefinition {
   return {
     name: PLAY_SLACK_SEARCH_TOOL_NAME,
@@ -143,19 +208,77 @@ export function validatePlaySlackSearchRequest(rawParams: unknown): PlaySlackSea
   return request;
 }
 
-export async function executePlaySlackSearchRequest(
-  request: PlaySlackSearchRequest,
-  deps: ExecuteDeps
-): Promise<PlaySlackSearchResult> {
+export function validatePlaySlackSearchListUsersRequest(
+  rawParams: unknown
+): PlaySlackSearchListUsersRequest {
+  const params = (rawParams ?? {}) as Record<string, unknown>;
+  return {
+    mode: "list-users",
+    workspaceUrl: asNonEmptyString(params.workspaceUrl),
+    limit: asPositiveInteger(params.limit),
+    hydrate: asBoolean(params.hydrate, "hydrate"),
+  };
+}
+
+export function validatePlaySlackSearchResolveChannelRequest(
+  rawParams: unknown
+): PlaySlackSearchResolveChannelRequest {
+  const params = (rawParams ?? {}) as Record<string, unknown>;
+  return {
+    mode: "resolve-channel-id",
+    workspaceUrl: asNonEmptyString(params.workspaceUrl),
+    channelIds: asNonEmptyStringArray(params.channelIds, "channelIds"),
+  };
+}
+
+async function executeTypedPlaySlackSearchRequest<TRequest, TResult>(
+  request: TRequest,
+  deps: ExecuteDeps<TRequest, TResult>,
+  validateResult: (value: unknown) => TResult
+): Promise<TResult> {
   const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const runCommand = deps.runCommand ?? runPlaySlackSearchAdapter;
+  const runCommand =
+    deps.runCommand ??
+    (async (rawRequest: TRequest, options: { cwd: string; timeoutMs: number }) =>
+      validateResult(
+        await runPlaySlackSearchAdapterRaw(rawRequest as PlaySlackSearchAdapterRequest, options)
+      ));
   return await runCommand(request, { cwd: deps.cwd, timeoutMs });
 }
 
-async function runPlaySlackSearchAdapter(
+export async function executePlaySlackSearchRequest(
   request: PlaySlackSearchRequest,
-  options: { cwd: string; timeoutMs: number }
+  deps: ExecuteDeps<PlaySlackSearchRequest, PlaySlackSearchResult>
 ): Promise<PlaySlackSearchResult> {
+  return await executeTypedPlaySlackSearchRequest(request, deps, validatePlaySlackSearchResult);
+}
+
+export async function executePlaySlackSearchListUsersRequest(
+  request: PlaySlackSearchListUsersRequest,
+  deps: ExecuteDeps<PlaySlackSearchListUsersRequest, PlaySlackSearchListUsersResult>
+): Promise<PlaySlackSearchListUsersResult> {
+  return await executeTypedPlaySlackSearchRequest(
+    request,
+    deps,
+    validatePlaySlackSearchListUsersResult
+  );
+}
+
+export async function executePlaySlackSearchResolveChannelRequest(
+  request: PlaySlackSearchResolveChannelRequest,
+  deps: ExecuteDeps<PlaySlackSearchResolveChannelRequest, PlaySlackSearchResolveChannelResult>
+): Promise<PlaySlackSearchResolveChannelResult> {
+  return await executeTypedPlaySlackSearchRequest(
+    request,
+    deps,
+    validatePlaySlackSearchResolveChannelResult
+  );
+}
+
+async function runPlaySlackSearchAdapterRaw(
+  request: PlaySlackSearchAdapterRequest,
+  options: { cwd: string; timeoutMs: number }
+): Promise<unknown> {
   const scriptPath = resolveAdapterScriptPath(options.cwd);
   const child = spawn(process.execPath, ["--import", "tsx", scriptPath], {
     cwd: options.cwd,
@@ -177,7 +300,7 @@ async function runPlaySlackSearchAdapter(
     }, DEFAULT_TERMINATION_GRACE_MS).unref();
   }, options.timeoutMs);
 
-  return await new Promise<PlaySlackSearchResult>((resolve, reject) => {
+  return await new Promise<unknown>((resolve, reject) => {
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {
@@ -206,7 +329,7 @@ async function runPlaySlackSearchAdapter(
       }
       try {
         const parsed = JSON.parse(stdout) as unknown;
-        resolve(validatePlaySlackSearchResult(parsed));
+        resolve(parsed);
       } catch (error) {
         reject(
           new Error(
@@ -249,6 +372,131 @@ function validatePlaySlackSearchResult(value: unknown): PlaySlackSearchResult {
     ...(instructions ? { instructions } : {}),
     ...(warnings && warnings.length > 0 ? { warnings } : {}),
     ...(sourceUrl ? { sourceUrl } : {}),
+  };
+}
+
+function validatePlaySlackSearchListUsersResult(value: unknown): PlaySlackSearchListUsersResult {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("play_slack_search list-users result must be an object");
+  }
+  const candidate = value as Record<string, unknown>;
+  if (candidate.mode !== "list-users") {
+    throw new Error("play_slack_search list-users result.mode invalid");
+  }
+  const usersInput = Array.isArray(candidate.users) ? candidate.users : [];
+  const users = usersInput.map((user, index) => validatePlaySlackSearchUser(user, index));
+  return {
+    mode: "list-users",
+    users,
+    ...(asNonEmptyString(candidate.sourceUrl)
+      ? { sourceUrl: asNonEmptyString(candidate.sourceUrl) }
+      : {}),
+    ...(asNonEmptyString(candidate.source) ? { source: asNonEmptyString(candidate.source) } : {}),
+    ...(asNonEmptyString(candidate.stateKey)
+      ? { stateKey: asNonEmptyString(candidate.stateKey) }
+      : {}),
+    ...(typeof candidate.totalUserCount === "number" && Number.isFinite(candidate.totalUserCount)
+      ? { totalUserCount: candidate.totalUserCount }
+      : {}),
+  };
+}
+
+function validatePlaySlackSearchUser(value: unknown, index: number): PlaySlackSearchUser {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`play_slack_search list-users result.users[${index}] must be an object`);
+  }
+  const candidate = value as Record<string, unknown>;
+  return {
+    ...(asNonEmptyString(candidate.id) ? { id: asNonEmptyString(candidate.id) } : {}),
+    ...(asNonEmptyString(candidate.teamId) ? { teamId: asNonEmptyString(candidate.teamId) } : {}),
+    ...(asNonEmptyString(candidate.name) ? { name: asNonEmptyString(candidate.name) } : {}),
+    ...(asNonEmptyString(candidate.realName)
+      ? { realName: asNonEmptyString(candidate.realName) }
+      : {}),
+    ...(asNonEmptyString(candidate.displayName)
+      ? { displayName: asNonEmptyString(candidate.displayName) }
+      : {}),
+    ...(asNonEmptyString(candidate.displayNameNormalized)
+      ? { displayNameNormalized: asNonEmptyString(candidate.displayNameNormalized) }
+      : {}),
+    ...(asNonEmptyString(candidate.title) ? { title: asNonEmptyString(candidate.title) } : {}),
+    ...(asNonEmptyString(candidate.email) ? { email: asNonEmptyString(candidate.email) } : {}),
+    ...(asNonEmptyString(candidate.tz) ? { tz: asNonEmptyString(candidate.tz) } : {}),
+    ...(typeof candidate.updated === "number" && Number.isFinite(candidate.updated)
+      ? { updated: candidate.updated }
+      : {}),
+    ...(typeof candidate.isAdmin === "boolean" ? { isAdmin: candidate.isAdmin } : {}),
+    ...(typeof candidate.isAppUser === "boolean" ? { isAppUser: candidate.isAppUser } : {}),
+    ...(typeof candidate.isBot === "boolean" ? { isBot: candidate.isBot } : {}),
+    ...(typeof candidate.isDeleted === "boolean" ? { isDeleted: candidate.isDeleted } : {}),
+    ...(typeof candidate.isOwner === "boolean" ? { isOwner: candidate.isOwner } : {}),
+    ...(typeof candidate.isPrimaryOwner === "boolean"
+      ? { isPrimaryOwner: candidate.isPrimaryOwner }
+      : {}),
+    ...(typeof candidate.isRestricted === "boolean"
+      ? { isRestricted: candidate.isRestricted }
+      : {}),
+    ...(typeof candidate.isStranger === "boolean" ? { isStranger: candidate.isStranger } : {}),
+    ...(typeof candidate.isUltraRestricted === "boolean"
+      ? { isUltraRestricted: candidate.isUltraRestricted }
+      : {}),
+  };
+}
+
+function validatePlaySlackSearchResolveChannelResult(
+  value: unknown
+): PlaySlackSearchResolveChannelResult {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("play_slack_search resolve-channel-id result must be an object");
+  }
+  const candidate = value as Record<string, unknown>;
+  if (candidate.mode !== "resolve-channel-id") {
+    throw new Error("play_slack_search resolve-channel-id result.mode invalid");
+  }
+  const channelsInput = Array.isArray(candidate.channels) ? candidate.channels : [];
+  const channels = channelsInput.map((channel, index) =>
+    validatePlaySlackSearchResolvedChannel(channel, index)
+  );
+  return {
+    mode: "resolve-channel-id",
+    channels,
+    ...(asNonEmptyString(candidate.sourceUrl)
+      ? { sourceUrl: asNonEmptyString(candidate.sourceUrl) }
+      : {}),
+  };
+}
+
+function validatePlaySlackSearchResolvedChannel(
+  value: unknown,
+  index: number
+): PlaySlackSearchResolvedChannel {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(
+      `play_slack_search resolve-channel-id result.channels[${index}] must be an object`
+    );
+  }
+  const candidate = value as Record<string, unknown>;
+  const channelId = asNonEmptyString(candidate.channelId);
+  if (channelId === undefined) {
+    throw new Error(
+      `play_slack_search resolve-channel-id result.channels[${index}].channelId required`
+    );
+  }
+  if (typeof candidate.resolved !== "boolean") {
+    throw new Error(
+      `play_slack_search resolve-channel-id result.channels[${index}].resolved required`
+    );
+  }
+  return {
+    channelId,
+    resolved: candidate.resolved,
+    ...(asNonEmptyString(candidate.channelName)
+      ? { channelName: asNonEmptyString(candidate.channelName) }
+      : {}),
+    ...(asNonEmptyString(candidate.source) ? { source: asNonEmptyString(candidate.source) } : {}),
+    ...(asNonEmptyString(candidate.stateKey)
+      ? { stateKey: asNonEmptyString(candidate.stateKey) }
+      : {}),
   };
 }
 
@@ -297,6 +545,29 @@ function asNonEmptyString(value: unknown): string | undefined {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function asNonEmptyStringArray(value: unknown, key: string): string[] {
+  if (!Array.isArray(value)) {
+    throw new Error(`${key} must be a non-empty string array`);
+  }
+  const items = value
+    .map((item) => asNonEmptyString(item))
+    .filter((item): item is string => item !== undefined);
+  if (items.length === 0) {
+    throw new Error(`${key} must be a non-empty string array`);
+  }
+  return items;
+}
+
+function asBoolean(value: unknown, key: string): boolean | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "boolean") {
+    throw new Error(`${key} must be a boolean`);
+  }
+  return value;
 }
 
 function asPositiveInteger(value: unknown): number | undefined {
