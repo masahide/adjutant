@@ -92,5 +92,7 @@ vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 
 vendor/
+local/
 .playwright-cli/
 doc/.DS_Store
+tmp/
