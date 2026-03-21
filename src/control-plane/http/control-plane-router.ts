@@ -462,7 +462,7 @@ export function createControlPlaneRequestHandler(deps: ControlPlaneRouterDeps) {
           ? await deps.generateThreadTitle(generatorInput)
           : {
               title: payload.messages[0]?.trim().slice(0, 40) ?? "",
-              model: "gpt-5-nano",
+              model: "gpt-5.4-nano",
               fallback: true,
             };
         const response: GenerateThreadTitleResponse = generated;

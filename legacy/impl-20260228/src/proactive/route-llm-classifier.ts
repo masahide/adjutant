@@ -6,7 +6,7 @@ import type { RouterOutcome } from "./route-decision.js";
 import { parseRouteDecisionFromOpenAiCompletion } from "./route-llm-output-parser.js";
 import type { SecondaryClassifier } from "./trigger-filter.js";
 
-const DEFAULT_ROUTE_LLM_MODEL = "gpt-5-mini";
+const DEFAULT_ROUTE_LLM_MODEL = "gpt-5.4-mini";
 const DEFAULT_EVENT_TEXT_MAX_CHARS = 1_200;
 
 type OpenAiChatCompletionClient = {

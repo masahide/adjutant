@@ -123,7 +123,7 @@ pnpm check               # format -> typecheck -> test
 | `ADJUTANT_HEARTBEAT_TIMEOUT_MS`                | `30000`                                              | heartbeat run のタイムアウト（ミリ秒）                                                |
 | `ADJUTANT_HEARTBEAT_FILE_PATH`                 | `<workspaceDir>/HEARTBEAT.md`                        | heartbeat prompt の読み込みパス                                                       |
 | `ADJUTANT_ROUTE_LLM_ENABLED`                   | `0`                                                  | Slack通知の一次判定に OpenAI route LLM を使うかどうか                                 |
-| `ADJUTANT_ROUTE_LLM_MODEL`                     | `gpt-5-mini`                                         | route LLM に使用する OpenAI モデル名                                                  |
+| `ADJUTANT_ROUTE_LLM_MODEL`                     | `gpt-5.4-mini`                                       | route LLM に使用する OpenAI モデル名                                                  |
 | `ADJUTANT_ROUTE_LLM_TIMEOUT_MS`                | `1000`                                               | route LLM 判定のタイムアウト（ミリ秒）                                                |
 | `ADJUTANT_ROUTE_LLM_MAX_CONCURRENT`            | `1`                                                  | route LLM 判定の同時実行上限（1で逐次）                                               |
 | `ADJUTANT_SANDBOX_MODE`                        | `all`                                                | bash sandbox mode（`off` / `non-main` / `all`）                                       |

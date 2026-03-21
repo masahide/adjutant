@@ -318,7 +318,7 @@ test("POST /api/threads/:threadId/generate-title returns generated title", async
     buildThreadSnapshot: () => undefined,
     generateThreadTitle: async () => ({
       title: "Archive UI cleanup",
-      model: "gpt-5-nano",
+      model: "gpt-5.4-nano",
       fallback: false,
     }),
     supervisor: {
@@ -357,7 +357,7 @@ test("POST /api/threads/:threadId/generate-title returns generated title", async
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), {
     title: "Archive UI cleanup",
-    model: "gpt-5-nano",
+    model: "gpt-5.4-nano",
     fallback: false,
   });
 });

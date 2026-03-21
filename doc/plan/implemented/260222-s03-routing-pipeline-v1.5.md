@@ -707,7 +707,7 @@ stateDiagram-v2
 
 ## 9. 懸念事項と未確定事項 Concerns and Questions
 
-- Route LLM のモデルは `gpt-5-mini` を使用する。精度/レイテンシの実測結果次第で変更の可能性あり
+- Route LLM のモデルは `gpt-5.4-mini` を使用する。精度/レイテンシの実測結果次第で変更の可能性あり
 - `report_route_decision` ツールを pi-coding-agent SDK のカスタムツール機構で定義できるか要確認。SDK の制約次第ではスタンドアロンの OpenAI API 呼び出し（現行 `route-llm-classifier.ts` ベース）を継続する可能性がある
 - Route LLM のバッチ分類は pi-coding-agent SDK のセッション外で動作するため、SDK のセッション管理/コンテキストとは独立。ツール定義の共有方法を検討する必要がある
 - `POLICY_ROUTING.json` の初期値をどう作成するか。ワークスペース初期化時にデフォルトファイルを生成するか、存在しない場合はデフォルト値にフォールバックするか

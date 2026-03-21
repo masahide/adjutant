@@ -16,7 +16,7 @@ import {
 import { normalizeAccountId, resolveDefaultDataDir } from "./data-paths.js";
 import { resolveSandboxConfig } from "../sandbox/config.js";
 
-const DEFAULT_ROUTE_LLM_MODEL = "gpt-5-mini";
+const DEFAULT_ROUTE_LLM_MODEL = "gpt-5.4-mini";
 const DEFAULT_ROUTE_LLM_TIMEOUT_MS = 1_000;
 const DEFAULT_ROUTE_LLM_MAX_CONCURRENT = 1;
 const DEFAULT_DUAL_WRITE_RETRY_INTERVAL_MS = 5_000;

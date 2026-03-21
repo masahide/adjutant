@@ -38,7 +38,7 @@ describe("session-store-repository", () => {
       sessionEntriesPath: "/tmp/sessions.json",
       sessionStoreState: { path: "/tmp/sessions.json", store: { main: {} } },
       workspaceDir: "/tmp/workspace",
-      model: "gpt-5-mini",
+      model: "gpt-5.4-mini",
       isHeartbeat: false,
       memoryWriteEnabled: false,
       memoryScope: "main",

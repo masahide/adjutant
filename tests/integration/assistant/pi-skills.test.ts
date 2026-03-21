@@ -135,7 +135,7 @@ test("createPiAgentSession exposes Pi /skill:name expansion for discovered .agen
   let capturedMessages: unknown;
   session.agent.setModel({
     provider: "openai",
-    id: "gpt-5-nano",
+    id: "gpt-5.4-nano",
     reasoning: false,
   });
   const originalGetApiKey = session.modelRegistry.getApiKey.bind(session.modelRegistry);
@@ -153,10 +153,10 @@ test("createPiAgentSession exposes Pi /skill:name expansion for discovered .agen
   }
 
   const text = (
-    (capturedMessages as Array<{
+    capturedMessages as Array<{
       content?: Array<{ type?: string; text?: string }>;
-    }>)[0]
-  )?.content?.[0]?.text;
+    }>
+  )[0]?.content?.[0]?.text;
 
   assert.equal(typeof text, "string");
   assert.match(text ?? "", /<skill name="repo-helper"/);

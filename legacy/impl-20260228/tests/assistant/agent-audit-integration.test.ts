@@ -160,7 +160,7 @@ describe("agent-audit integration", () => {
           runId: "run-model-unavailable",
           sessionKey: "main",
           prompt: "hello",
-          model: "gpt-5-mini",
+          model: "gpt-5.4-mini",
           workspaceDir,
           timezone: "UTC",
           sessionEntriesPath: join(workspaceDir, "sessions.json"),
