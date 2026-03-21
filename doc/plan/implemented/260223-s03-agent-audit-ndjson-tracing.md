@@ -212,7 +212,7 @@ type AgentAuditEvent =
   "sessionKey": "main",
   "status": "ok",
   "durationMs": 3450,
-  "modelId": "gpt-5-mini"
+  "modelId": "gpt-5.4-mini"
 }
 ```
 

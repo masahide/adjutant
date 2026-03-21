@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { resolve } from "node:path";
 import test from "node:test";
 
-import { buildAdditionalSkillPaths, logSkillDiagnostics } from "../../../src/assistant/pi-skills.js";
+import {
+  buildAdditionalSkillPaths,
+  logSkillDiagnostics,
+} from "../../../src/assistant/pi-skills.js";
 
 test("buildAdditionalSkillPaths resolves project and user .agents/skills roots", () => {
   const paths = buildAdditionalSkillPaths({
@@ -10,10 +13,7 @@ test("buildAdditionalSkillPaths resolves project and user .agents/skills roots",
     homedirPath: "/Users/tester",
   });
 
-  assert.deepEqual(paths, [
-    "/repo/adjutant/.agents/skills",
-    "/Users/tester/.agents/skills",
-  ]);
+  assert.deepEqual(paths, ["/repo/adjutant/.agents/skills", "/Users/tester/.agents/skills"]);
 });
 
 test("buildAdditionalSkillPaths omits missing projectRoot and dedupes identical roots", () => {
