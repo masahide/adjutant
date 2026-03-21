@@ -10,6 +10,11 @@ import {
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
+import {
+  createPiResourceLoader,
+  logSkillDiagnostics,
+  type SkillWarningLogger,
+} from "./pi-skills.js";
 import type { MemoryScope } from "./memory/types.js";
 import { createDockerBashOperations, shouldSandbox } from "../sandbox/docker-bash-operations.js";
 import type { ActiveSandboxConfig } from "../sandbox/types.js";
@@ -39,6 +44,9 @@ export interface CreatePiAgentSessionOptions {
   stateDir?: string;
   phaseBRolloutScope?: "main" | "all";
   isHeartbeat?: boolean;
+  agentDir?: string;
+  homedirPath?: string;
+  onSkillWarning?: SkillWarningLogger;
 }
 
 let activeSandbox: ActiveSandboxConfig | null = null;
@@ -98,6 +106,15 @@ export async function createPiAgentSession(
   const modelRegistry = new ModelRegistry(authStorage);
   const settingsManager = SettingsManager.inMemory();
   const sessionManager = createPiSessionManager(options);
+  const resourceLoader = createPiResourceLoader({
+    workspaceDir: options.workspaceDir,
+    projectRoot: options.projectRoot,
+    settingsManager,
+    agentDir: options.agentDir,
+    homedirPath: options.homedirPath,
+  });
+  await resourceLoader.reload();
+  logSkillDiagnostics(resourceLoader.getSkills().diagnostics, options.onSkillWarning);
 
   const modelSpec = options.model?.trim();
   const parsed = modelSpec ? parseModelSpecifier(modelSpec) : null;
@@ -112,6 +129,7 @@ export async function createPiAgentSession(
     settingsManager,
     model,
     customTools,
+    resourceLoader,
   });
 
   return {

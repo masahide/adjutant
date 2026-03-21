@@ -37,11 +37,14 @@
 
 `session/load` は `ACP_ENABLE_LOAD_SESSION=1` のときだけ有効である。
 
+skills 用の ACP 専用 method は追加しない。`/skill:name` のような explicit invocation は `session/prompt.prompt` にそのまま載せて worker へ渡し、worker 内の `pi-coding-agent` session が展開する。
+
 ### 3.3 実行制約
 
 - 同一 `sessionId` の同時 `session/prompt` は `SESSION_BUSY`
 - 未知 session は `INVALID_RECORD`
 - worker crash / timeout は supervisor 側で検知する
+- skills discovery と catalog 注入は worker 内の session 初期化責務であり、ACP schema / HTTP API 契約は変更しない
 
 ## 4. Collector 境界
 
@@ -113,6 +116,7 @@ control-plane は主に次を公開する。
 - `src/agent-worker-acp/session-store.ts`
 - `src/agent-worker-acp/session-execution-registry.ts`
 - `src/agent-worker-acp/adapters/agent-runner-adapter.ts`
+- `src/assistant/pi-skills.ts`
 - `src/control-plane/acp/session-recovery-store.ts`
 - `src/control-plane/acp/session-registry.ts`
 

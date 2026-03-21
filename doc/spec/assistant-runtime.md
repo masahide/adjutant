@@ -30,6 +30,7 @@
 
 - `src/assistant/agent-runner.ts`
 - `src/assistant/agent-session-factory.ts`
+- `src/assistant/pi-skills.ts`
 - `src/assistant/workspace-bootstrap.ts`
 - `src/assistant/bootstrap-context.ts`
 - `src/assistant/compaction-runtime.ts`
@@ -54,9 +55,28 @@
 - `ModelRegistry`
 - `SettingsManager.inMemory()`
 - `SessionManager.inMemory(workspaceDir)`
+- 明示構築した `DefaultResourceLoader`
 - `customTools`
 
 custom tool の公開面は `tool_hub` 1 本に統一されている。sandbox 対象セッションでは `bash` と file tools を containerized 版へ差し替える。
+
+skills discovery は `pi-coding-agent` 既存実装を使い、Adjutant 側では `DefaultResourceLoader.additionalSkillPaths` に次を追加する。
+
+- `<projectRoot>/.agents/skills`
+- `~/.agents/skills`
+
+これにより、Pi 既定の `~/.pi/agent/skills` と `<workspaceDir>/.pi/skills` は維持したまま、Agent Skills 標準寄りの配置も探索対象になる。`projectRoot` は worker process の `cwd` を基準に決まり、ACP schema は拡張しない。
+
+skill diagnostics は session 初期化時に warning ログへ流す。ただし、既定 path が存在しないだけの `skill path does not exist` は運用ノイズになるため suppress し、不正 `SKILL.md` や collision のみを warning として残す。
+
+### 4.3 skills の利用フロー
+
+- `session/prompt` の `prompt` は ACP 境界ではそのまま worker に渡す
+- `runAgent()` は `createPiAgentSession()` で作った session を再利用する
+- `pi-coding-agent` が system prompt へ skills catalog を注入する
+- `/skill:name ...` は `pi-coding-agent` 側で `<skill ...>` block へ展開される
+
+つまり Adjutant は skills の発見経路と session 初期化だけを担当し、catalog 注入や explicit expansion の本体実装は `pi-coding-agent` に委譲する。
 
 ## 5. Workspace Bootstrap
 
@@ -160,6 +180,7 @@ main session での user turn のみ、bootstrap files を Project Context と�
 
 - `src/assistant/agent-runner.ts`
 - `src/assistant/agent-session-factory.ts`
+- `src/assistant/pi-skills.ts`
 - `src/assistant/workspace-bootstrap.ts`
 - `src/assistant/bootstrap-context.ts`
 - `src/assistant/compaction-runtime.ts`
