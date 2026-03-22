@@ -2,6 +2,7 @@ import {
   AuthStorage,
   createBashTool,
   createAgentSession,
+  type ExtensionFactory,
   ModelRegistry,
   SessionManager,
   SettingsManager,
@@ -21,6 +22,7 @@ import type { ActiveSandboxConfig } from "../sandbox/types.js";
 import { createContainerizedFileTools } from "./containerized-file-tool-operations.js";
 import { createToolHubToolDefinition, ToolHub } from "./dynamic-tool/index.js";
 import { createAssistantProviderRegistry } from "./tool-hub-provider-registry.js";
+import { createGuardrailExtension } from "./guardrail-extension.js";
 
 export interface PiAgentSessionLike {
   prompt: (text: string) => Promise<void>;
@@ -47,6 +49,7 @@ export interface CreatePiAgentSessionOptions {
   agentDir?: string;
   homedirPath?: string;
   onSkillWarning?: SkillWarningLogger;
+  guardrailMode?: "off" | "enforce";
 }
 
 let activeSandbox: ActiveSandboxConfig | null = null;
@@ -99,6 +102,32 @@ function isPhaseBEnabledForScope(
   return memoryScope === "main";
 }
 
+function resolveGuardrailMode(
+  explicit: CreatePiAgentSessionOptions["guardrailMode"],
+  env: NodeJS.ProcessEnv
+): "off" | "enforce" {
+  if (explicit === "off" || explicit === "enforce") {
+    return explicit;
+  }
+  return env.ADJUTANT_GUARDRAIL_MODE?.trim().toLowerCase() === "enforce" ? "enforce" : "off";
+}
+
+function buildExtensionFactories(
+  options: CreatePiAgentSessionOptions,
+  env: NodeJS.ProcessEnv
+): ExtensionFactory[] {
+  const sessionId = options.sessionId?.trim();
+  if (!sessionId) {
+    return [];
+  }
+
+  if (resolveGuardrailMode(options.guardrailMode, env) !== "enforce") {
+    return [];
+  }
+
+  return [createGuardrailExtension({ sessionId })];
+}
+
 export async function createPiAgentSession(
   options: CreatePiAgentSessionOptions
 ): Promise<{ session: PiAgentSessionLike }> {
@@ -112,6 +141,7 @@ export async function createPiAgentSession(
     settingsManager,
     agentDir: options.agentDir,
     homedirPath: options.homedirPath,
+    extensionFactories: buildExtensionFactories(options, process.env),
   });
   await resourceLoader.reload();
   logSkillDiagnostics(resourceLoader.getSkills().diagnostics, options.onSkillWarning);

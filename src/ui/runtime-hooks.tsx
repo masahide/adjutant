@@ -225,6 +225,8 @@ type PendingPermissionItem = {
   requestId: string;
   title: string;
   toolCallId?: string;
+  reason?: string;
+  ruleId?: string;
 };
 
 type AssistantRunState = {
@@ -238,6 +240,8 @@ function mapPendingPermissions(summary: PermissionSummary[]): PendingPermissionI
     requestId: permission.requestId,
     title: permission.title,
     toolCallId: permission.toolCallId,
+    reason: permission.reason,
+    ruleId: permission.ruleId,
   }));
 }
 

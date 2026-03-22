@@ -1,5 +1,6 @@
 import {
   DefaultResourceLoader,
+  type ExtensionFactory,
   type ResourceDiagnostic,
   type SettingsManager,
 } from "@mariozechner/pi-coding-agent";
@@ -15,6 +16,7 @@ export interface CreatePiResourceLoaderOptions extends BuildAdditionalSkillPaths
   workspaceDir: string;
   settingsManager: SettingsManager;
   agentDir?: string;
+  extensionFactories?: ExtensionFactory[];
 }
 
 export type SkillWarningLogger = (message: string) => void;
@@ -44,6 +46,7 @@ export function createPiResourceLoader(
     cwd: options.workspaceDir,
     agentDir: options.agentDir,
     settingsManager: options.settingsManager,
+    extensionFactories: options.extensionFactories,
     additionalSkillPaths: buildAdditionalSkillPaths({
       projectRoot: options.projectRoot,
       homedirPath: options.homedirPath,

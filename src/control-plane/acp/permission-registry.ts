@@ -6,6 +6,8 @@ export interface PendingPermission {
   runId?: string;
   toolCallId?: string;
   title: string;
+  reason?: string;
+  ruleId?: string;
   createdAt: string;
 }
 

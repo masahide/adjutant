@@ -14,6 +14,10 @@ import {
   type ProjectedSessionUpdate,
 } from "../session-update-projector.js";
 import { mapToolExecutionEnd, mapToolExecutionStart } from "../tool-call-mapper.js";
+import {
+  clearGuardrailPromptContext,
+  setGuardrailPromptContext,
+} from "../../guardrails/worker-runtime.js";
 
 import { SessionBridge } from "./session-bridge.js";
 
@@ -77,6 +81,11 @@ export class AgentRunnerAdapter {
     const origin = this.resolveOrigin(params);
     const isHeartbeat = this.resolveIsHeartbeat(params);
     this.activeRuns.set(params.sessionId, controller);
+    setGuardrailPromptContext({
+      sessionId: params.sessionId,
+      runId: this.resolveRunId(params),
+      sessionKey: requestSessionKey,
+    });
 
     try {
       const runResult = await this.runAgentImpl({
@@ -119,6 +128,7 @@ export class AgentRunnerAdapter {
     } finally {
       externalSignal?.removeEventListener("abort", onExternalAbort);
       this.activeRuns.delete(params.sessionId);
+      clearGuardrailPromptContext(params.sessionId);
     }
   }
 
@@ -209,5 +219,13 @@ export class AgentRunnerAdapter {
   private resolveIsHeartbeat(params: SessionPromptParams): boolean {
     const meta = params.meta;
     return meta !== undefined && meta.isHeartbeat === true;
+  }
+
+  private resolveRunId(params: SessionPromptParams): string | undefined {
+    const meta = params.meta;
+    const candidate = meta?.runId;
+    return typeof candidate === "string" && candidate.trim().length > 0
+      ? candidate.trim()
+      : undefined;
   }
 }

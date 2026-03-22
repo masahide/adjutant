@@ -564,28 +564,65 @@ export const GUARDRAIL_RULES: GuardrailRule[] = [
 - `ADJUTANT_GUARDRAIL_DEFAULT_ACTION`
   - 初期値は `review`
 
-## 9. 実装フェーズ Implementation Phases
+## 9. 実装タスクリスト Implementation Plan
 
-### Phase 1: Audit Only
+### Phase 1 設計と準備
 
-- tool 実行前に guardrail 判定だけ行う
-- まだ実行制御はしない
-- どの rule が当たったかを audit に記録する
-- review 候補や forbid 候補の偏りを把握する
+- [x] `Task-GR-PLAN-001` 契約整理: `allow / review / forbid` の判定方針と ACP 整合を計画書へ反映
+- [x] `Task-GR-PLAN-002` 差し込み点整理: Pi `tool_call` hook / worker-control-plane RPC / `PermissionGateway` の統合点を確定
+- [x] `Task-GR-PLAN-003` 設定整理: `ADJUTANT_GUARDRAIL_MODE` の導入方針を確定
 
-### Phase 2: Review / Forbid Enforce
+### Phase 2 Guardrail Engine 実装
 
-- `review` は human review を起動
-- `forbid` は即拒否
-- `allow` だけ自動実行
+- [x] `Task-GR-RED-001` Test: guardrail engine の `allow / review / forbid` 判定テストを追加
+- [x] `Task-GR-GREEN-001` Impl: `GuardrailContext` / `GuardrailRule` / `GuardrailDecision` と評価エンジンを実装
+- [x] `Task-GR-REF-001` Refactor: rule 正規化と初期ルールセットを sandbox 前提の最小構成へ整理
 
-### Phase 3: Policy Refinement
+### Phase 3 ACP Review 統合
 
-- whitelist 粒度の調整
-- `tool_hub` 個別 action の展開強化
-- false positive / false negative の監査
+- [x] `Task-GR-RED-002` Test: `session/request_permission` の child-originated request 往復テストを追加
+- [x] `Task-GR-GREEN-002` Impl: worker -> control-plane の双方向 RPC と review 専用 permission request を実装
+- [x] `Task-GR-GREEN-003` Impl: Pi session factory へ guardrail extension を注入し、`review` のときだけ ACP permission を使う
+- [x] `Task-GR-REF-002` Refactor: `allow / forbid` はローカル判定、`review` のみ ACP 利用という責務分離へ整理
 
-## 10. 懸念事項と対策 Risks and Mitigations
+### Phase 4 UI / 契約 / ドキュメント
+
+- [x] `Task-GR-RED-003` Test: permission payload に `reason` / `ruleId` を含む経路の単体テストを追加
+- [x] `Task-GR-GREEN-004` Impl: `PermissionGateway` / HTTP snapshot / UI banner へ `reason` / `ruleId` を反映
+- [x] `Task-GR-DOC-001` Docs: `doc/spec/configuration.md` に `ADJUTANT_GUARDRAIL_MODE` を追記
+
+### Phase 5 統合と検証
+
+- [x] `Task-GR-VERIFY-001` `pnpm run typecheck` を通過
+- [x] `Task-GR-VERIFY-002` `pnpm run test` を通過
+- [x] `Task-GR-VERIFY-003` `pnpm run check` を通過
+
+### Phase 6 拡張タスク
+
+- [ ] `Task-GR-AUDIT-001` Audit モードを実装し、実行制御なしで rule hit を観測できるようにする
+- [ ] `Task-GR-TOOLHUB-001` `tool_hub` の provider / action ごとに guardrail ルールを精密化する
+- [ ] `Task-GR-PERSIST-001` 永続 whitelist / denylist の保存形式と反映経路を実装する
+- [ ] `Task-GR-LLM-001` LLM ベース評価を再導入するための責務分離層と fallback 方針を実装する
+- [ ] `Task-GR-TIMEOUT-001` human review / worker-control-plane roundtrip の timeout policy を設計・実装する
+
+## 10. 完了の定義 Definition of Done
+
+### 10.1 機能 DoD Functional DoD
+
+- [x] Pi の `tool_call` 実行前に guardrail が割り込むこと
+- [x] `allow` 判定は自動実行されること
+- [x] `review` 判定は `session/request_permission` を経由して承認待ちになること
+- [x] `forbid` 判定は承認 UI を出さず拒否されること
+- [x] UI に承認理由とルール情報が表示されること
+
+### 10.2 品質 DoD Quality DoD
+
+- [x] 追加した unit / integration テストがパスしていること
+- [x] `pnpm run check` が成功していること
+- [x] 設定ドキュメントが更新され、docs sync が通ること
+- [x] ACP 整合として `session/request_permission` を review 専用に限定していること
+
+## 11. 懸念事項と対策 Risks and Mitigations
 
 ### 10.1 双方向 ACP 実装の複雑さ
 
@@ -635,7 +672,7 @@ export const GUARDRAIL_RULES: GuardrailRule[] = [
   - `examples.match` / `examples.notMatch` による自己検証
   - contract test と fixture test を追加する
 
-## 11. テスト戦略 Test Strategy
+## 12. テスト戦略 Test Strategy
 
 ### 11.1 Unit Tests
 
@@ -669,7 +706,7 @@ export const GUARDRAIL_RULES: GuardrailRule[] = [
 - tool 種別別の review 率
 - forbid の妥当性レビュー
 
-## 12. 実装順の推奨 Recommended Work Order
+## 13. 実装順の推奨 Recommended Work Order
 
 1. ACP 双方向 request/response 基盤を追加する
 2. `GuardrailContext` / `GuardrailRule` / `GuardrailDecision` を実装する
@@ -681,7 +718,7 @@ export const GUARDRAIL_RULES: GuardrailRule[] = [
 8. audit モードでログ収集する
 9. enforce モードを有効化する
 
-## 13. Open Questions
+## 14. Open Questions
 
 - worker -> control-plane の同期問い合わせは、専用実装にするか汎用 RPC request バスにするか
 - `tool_hub` 内部 action をどこまで展開して guardrail context に含めるか
@@ -690,7 +727,7 @@ export const GUARDRAIL_RULES: GuardrailRule[] = [
 - human review の timeout policy を初期から導入するか
 - 将来 Scientist AI を「説明補助」または「レビュー補助」に限定して戻すか
 
-## 14. 結論
+## 15. 結論
 
 - 現時点の最有力案は、「Pi extension の `tool_call` pre-hook + ACP 双方向 permission roundtrip + rule-based guardrail + 既存 `PermissionGateway` 再利用」である。
 - ACP 整合のため、`session/request_permission` は review 専用に限定し、`allow / forbid` はローカル rule 判定として扱う。

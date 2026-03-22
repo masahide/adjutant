@@ -141,6 +141,8 @@ export function mapPermissionEventToChatStreamEvent(input: {
         requestId,
         title,
         toolCallId: asString(input.event.payload.toolCallId),
+        reason: asString(input.event.payload.reason),
+        ruleId: asString(input.event.payload.ruleId),
       },
     };
   }

@@ -64,6 +64,8 @@ export type PermissionSummary = {
   runId?: string;
   toolCallId?: string;
   title: string;
+  reason?: string;
+  ruleId?: string;
   requestedAt: string;
 };
 
@@ -109,6 +111,8 @@ export type ChatStreamEvent = {
     requestId: string;
     title: string;
     toolCallId?: string;
+    reason?: string;
+    ruleId?: string;
   };
   permissionResolved?: {
     requestId: string;
@@ -272,9 +276,11 @@ export function toPermissionSummary(input: PendingPermission): PermissionSummary
   return {
     requestId: input.requestId,
     sessionId: input.sessionId,
-    runId: input.runId,
-    toolCallId: input.toolCallId,
     title: input.title,
+    ...(input.runId !== undefined ? { runId: input.runId } : {}),
+    ...(input.toolCallId !== undefined ? { toolCallId: input.toolCallId } : {}),
+    ...(input.reason !== undefined ? { reason: input.reason } : {}),
+    ...(input.ruleId !== undefined ? { ruleId: input.ruleId } : {}),
     requestedAt: input.createdAt,
   };
 }

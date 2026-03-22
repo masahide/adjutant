@@ -10,6 +10,8 @@ export interface PermissionRequestInput {
   runId?: string;
   toolCallId?: string;
   title: string;
+  reason?: string;
+  ruleId?: string;
 }
 
 export interface PermissionGatewayEvent {
@@ -40,6 +42,8 @@ export class PermissionGateway {
         runId: input.runId,
         toolCallId: input.toolCallId,
         title: input.title,
+        reason: input.reason,
+        ruleId: input.ruleId,
       },
     });
 

@@ -64,6 +64,12 @@ export function Thread() {
                     <span className="text-sm text-amber-900 dark:text-yellow-200">
                       {permission.title}
                       {permission.toolCallId ? ` (${permission.toolCallId})` : ""}
+                      {permission.reason ? (
+                        <span className="mt-1 block text-xs text-amber-700 dark:text-yellow-300">
+                          {permission.reason}
+                          {permission.ruleId ? ` [${permission.ruleId}]` : ""}
+                        </span>
+                      ) : null}
                     </span>
                     <div className="flex gap-1.5">
                       <Button

@@ -32,6 +32,11 @@ export interface WorkerSupervisorOptions {
   healthcheckTimeoutMs?: number;
   onLog?: (entry: Record<string, unknown>) => void;
   onNotification?: (notification: { method: string; params: Record<string, unknown> }) => void;
+  onRequest?: (request: {
+    id: number;
+    method: string;
+    params: Record<string, unknown>;
+  }) => Promise<Record<string, unknown>> | Record<string, unknown>;
 }
 
 export interface WorkerRequestOptions {
@@ -53,8 +58,11 @@ export class WorkerSupervisor {
       timer: NodeJS.Timeout;
     }
   >();
+  private readonly onRequest?: WorkerSupervisorOptions["onRequest"];
 
-  constructor(private readonly options: WorkerSupervisorOptions) {}
+  constructor(private readonly options: WorkerSupervisorOptions) {
+    this.onRequest = options.onRequest;
+  }
 
   async start(): Promise<void> {
     this.stopping = false;
@@ -210,8 +218,12 @@ export class WorkerSupervisor {
       return;
     }
 
-    if (parsed.id === undefined) {
-      if (typeof parsed.method === "string") {
+    if (typeof parsed.method === "string") {
+      if (typeof parsed.id === "number") {
+        void this.handleChildRequest(parsed.id, parsed.method, parsed.params ?? {});
+        return;
+      }
+      if (parsed.id === undefined) {
         this.options.onNotification?.({
           method: parsed.method,
           params: parsed.params ?? {},
@@ -241,6 +253,52 @@ export class WorkerSupervisor {
       this.ready = true;
     }
     pending.resolve(parsed.result ?? {});
+  }
+
+  private async handleChildRequest(
+    id: number,
+    method: string,
+    params: Record<string, unknown>
+  ): Promise<void> {
+    if (this.child === undefined || this.child.killed) {
+      return;
+    }
+    if (this.onRequest === undefined) {
+      this.child.stdin.write(
+        `${JSON.stringify({
+          jsonrpc: "2.0",
+          id,
+          error: {
+            code: -32601,
+            message: `Method not found: ${method}`,
+          },
+        })}\n`
+      );
+      return;
+    }
+
+    try {
+      const result = await this.onRequest({ id, method, params });
+      this.child.stdin.write(
+        `${JSON.stringify({
+          jsonrpc: "2.0",
+          id,
+          result,
+        })}\n`
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.child.stdin.write(
+        `${JSON.stringify({
+          jsonrpc: "2.0",
+          id,
+          error: {
+            code: -32603,
+            message,
+          },
+        })}\n`
+      );
+    }
   }
 
   private failAllPending(error: Error): void {
