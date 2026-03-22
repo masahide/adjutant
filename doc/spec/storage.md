@@ -35,10 +35,13 @@
 - `watermarks.json`
 - `heartbeat-runs.jsonl`
 - `audit/agent-audit.ndjson`
+- `guardrails/policies.json`
+- `guardrails/audit.jsonl`
 - `journal/control-plane/*.jsonl`
 - `cursor/*.json`
 - `worker/session-store.json`
 - `worker/sessions.json`
+- `pi-sessions/*.jsonl`
 - `memory/main.sqlite`
 - `agents/main/transcripts/`
 - `agents/main/summary-batch-watermark.json`
@@ -81,13 +84,19 @@
   - flusher の scan 進捗と session ごとの handled / open 状態
   - `WatermarkStore.fromStateDir()` が利用する
 
-### 4.2 Heartbeat / Audit
+### 4.2 Heartbeat / Audit / Guardrail
 
 - `<stateDir>/heartbeat-runs.jsonl`
   - heartbeat 実行結果の履歴
 - `<stateDir>/audit/agent-audit.ndjson`
   - agent run / tool call / summary batch の監査ログ
   - `ADJUTANT_AGENT_AUDIT_LOG_PATH` で変更可能
+- `<stateDir>/guardrails/audit.jsonl`
+  - guardrail の `allow / review / forbid` 判定ログ
+  - `audit` モードでも append される
+- `<stateDir>/guardrails/policies.json`
+  - `allow_always` / `reject_always` による保存済み policy
+  - `workspace` scope では `scopeKey=projectRoot:<abs-path>::workspaceDir:<abs-path>` を持つ
 
 ### 4.3 Worker 永続状態
 
@@ -97,6 +106,8 @@
 - `<stateDir>/worker/sessions.json`
   - compaction metadata の保存先
   - `compactionCount`, `memoryFlushAt`, `contextTokens` などを保持する
+- `<stateDir>/pi-sessions/<sessionId>.jsonl`
+  - `pi-coding-agent` の session manager が使う transcript / tool history 保存先
 
 ### 4.4 Session / Thread / Queue Journal
 
@@ -200,6 +211,8 @@ workspace 初期化では `assistant/prompts` から seed する。これらは 
 - `src/control-plane/proactive/watermark-store.ts`
 - `src/control-plane/heartbeat/result-store.ts`
 - `src/control-plane/audit/agent-audit-log.ts`
+- `src/guardrails/policy-store.ts`
+- `src/guardrails/audit-log.ts`
 - `src/control-plane/acp/session-recovery-store.ts`
 - `src/control-plane/process-rpc/ingest-inbox-store.ts`
 - `src/control-plane/process-rpc/deliver-queue-store.ts`
@@ -207,6 +220,7 @@ workspace 初期化では `assistant/prompts` から seed する。これらは 
 - `src/control-plane/idempotency-store.ts`
 - `src/control-plane/http/chat-history-store.ts`
 - `src/agent-worker-acp/session-store.ts`
+- `src/assistant/agent-session-factory.ts`
 - `src/assistant/session-compaction-store.ts`
 - `src/assistant/markdown-summary-batch.ts`
 - `src/assistant/memory/config.ts`

@@ -14,6 +14,7 @@
 - `agent-worker-acp`
   - ACP worker
   - `session/new`, `session/prompt`, `session/cancel`, `session/load`
+  - child-originated `session/request_permission`
 - `collector-slack`
   - Process RPC child
   - Slack event を `collector/ingest` で親へ送る
@@ -34,6 +35,7 @@
 - `session/prompt`
 - `session/cancel`
 - `session/load`
+- `session/request_permission`
 
 `session/load` は `ACP_ENABLE_LOAD_SESSION=1` のときだけ有効である。
 
@@ -45,6 +47,23 @@ skills 用の ACP 専用 method は追加しない。`/skill:name` のような 
 - 未知 session は `INVALID_RECORD`
 - worker crash / timeout は supervisor 側で検知する
 - skills discovery と catalog 注入は worker 内の session 初期化責務であり、ACP schema / HTTP API 契約は変更しない
+- guardrail は worker 内の `tool_call` hook で判定し、`review` のときだけ ACP `session/request_permission` を発行する
+
+### 3.4 review 専用 permission handshake
+
+guardrail の permission 制御は ACP の意味論に合わせて `review` 専用で実装する。
+
+- `allow`
+  - worker 内のローカル判定でそのまま実行する
+- `forbid`
+  - worker 内のローカル判定で即拒否する
+- `review`
+  - worker から control-plane へ `session/request_permission` を送る
+  - control-plane は `PermissionGateway` に登録し、UI / SSE へ `permission/requested` を流す
+  - user が `allow_once` / `allow_always` / `reject_once` / `reject_always` を返す
+  - control-plane は結果を worker に返し、worker が続行または拒否する
+
+guardrail に付随する `reason`, `ruleId`, `policyCandidate`, `workspaceScopeKey` は ACP top-level を拡張せず `_meta.guardrail` に載せる。
 
 ## 4. Collector 境界
 
@@ -85,11 +104,14 @@ control-plane は主に次を公開する。
 - `GET /api/snapshot`
 - `GET /api/events/stream`
 - `GET /api/activity-feed`
+- `POST /api/permissions/resolve`
 - `POST /api/heartbeat/run`
 - `GET /api/heartbeat/last`
 - `GET /api/heartbeat/history`
 
 `web-ui` は同一 process 内でこれらを利用する。
+
+pending permission payload は title だけでなく `reason`, `ruleId`, `expiresAt` を含む。UI では guardrail 理由付きの human review として表示する。
 
 ## 7. エラーと回復
 
@@ -111,12 +133,16 @@ control-plane は主に次を公開する。
 
 - `src/index.ts`
 - `src/control-plane/acp/worker-supervisor.ts`
+- `src/control-plane/acp/permission-gateway.ts`
+- `src/control-plane/acp/permission-request-handler.ts`
 - `src/control-plane/process-rpc/collector-supervisor.ts`
+- `src/agent-worker-acp/control-plane-client.ts`
 - `src/agent-worker-acp/stdio-server.ts`
 - `src/agent-worker-acp/session-store.ts`
 - `src/agent-worker-acp/session-execution-registry.ts`
 - `src/agent-worker-acp/adapters/agent-runner-adapter.ts`
 - `src/assistant/pi-skills.ts`
+- `src/assistant/guardrail-extension.ts`
 - `src/control-plane/acp/session-recovery-store.ts`
 - `src/control-plane/acp/session-registry.ts`
 

@@ -2,7 +2,7 @@
 
 ## 1. 目的
 
-この文書は、Adjutant の assistant 実行系が workspace bootstrap、agent session 作成、compaction、summary batch、監査ログをどのように扱うかを定義する。
+この文書は、Adjutant の assistant 実行系が workspace bootstrap、agent session 作成、skills discovery、tool guardrail、compaction、summary batch、監査ログをどのように扱うかを定義する。
 
 ## 2. スコープ
 
@@ -11,6 +11,8 @@
 - `runAgent()` を中心にした assistant 実行フロー
 - workspace bootstrap と Project Context 注入
 - `pi-coding-agent` session 初期化
+- skills discovery と `/skill:name` 展開の前提
+- tool 実行前の guardrail
 - compaction / pre-compaction memory flush
 - summary batch と transcript 利用
 - agent audit log
@@ -31,12 +33,16 @@
 - `src/assistant/agent-runner.ts`
 - `src/assistant/agent-session-factory.ts`
 - `src/assistant/pi-skills.ts`
+- `src/assistant/guardrail-extension.ts`
 - `src/assistant/workspace-bootstrap.ts`
 - `src/assistant/bootstrap-context.ts`
 - `src/assistant/compaction-runtime.ts`
 - `src/assistant/session-compaction-store.ts`
 - `src/assistant/markdown-summary-batch.ts`
 - `src/control-plane/audit/agent-audit-log.ts`
+- `src/guardrails/engine.ts`
+- `src/guardrails/policy-store.ts`
+- `src/guardrails/audit-log.ts`
 
 ## 4. 実行フロー
 
@@ -56,16 +62,17 @@
 - `SettingsManager.inMemory()`
 - `SessionManager.inMemory(workspaceDir)`
 - 明示構築した `DefaultResourceLoader`
+- extension factories
 - `customTools`
 
-custom tool の公開面は `tool_hub` 1 本に統一されている。sandbox 対象セッションでは `bash` と file tools を containerized 版へ差し替える。
+custom tool の公開面は `tool_hub` 1 本に統一されている。sandbox 対象セッションでは `bash` と file tools を containerized 版へ差し替える。extension factory には guardrail extension を常設し、Pi の `tool_call` hook へ差し込む。
 
 skills discovery は `pi-coding-agent` 既存実装を使い、Adjutant 側では `DefaultResourceLoader.additionalSkillPaths` に次を追加する。
 
 - `<projectRoot>/.agents/skills`
 - `~/.agents/skills`
 
-これにより、Pi 既定の `~/.pi/agent/skills` と `<workspaceDir>/.pi/skills` は維持したまま、Agent Skills 標準寄りの配置も探索対象になる。`projectRoot` は worker process の `cwd` を基準に決まり、ACP schema は拡張しない。
+これにより、Pi 既定の `~/.pi/agent/skills` と `<workspaceDir>/.pi/skills` は維持したまま、Agent Skills 標準寄りの配置も探索対象になる。`projectRoot` は session 作成時に `createPiResourceLoader()` へ明示注入された repo root を使い、ACP schema は拡張しない。
 
 skill diagnostics は session 初期化時に warning ログへ流す。ただし、既定 path が存在しないだけの `skill path does not exist` は運用ノイズになるため suppress し、不正 `SKILL.md` や collision のみを warning として残す。
 
@@ -77,6 +84,34 @@ skill diagnostics は session 初期化時に warning ログへ流す。ただ�
 - `/skill:name ...` は `pi-coding-agent` 側で `<skill ...>` block へ展開される
 
 つまり Adjutant は skills の発見経路と session 初期化だけを担当し、catalog 注入や explicit expansion の本体実装は `pi-coding-agent` に委譲する。
+
+### 4.4 tool guardrail
+
+`createGuardrailExtension()` は worker 内で Pi の `tool_call` を横取りし、実ツール実行前にローカル rule engine を通す。
+
+- 判定モード
+  - `off`
+    - guardrail を適用しない
+  - `audit`
+    - 判定結果を記録するが block しない
+  - `enforce`
+    - `allow / review / forbid` を適用する
+- 最終判定
+  - `allow`
+    - 自動実行
+  - `review`
+    - ACP `session/request_permission` を通じて control-plane の pending permission へ送る
+  - `forbid`
+    - tool 実行を即時拒否する
+- 永続ポリシー
+  - `allow_always` / `reject_always` は `stateDir/guardrails/policies.json` に保存される
+  - `workspace` scope では `workspaceScopeKey=projectRoot:<abs-path>::workspaceDir:<abs-path>` を使う
+  - 永続化は best-effort であり、保存失敗が今回の承認結果を覆さない
+- advisory
+  - `ADJUTANT_GUARDRAIL_LLM_ENABLED=true` の場合、OpenAI Responses API ベースの advisory を補助情報として取得できる
+  - advisory は final decision ではなく `reason` 補強と audit 用の付帯情報である
+- warning
+  - policy store / audit log の load・append failure は `onWarn` 経由で通知し、未指定時は worker 側で warning ログへ出す
 
 ## 5. Workspace Bootstrap
 
@@ -176,11 +211,14 @@ main session での user turn のみ、bootstrap files を Project Context と�
 
 `ADJUTANT_AGENT_AUDIT_LOG_ENABLED=false` で無効化できる。
 
+guardrail の判定履歴は agent audit とは別に `<stateDir>/guardrails/audit.jsonl` へ保存される。`audit` モードでは tool 実行を block せず、この guardrail audit だけが残る。
+
 ## 9. 実装対応
 
 - `src/assistant/agent-runner.ts`
 - `src/assistant/agent-session-factory.ts`
 - `src/assistant/pi-skills.ts`
+- `src/assistant/guardrail-extension.ts`
 - `src/assistant/workspace-bootstrap.ts`
 - `src/assistant/bootstrap-context.ts`
 - `src/assistant/compaction-runtime.ts`
@@ -188,6 +226,9 @@ main session での user turn のみ、bootstrap files を Project Context と�
 - `src/assistant/markdown-summary-batch.ts`
 - `src/agent-worker-acp/adapters/agent-runner-adapter.ts`
 - `src/control-plane/audit/agent-audit-log.ts`
+- `src/guardrails/engine.ts`
+- `src/guardrails/policy-store.ts`
+- `src/guardrails/audit-log.ts`
 
 ## 10. 関連文書
 

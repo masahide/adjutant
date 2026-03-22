@@ -11,8 +11,9 @@ flowchart LR
   External[HTTP Client / Web UI] --> ControlPlane
   ControlPlane --> Worker[agent-worker ACP stdio server]
   ControlPlane --> Deliver[deliver supervisor]
-  Worker --> ToolHub[tool_hub]
-  Worker --> Sandbox[Docker sandbox]
+  Worker --> Guardrail[tool_call guardrail]
+  Guardrail --> ToolHub[tool_hub]
+  Guardrail --> Sandbox[Docker sandbox]
   ToolHub --> Memory[Markdown memory + SQLite index]
   ToolHub --> SlackSearch[play-slack-search adapter]
   ControlPlane --> State[stateDir]
@@ -49,6 +50,8 @@ flowchart LR
 - ルール、attention window、classifier で triage する
 - 実行対象なら worker へ run を委譲する
 - worker は bootstrap context を加味して agent session を実行する
+- tool 実行前には worker 内 guardrail が `allow / review / forbid` を判定する
+- `review` の場合だけ control-plane の pending permission と UI に戻す
 - tool event と run event は control-plane へ戻され、SSE / audit / UI に反映される
 
 ### 3. memory 利用
@@ -76,6 +79,8 @@ flowchart LR
   - deliver / queue / recovery
 - assistant
   - agent runner
+  - Pi skills discovery
+  - tool_call guardrail
   - bootstrap context
   - compaction
   - heartbeat
@@ -93,6 +98,7 @@ flowchart LR
 
 - control-plane は orchestration と記録の責務を持つ
 - worker は agent 実行と tool call の責務を持つ
+- guardrail は worker 内で tool 実行前の承認境界を持つ
 - tool hub は custom tool を provider / action 契約へ統一する
 - sandbox は実行環境の隔離責務を持つ
 - memory は正本ファイルと検索インデックスの二層構造を持つ

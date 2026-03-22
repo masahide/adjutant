@@ -21,6 +21,8 @@
 - idempotency 管理
 - audit log
 - pending permission 管理
+- guardrail policy 永続化
+- review 専用 permission handshake
 - recovery store / journal replay
 
 ## 3. Assistant 実行機能
@@ -29,6 +31,12 @@
 - session recovery
 - bootstrap context 注入
 - workspace bootstrap
+- Pi skills discovery
+  - `<projectRoot>/.agents/skills`
+  - `~/.agents/skills`
+- `tool_call` guardrail
+  - `allow / review / forbid`
+  - `audit / enforce`
 - pre-compaction memory flush
 - context compaction
 - heartbeat
@@ -75,6 +83,7 @@
 - audit detail 表示
 - activity feed
 - tool event 表示
+- guardrail reason / ruleId 付き pending permission 表示
 - thread 一覧 / archive
 
 ## 8. プロセス分離 / 実行基盤機能
@@ -105,6 +114,7 @@
 - sandbox
 - memory search / write
 - workspace bootstrap
+- guardrail
 - heartbeat
 - summary batch の基本実装
 
