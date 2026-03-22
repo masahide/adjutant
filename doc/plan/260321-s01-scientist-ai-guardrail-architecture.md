@@ -178,20 +178,8 @@ type GuardrailContext = {
   runId?: string;
   toolCallId: string;
   toolName: string;
-  toolKind?: "read" | "write" | "exec" | "network" | "tool_hub";
-  rawInput: unknown;
-  normalizedInput?: {
-    argv?: string[];
-    path?: string;
-    paths?: string[];
-    domain?: string;
-    method?: string;
-    readOnly?: boolean;
-    workspaceOnly?: boolean;
-    externalNetwork?: boolean;
-  };
-  origin?: "user" | "system";
-  isHeartbeat?: boolean;
+  input: Record<string, unknown>;
+  workspaceScopeKey?: string;
 };
 ```
 
@@ -233,14 +221,14 @@ type GuardrailRule = {
   priority?: number;
   match: {
     toolNames?: string[];
-    toolKinds?: Array<"read" | "write" | "exec" | "network" | "tool_hub">;
+    path?: string;
+    toolKinds?: Array<"read" | "write" | "exec" | "network" | "custom">;
     readOnly?: boolean;
-    workspaceOnly?: boolean;
-    externalNetwork?: boolean;
-    pathGlobs?: string[];
-    domainGlobs?: string[];
-    commandPrefixes?: string[][];
-    methods?: string[];
+    hasExternalSideEffect?: boolean;
+    toolHubModes?: Array<"catalog" | "provider_help" | "action_help" | "execute">;
+    toolHubProviders?: string[];
+    toolHubActions?: string[];
+    bashCommandPrefixes?: string[];
   };
   reason: string;
   examples?: {
@@ -314,25 +302,27 @@ type PendingPermission = {
 
 ### 5.2 コンポーネント構成
 
-- `src/safety/guardrail-types.ts`
+- `src/guardrails/types.ts`
   - `GuardrailContext` / `GuardrailRule` / `GuardrailDecision`
-- `src/safety/guardrail-rules.ts`
-  - 初期 rule set 定義
-  - allow / review / forbid を宣言的に記述
-- `src/safety/guardrail-matcher.ts`
-  - context と rule のマッチング責務
-  - `pathGlobs`, `domainGlobs`, `commandPrefixes` を評価
-- `src/safety/guardrail-engine.ts`
-  - strictest-wins の最終判定責務
-  - `forbid > review > allow > default(review)` を実装
-- `src/safety/guardrail-normalizer.ts`
-  - tool input を構造化し、`toolKind`, `readOnly`, `externalNetwork` などの正規化を行う
+  - `PersistedGuardrailPolicy` と `scopeKey` / `workspaceScopeKey` の型を保持
+- `src/guardrails/engine.ts`
+  - context 正規化、builtin rule 定義、persisted policy の rule 変換、最終判定を担当
+  - `forbid` 最優先、persisted `allow` の明示 override、builtin rule の specificity/priority 比較を実装
+- `src/guardrails/config.ts`
+  - `ADJUTANT_GUARDRAIL_MODE` や timeout 設定を解決
+  - `workspaceScopeKey` を `projectRoot` と `workspaceDir` から安定生成する
+- `src/guardrails/policy-store.ts`
+  - 永続ポリシーの load/save と `scopeKey` の妥当性検証
+- `src/guardrails/audit-log.ts`
+  - `audit` モードの記録を扱う
+- `src/guardrails/llm-advisory.ts`
+  - optional な advisory 用 LLM 呼び出し
 - `src/assistant/guardrail-extension.ts`
   - Pi extension factory
-  - `tool_call` で control-plane へ問い合わせる
-- `src/assistant/pi-skills.ts`
-  - `DefaultResourceLoader` へ extension factory を注入する導線
-- `src/agent-worker-acp/control-plane-rpc.ts`
+  - `tool_call` でローカル判定し、`review` 時のみ control-plane へ問い合わせる
+- `src/assistant/agent-session-factory.ts`
+  - session 作成時に guardrail extension を注入する導線
+- `src/agent-worker-acp/control-plane-client.ts`
   - worker 側の request/response 実装
 - `src/agent-worker-acp/stdio-server.ts`
   - control-plane からの応答を扱える双方向 RPC へ拡張
@@ -444,81 +434,92 @@ proposed
 
 ### 7.2 評価順序
 
-- `forbid` に一致したら即拒否
-- そうでなく `review` に一致したら human review
-- そうでなく `allow` に一致したら自動実行
+- `forbid` に一致したら即拒否する
+- そうでなく persisted `allow` に一致したら、保存済みの user 選択として review をスキップして自動許可する
+- それ以外の builtin rule は、match の specificity を優先し、同率なら `priority` を比較し、さらに同率なら `review` を優先する
 - どれにも一致しなければ `review`
+- この precedence により、persisted `allow` は builtin `forbid` を越えず、具体的な builtin `allow` は汎用 builtin `review` を上回れる
 
 ### 7.3 初期ルールカテゴリ
 
 - `allow`
-  - workspace 配下の read-only 操作
-  - 明示 allow 済みの安全コマンド
-  - 明示 allow 済みの read-only API アクセス
+  - sandbox 内の read-only 操作
+  - `tool_hub` discovery 系
+  - `tool_hub memory/search|get`
 - `review`
-  - whitelist にない write / exec
-  - 外部ネットワークアクセス
-  - `tool_hub` 経由の外部副作用
-  - 高危険だが明示禁止ではない操作
+  - `bash` / `write` / `edit`
+  - `tool_hub memory/write`
+  - `tool_hub slack/*`
+  - 未分類の `tool_hub execute`
 - `forbid`
-  - 明示 deny のドメインやエンドポイント
-  - sandbox escape / 権限昇格相当
-  - シークレット送信
-  - ポリシー回避を意図した既知カテゴリ
+  - `sudo` などの権限昇格・sandbox 境界外を狙う既知の `bash` prefix
+  - 保存済み deny policy に一致する操作
 
 ### 7.4 whitelist 粒度
 
 - `toolName` だけで allow しない
 - 少なくとも次の粒度で絞る
   - `toolName`
-  - `toolKind`
-  - `resource scope`
-    - path / domain
-  - `argument constraints`
-    - command prefix / method / read-only 判定
+  - `path`
+  - `toolHubMode / toolHubProvider / toolHubAction`
+  - `bashCommandPrefix`
+  - `scope`
+    - `session`
+    - `workspace`
+    - `global`
+  - `scopeKey`
+    - `workspace` の場合は `projectRoot:<abs-path>::workspaceDir:<abs-path>`
 
 ### 7.5 ルール例
 
 ```ts
 export const GUARDRAIL_RULES: GuardrailRule[] = [
   {
-    id: "allow-workspace-read",
-    description: "workspace 配下の read-only 操作を許可",
+    id: "allow-readonly-tools",
+    description: "sandbox 内の read-only 操作を許可",
     decision: "allow",
+    priority: 220,
     match: {
+      toolNames: ["read", "find", "grep", "ls"],
       toolKinds: ["read"],
       readOnly: true,
-      workspaceOnly: true,
+      hasExternalSideEffect: false,
     },
-    reason: "workspace 配下の read-only 操作であり副作用がない",
+    reason: "sandbox 内の read-only 操作であり副作用がない",
   },
   {
-    id: "review-non-whitelisted-write",
-    description: "whitelist にない write / exec を承認対象にする",
+    id: "review-side-effecting-tools",
+    description: "副作用のあるローカルツールを承認対象にする",
     decision: "review",
+    priority: 100,
     match: {
-      toolKinds: ["write", "exec", "tool_hub"],
+      toolNames: ["bash", "edit", "write"],
     },
     reason: "副作用を持つ操作のため承認が必要",
   },
   {
-    id: "review-external-network",
-    description: "外部ネットワークアクセスは承認対象",
+    id: "review-toolhub-slack-actions",
+    description: "tool_hub slack provider の execute は承認対象",
     decision: "review",
+    priority: 165,
     match: {
-      externalNetwork: true,
+      toolNames: ["tool_hub"],
+      toolHubModes: ["execute"],
+      toolHubProviders: ["slack"],
+      toolHubActions: ["search", "list-users", "resolve-channel-id", "save-users"],
     },
-    reason: "sandbox 外との通信が発生するため承認が必要",
+    reason: "外部アクセスを伴うため承認が必要",
   },
   {
-    id: "forbid-denylisted-domain",
-    description: "denylist ドメインへの送信は禁止",
+    id: "forbid-bash-policy-escalation",
+    description: "権限昇格や sandbox 境界外を狙う bash prefix を禁止",
     decision: "forbid",
+    priority: 300,
     match: {
-      toolKinds: ["network"],
-      domainGlobs: ["*.internal.example", "secrets.example.com"],
+      toolNames: ["bash"],
+      bashCommandPrefixes: ["sudo", "su", "docker", "podman", "ssh"],
     },
-    reason: "明示 deny のネットワークポリシー違反",
+    reason: "sandbox 境界の外側を狙うコマンドは拒否する",
   },
 ];
 ```
@@ -559,10 +560,13 @@ export const GUARDRAIL_RULES: GuardrailRule[] = [
 
 - `ADJUTANT_GUARDRAIL_MODE`
   - `off | audit | enforce`
-- `ADJUTANT_GUARDRAIL_RULESET`
-  - 初期は `default`
-- `ADJUTANT_GUARDRAIL_DEFAULT_ACTION`
-  - 初期値は `review`
+- `ADJUTANT_GUARDRAIL_PERMISSION_TIMEOUT_MS`
+- `ADJUTANT_GUARDRAIL_TIMEOUT_OUTCOME`
+- `ADJUTANT_GUARDRAIL_RPC_TIMEOUT_MS`
+- `ADJUTANT_GUARDRAIL_RPC_TIMEOUT_OUTCOME`
+- `ADJUTANT_GUARDRAIL_LLM_ENABLED`
+- `ADJUTANT_GUARDRAIL_LLM_MODEL`
+- `ADJUTANT_GUARDRAIL_LLM_TIMEOUT_MS`
 
 ## 9. 実装タスクリスト Implementation Plan
 
@@ -596,14 +600,6 @@ export const GUARDRAIL_RULES: GuardrailRule[] = [
 - [x] `Task-GR-VERIFY-001` `pnpm run typecheck` を通過
 - [x] `Task-GR-VERIFY-002` `pnpm run test` を通過
 - [x] `Task-GR-VERIFY-003` `pnpm run check` を通過
-
-### Phase 6 拡張タスク
-
-- [ ] `Task-GR-AUDIT-001` Audit モードを実装し、実行制御なしで rule hit を観測できるようにする
-- [ ] `Task-GR-TOOLHUB-001` `tool_hub` の provider / action ごとに guardrail ルールを精密化する
-- [ ] `Task-GR-PERSIST-001` 永続 whitelist / denylist の保存形式と反映経路を実装する
-- [ ] `Task-GR-LLM-001` LLM ベース評価を再導入するための責務分離層と fallback 方針を実装する
-- [ ] `Task-GR-TIMEOUT-001` human review / worker-control-plane roundtrip の timeout policy を設計・実装する
 
 ## 10. 完了の定義 Definition of Done
 
@@ -676,12 +672,11 @@ export const GUARDRAIL_RULES: GuardrailRule[] = [
 
 ### 11.1 Unit Tests
 
-- `guardrail-matcher.ts`
-  - `pathGlobs`, `domainGlobs`, `commandPrefixes`
-- `guardrail-engine.ts`
-  - `forbid > review > allow > default(review)` の評価順
-- `guardrail-normalizer.ts`
-  - tool input の構造化
+- `src/guardrails/engine.ts`
+  - builtin `forbid` が persisted `allow` を越えて優先されること
+  - persisted `allow` が builtin `review` を上書きできること
+  - builtin rule 同士では specificity / priority / tie-break で期待どおり選ばれること
+  - tool input の正規化と policy candidate の path 粒度
 - `PermissionGateway`
   - payload 拡張
   - review 解決

@@ -1,11 +1,21 @@
 import type {
   GuardrailContext,
   GuardrailDecisionResult,
+  GuardrailLlmAdvisory,
   GuardrailRule,
   GuardrailRuleMatch,
   GuardrailToolHubMode,
   NormalizedGuardrailContext,
+  PersistedGuardrailPolicy,
+  PersistedGuardrailPolicyMatch,
 } from "./types.js";
+
+type GuardrailRuleSource = "builtin" | "persisted";
+
+interface MatchedRule {
+  rule: GuardrailRule;
+  source: GuardrailRuleSource;
+}
 
 function asNonEmptyString(value: unknown): string | undefined {
   if (typeof value !== "string") {
@@ -13,6 +23,14 @@ function asNonEmptyString(value: unknown): string | undefined {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function extractBashCommandPrefix(command: string | undefined): string | undefined {
+  if (command === undefined) {
+    return undefined;
+  }
+  const token = command.trim().split(/\s+/, 1)[0]?.toLowerCase();
+  return token && token.length > 0 ? token : undefined;
 }
 
 function normalizeToolHubMode(input: Record<string, unknown>): GuardrailToolHubMode | undefined {
@@ -32,10 +50,93 @@ function normalizeToolHubMode(input: Record<string, unknown>): GuardrailToolHubM
   return "execute";
 }
 
+function normalizeToolHubExecutionContext(input: GuardrailContext): NormalizedGuardrailContext {
+  const toolHubMode = normalizeToolHubMode(input.input);
+  const toolHubProvider = asNonEmptyString(input.input.provider);
+  const toolHubAction = asNonEmptyString(input.input.action);
+
+  if (toolHubMode !== "execute") {
+    return {
+      ...input,
+      toolName: "tool_hub",
+      toolKind: "read",
+      readOnly: true,
+      hasExternalSideEffect: false,
+      toolHubMode,
+      toolHubProvider,
+      toolHubAction,
+    };
+  }
+
+  if (toolHubProvider === "memory" && (toolHubAction === "search" || toolHubAction === "get")) {
+    return {
+      ...input,
+      toolName: "tool_hub",
+      toolKind: "read",
+      readOnly: true,
+      hasExternalSideEffect: false,
+      toolHubMode,
+      toolHubProvider,
+      toolHubAction,
+    };
+  }
+
+  if (toolHubProvider === "memory" && toolHubAction === "write") {
+    return {
+      ...input,
+      toolName: "tool_hub",
+      toolKind: "write",
+      readOnly: false,
+      hasExternalSideEffect: false,
+      toolHubMode,
+      toolHubProvider,
+      toolHubAction,
+    };
+  }
+
+  if (toolHubProvider === "slack" && toolHubAction === "save-users") {
+    return {
+      ...input,
+      toolName: "tool_hub",
+      toolKind: "network",
+      readOnly: false,
+      hasExternalSideEffect: true,
+      toolHubMode,
+      toolHubProvider,
+      toolHubAction,
+    };
+  }
+
+  if (toolHubProvider === "slack") {
+    return {
+      ...input,
+      toolName: "tool_hub",
+      toolKind: "network",
+      readOnly: true,
+      hasExternalSideEffect: true,
+      toolHubMode,
+      toolHubProvider,
+      toolHubAction,
+    };
+  }
+
+  return {
+    ...input,
+    toolName: "tool_hub",
+    toolKind: "custom",
+    readOnly: false,
+    hasExternalSideEffect: true,
+    toolHubMode,
+    toolHubProvider,
+    toolHubAction,
+  };
+}
+
 export function normalizeGuardrailContext(input: GuardrailContext): NormalizedGuardrailContext {
   const toolName = input.toolName.trim();
   const path = asNonEmptyString(input.input.path);
   const bashCommand = asNonEmptyString(input.input.command);
+  const bashCommandPrefix = extractBashCommandPrefix(bashCommand);
 
   if (toolName === "read" || toolName === "find" || toolName === "grep" || toolName === "ls") {
     return {
@@ -67,21 +168,12 @@ export function normalizeGuardrailContext(input: GuardrailContext): NormalizedGu
       readOnly: false,
       hasExternalSideEffect: false,
       bashCommand,
+      bashCommandPrefix,
     };
   }
 
   if (toolName === "tool_hub") {
-    const toolHubMode = normalizeToolHubMode(input.input);
-    return {
-      ...input,
-      toolName,
-      toolKind: toolHubMode === "execute" ? "custom" : "read",
-      readOnly: toolHubMode !== "execute",
-      hasExternalSideEffect: toolHubMode === "execute",
-      toolHubMode,
-      toolHubProvider: asNonEmptyString(input.input.provider),
-      toolHubAction: asNonEmptyString(input.input.action),
-    };
+    return normalizeToolHubExecutionContext(input);
   }
 
   return {
@@ -92,11 +184,15 @@ export function normalizeGuardrailContext(input: GuardrailContext): NormalizedGu
     hasExternalSideEffect: true,
     path,
     bashCommand,
+    bashCommandPrefix,
   };
 }
 
 function matchesRule(context: NormalizedGuardrailContext, match: GuardrailRuleMatch): boolean {
   if (match.toolNames !== undefined && !match.toolNames.includes(context.toolName)) {
+    return false;
+  }
+  if (match.path !== undefined && match.path !== context.path) {
     return false;
   }
   if (match.toolKinds !== undefined && !match.toolKinds.includes(context.toolKind)) {
@@ -131,10 +227,10 @@ function matchesRule(context: NormalizedGuardrailContext, match: GuardrailRuleMa
     return false;
   }
   if (match.bashCommandPrefixes !== undefined) {
-    const command = context.bashCommand?.toLowerCase();
+    const commandPrefix = context.bashCommandPrefix;
     if (
-      command === undefined ||
-      !match.bashCommandPrefixes.some((prefix) => command.startsWith(prefix.toLowerCase()))
+      commandPrefix === undefined ||
+      !match.bashCommandPrefixes.some((prefix) => commandPrefix === prefix.toLowerCase())
     ) {
       return false;
     }
@@ -146,6 +242,38 @@ function compareRules(a: GuardrailRule, b: GuardrailRule): number {
   const priorityA = a.priority ?? 0;
   const priorityB = b.priority ?? 0;
   return priorityB - priorityA;
+}
+
+function matchSpecificity(match: GuardrailRuleMatch): number {
+  let score = 0;
+  if (match.toolNames !== undefined) {
+    score += 1;
+  }
+  if (match.path !== undefined) {
+    score += 3;
+  }
+  if (match.toolKinds !== undefined) {
+    score += 1;
+  }
+  if (match.readOnly !== undefined) {
+    score += 1;
+  }
+  if (match.hasExternalSideEffect !== undefined) {
+    score += 1;
+  }
+  if (match.toolHubModes !== undefined) {
+    score += 2;
+  }
+  if (match.toolHubProviders !== undefined) {
+    score += 2;
+  }
+  if (match.toolHubActions !== undefined) {
+    score += 3;
+  }
+  if (match.bashCommandPrefixes !== undefined) {
+    score += 2;
+  }
+  return score;
 }
 
 function describeTool(context: NormalizedGuardrailContext): string {
@@ -160,6 +288,156 @@ function describeTool(context: NormalizedGuardrailContext): string {
   return context.toolName;
 }
 
+function buildPersistedRules(policies: PersistedGuardrailPolicy[]): GuardrailRule[] {
+  return policies.map((policy) => {
+    const match: GuardrailRuleMatch = {};
+    if (policy.match.toolName !== undefined) {
+      match.toolNames = [policy.match.toolName];
+    }
+    if (policy.match.path !== undefined) {
+      match.path = policy.match.path;
+    }
+    if (policy.match.toolHubMode !== undefined) {
+      match.toolHubModes = [policy.match.toolHubMode];
+    }
+    if (policy.match.toolHubProvider !== undefined) {
+      match.toolHubProviders = [policy.match.toolHubProvider];
+    }
+    if (policy.match.toolHubAction !== undefined) {
+      match.toolHubActions = [policy.match.toolHubAction];
+    }
+    if (policy.match.bashCommandPrefix !== undefined) {
+      match.bashCommandPrefixes = [policy.match.bashCommandPrefix.toLowerCase()];
+    }
+    return {
+      id: policy.policyId,
+      description: "persisted guardrail policy",
+      decision: policy.effect === "allow" ? "allow" : "forbid",
+      priority: policy.effect === "allow" ? 100 : 200,
+      reason:
+        policy.effect === "allow"
+          ? "保存済みのガードレール許可ポリシーに一致したため自動実行します。"
+          : "保存済みのガードレール拒否ポリシーに一致したため実行を拒否します。",
+      match,
+    };
+  });
+}
+
+function matchesPolicyScope(
+  policy: PersistedGuardrailPolicy,
+  context: NormalizedGuardrailContext
+): boolean {
+  if (policy.scope === "global") {
+    return true;
+  }
+  if (policy.scope === "workspace") {
+    return (
+      typeof policy.scopeKey === "string" &&
+      policy.scopeKey.length > 0 &&
+      policy.scopeKey === context.workspaceScopeKey
+    );
+  }
+  return (
+    typeof policy.scopeKey === "string" &&
+    policy.scopeKey.length > 0 &&
+    policy.scopeKey === context.sessionId
+  );
+}
+
+function compareMatchedRules(a: MatchedRule, b: MatchedRule): number {
+  const specificity = matchSpecificity(b.rule.match) - matchSpecificity(a.rule.match);
+  if (specificity !== 0) {
+    return specificity;
+  }
+  const priority = compareRules(a.rule, b.rule);
+  if (priority !== 0) {
+    return priority;
+  }
+  if (a.source === b.source) {
+    return 0;
+  }
+  return a.source === "persisted" ? -1 : 1;
+}
+
+function selectWinningRule(matches: MatchedRule[]): MatchedRule | undefined {
+  if (matches.length === 0) {
+    return undefined;
+  }
+
+  const forbids = matches
+    .filter((entry) => entry.rule.decision === "forbid")
+    .sort(compareMatchedRules);
+  if (forbids.length > 0) {
+    return forbids[0];
+  }
+
+  const persistedAllows = matches
+    .filter((entry) => entry.source === "persisted" && entry.rule.decision === "allow")
+    .sort(compareMatchedRules);
+  if (persistedAllows.length > 0) {
+    return persistedAllows[0];
+  }
+
+  const builtinMatches = matches
+    .filter((entry) => entry.source === "builtin")
+    .sort(compareMatchedRules);
+  if (builtinMatches.length === 0) {
+    return undefined;
+  }
+
+  const bestSpecificity = matchSpecificity(builtinMatches[0].rule.match);
+  const bestPriority = builtinMatches[0].rule.priority ?? 0;
+  const sameTier = builtinMatches.filter((entry) => {
+    return (
+      matchSpecificity(entry.rule.match) === bestSpecificity &&
+      (entry.rule.priority ?? 0) === bestPriority
+    );
+  });
+
+  const preferredReview = sameTier.find((entry) => entry.rule.decision === "review");
+  if (preferredReview !== undefined) {
+    return preferredReview;
+  }
+
+  return sameTier[0];
+}
+
+export function buildGuardrailPolicyCandidate(
+  context: NormalizedGuardrailContext
+): PersistedGuardrailPolicyMatch | undefined {
+  if (context.toolName === "tool_hub") {
+    return {
+      toolName: "tool_hub",
+      ...(context.toolHubMode !== undefined ? { toolHubMode: context.toolHubMode } : {}),
+      ...(context.toolHubProvider !== undefined
+        ? { toolHubProvider: context.toolHubProvider }
+        : {}),
+      ...(context.toolHubAction !== undefined ? { toolHubAction: context.toolHubAction } : {}),
+    };
+  }
+
+  if (context.toolName === "bash") {
+    if (context.bashCommandPrefix === undefined) {
+      return undefined;
+    }
+    return {
+      toolName: "bash",
+      bashCommandPrefix: context.bashCommandPrefix,
+    };
+  }
+
+  if (context.path !== undefined) {
+    return {
+      toolName: context.toolName,
+      path: context.path,
+    };
+  }
+
+  return {
+    toolName: context.toolName,
+  };
+}
+
 export const DEFAULT_GUARDRAIL_RULES: GuardrailRule[] = [
   {
     id: "forbid-bash-policy-escalation",
@@ -170,19 +448,19 @@ export const DEFAULT_GUARDRAIL_RULES: GuardrailRule[] = [
     match: {
       toolNames: ["bash"],
       bashCommandPrefixes: [
-        "sudo ",
-        "su ",
-        "docker ",
-        "podman ",
-        "ssh ",
-        "scp ",
-        "rsync ",
-        "mount ",
-        "umount ",
+        "sudo",
+        "su",
+        "docker",
+        "podman",
+        "ssh",
+        "scp",
+        "rsync",
+        "mount",
+        "umount",
         "reboot",
         "shutdown",
         "mkfs",
-        "fdisk ",
+        "fdisk",
       ],
     },
   },
@@ -190,7 +468,7 @@ export const DEFAULT_GUARDRAIL_RULES: GuardrailRule[] = [
     id: "allow-readonly-tools",
     description: "sandbox 内の read-only ツールは自動許可",
     decision: "allow",
-    priority: 200,
+    priority: 220,
     reason: "sandbox 内の read-only ツールは自動実行します。",
     match: {
       toolNames: ["read", "find", "grep", "ls"],
@@ -202,7 +480,7 @@ export const DEFAULT_GUARDRAIL_RULES: GuardrailRule[] = [
     id: "allow-tool-hub-discovery",
     description: "tool_hub の catalog / help は自動許可",
     decision: "allow",
-    priority: 190,
+    priority: 210,
     reason: "tool_hub の catalog / help は副作用を持たないため自動実行します。",
     match: {
       toolNames: ["tool_hub"],
@@ -212,32 +490,100 @@ export const DEFAULT_GUARDRAIL_RULES: GuardrailRule[] = [
     },
   },
   {
+    id: "allow-toolhub-memory-read",
+    description: "memory の read 系 action は自動許可",
+    decision: "allow",
+    priority: 205,
+    reason: "tool_hub memory/search と memory/get は read-only のため自動実行します。",
+    match: {
+      toolNames: ["tool_hub"],
+      toolHubModes: ["execute"],
+      toolHubProviders: ["memory"],
+      toolHubActions: ["search", "get"],
+      readOnly: true,
+      hasExternalSideEffect: false,
+    },
+  },
+  {
+    id: "review-toolhub-memory-write",
+    description: "memory write は人間レビューへ送る",
+    decision: "review",
+    priority: 170,
+    reason: "tool_hub memory/write は永続状態を書き換えるため人間の承認が必要です。",
+    match: {
+      toolNames: ["tool_hub"],
+      toolHubModes: ["execute"],
+      toolHubProviders: ["memory"],
+      toolHubActions: ["write"],
+    },
+  },
+  {
+    id: "review-toolhub-slack-actions",
+    description: "slack provider の action 実行は人間レビューへ送る",
+    decision: "review",
+    priority: 165,
+    reason: "tool_hub slack provider の実行は外部アクセスを伴うため人間の承認が必要です。",
+    match: {
+      toolNames: ["tool_hub"],
+      toolHubModes: ["execute"],
+      toolHubProviders: ["slack"],
+      toolHubActions: ["search", "list-users", "resolve-channel-id", "save-users"],
+    },
+  },
+  {
+    id: "review-toolhub-execute-default",
+    description: "未分類の tool_hub execute は人間レビューへ送る",
+    decision: "review",
+    priority: 160,
+    reason: "未分類の tool_hub 実行は既定で人間の承認が必要です。",
+    match: {
+      toolNames: ["tool_hub"],
+      toolHubModes: ["execute"],
+    },
+  },
+  {
     id: "review-side-effecting-tools",
     description: "副作用のあるツールは人間レビューへ送る",
     decision: "review",
     priority: 100,
     reason: "副作用のある実行は人間の承認が必要です。",
     match: {
-      toolNames: ["bash", "edit", "write", "tool_hub"],
+      toolNames: ["bash", "edit", "write"],
     },
   },
 ];
 
 export function evaluateGuardrailDecision(
   input: GuardrailContext,
-  rules: GuardrailRule[] = DEFAULT_GUARDRAIL_RULES
+  options: {
+    rules?: GuardrailRule[];
+    persistedPolicies?: PersistedGuardrailPolicy[];
+    advisory?: GuardrailLlmAdvisory;
+  } = {}
 ): GuardrailDecisionResult {
   const context = normalizeGuardrailContext(input);
-  const sortedRules = [...rules].sort(compareRules);
-  const matchedRule = sortedRules.find((rule) => matchesRule(context, rule.match));
+  const rules = options.rules ?? DEFAULT_GUARDRAIL_RULES;
+  const persistedRules = buildPersistedRules(
+    (options.persistedPolicies ?? []).filter((policy) => matchesPolicyScope(policy, context))
+  );
+  const matchedRule = selectWinningRule([
+    ...persistedRules
+      .filter((rule) => matchesRule(context, rule.match))
+      .map((rule) => ({ rule, source: "persisted" as const })),
+    ...rules
+      .filter((rule) => matchesRule(context, rule.match))
+      .map((rule) => ({ rule, source: "builtin" as const })),
+  ]);
   const title = `${describeTool(context)} requires approval`;
 
   if (matchedRule !== undefined) {
     return {
-      decision: matchedRule.decision,
+      decision: matchedRule.rule.decision,
       title,
-      reason: matchedRule.reason,
-      ruleId: matchedRule.id,
+      reason: matchedRule.rule.reason,
+      ruleId: matchedRule.rule.id,
+      policySource: matchedRule.source,
+      advisory: options.advisory,
       context,
     };
   }
@@ -246,6 +592,8 @@ export function evaluateGuardrailDecision(
     decision: "review",
     title,
     reason: "未分類のツール実行は既定で人間レビューへ送ります。",
+    policySource: "default",
+    advisory: options.advisory,
     context,
   };
 }

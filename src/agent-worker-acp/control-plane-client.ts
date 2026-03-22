@@ -10,14 +10,20 @@ import type {
   GuardrailPermissionOutcome,
   GuardrailPermissionRequest,
 } from "../guardrails/types.js";
+import { resolveGuardrailRuntimeConfig } from "../guardrails/config.js";
 
 interface PendingRequest {
   resolve: (value: Record<string, unknown>) => void;
   reject: (reason: Error) => void;
+  timer: NodeJS.Timeout;
 }
 
 export interface ControlPlaneClientOptions {
   writeEnvelope: (envelope: unknown) => void;
+}
+
+export interface ControlPlaneRequestOptions {
+  timeoutMs?: number;
 }
 
 export class ControlPlaneClient {
@@ -29,10 +35,29 @@ export class ControlPlaneClient {
     this.writeEnvelope = options.writeEnvelope;
   }
 
-  async request(method: string, params: Record<string, unknown>): Promise<Record<string, unknown>> {
+  async request(
+    method: string,
+    params: Record<string, unknown>,
+    options: ControlPlaneRequestOptions = {}
+  ): Promise<Record<string, unknown>> {
     const id = this.nextId++;
     return await new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+      const timeoutMs = options.timeoutMs ?? 1_000;
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`CONTROL_PLANE_TIMEOUT: ${method}`));
+      }, timeoutMs);
+      this.pending.set(id, {
+        resolve: (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        reject: (reason) => {
+          clearTimeout(timer);
+          reject(reason);
+        },
+        timer,
+      });
       this.writeEnvelope({
         jsonrpc: "2.0",
         id,
@@ -48,6 +73,7 @@ export class ControlPlaneClient {
       return false;
     }
 
+    clearTimeout(pending.timer);
     this.pending.delete(Number(input.id));
     if ("error" in input) {
       pending.reject(new Error(input.error.message));
@@ -60,6 +86,7 @@ export class ControlPlaneClient {
 
   failAll(error: Error): void {
     for (const [id, pending] of this.pending) {
+      clearTimeout(pending.timer);
       this.pending.delete(id);
       pending.reject(error);
     }
@@ -83,6 +110,8 @@ function createPermissionRequest(input: GuardrailPermissionRequest): RequestPerm
           ruleId: input.ruleId,
           runId: input.runId,
           sessionKey: input.sessionKey,
+          workspaceScopeKey: input.workspaceScopeKey,
+          policyCandidate: input.policyCandidate,
         },
       },
     },
@@ -93,9 +122,19 @@ function createPermissionRequest(input: GuardrailPermissionRequest): RequestPerm
         kind: "allow_once",
       },
       {
+        optionId: "allow_always",
+        name: "Always Approve",
+        kind: "allow_always",
+      },
+      {
         optionId: "reject_once",
         name: "Deny",
         kind: "reject_once",
+      },
+      {
+        optionId: "reject_always",
+        name: "Always Deny",
+        kind: "reject_always",
       },
     ],
     _meta: {
@@ -105,6 +144,8 @@ function createPermissionRequest(input: GuardrailPermissionRequest): RequestPerm
         ruleId: input.ruleId,
         runId: input.runId,
         sessionKey: input.sessionKey,
+        workspaceScopeKey: input.workspaceScopeKey,
+        policyCandidate: input.policyCandidate,
       },
     },
   };
@@ -114,16 +155,26 @@ function mapPermissionOutcome(outcome: RequestPermissionOutcome): GuardrailPermi
   if (outcome.outcome === "cancelled") {
     return "cancelled";
   }
-  return outcome.optionId === "allow_once" ? "allow" : "deny";
+  return outcome.optionId === "allow_once" || outcome.optionId === "allow_always"
+    ? "allow"
+    : "deny";
 }
 
 export async function requestPermissionFromControlPlane(
   client: ControlPlaneClient,
   input: GuardrailPermissionRequest
 ): Promise<GuardrailPermissionOutcome> {
-  const response = (await client.request(
-    ACP_CLIENT_METHODS.SESSION_REQUEST_PERMISSION,
-    createPermissionRequest(input) as unknown as Record<string, unknown>
-  )) as unknown as RequestPermissionResponse;
-  return mapPermissionOutcome(response.outcome);
+  const config = resolveGuardrailRuntimeConfig({ env: process.env });
+  try {
+    const response = (await client.request(
+      ACP_CLIENT_METHODS.SESSION_REQUEST_PERMISSION,
+      createPermissionRequest(input) as unknown as Record<string, unknown>,
+      {
+        timeoutMs: config.rpcTimeoutMs,
+      }
+    )) as unknown as RequestPermissionResponse;
+    return mapPermissionOutcome(response.outcome);
+  } catch {
+    return config.rpcTimeoutOutcome;
+  }
 }

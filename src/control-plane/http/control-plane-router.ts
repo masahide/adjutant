@@ -208,7 +208,10 @@ function isPostPermissionResolveRequest(value: unknown): value is PostPermission
   return (
     typeof record.requestId === "string" &&
     record.requestId.trim().length > 0 &&
-    (record.outcome === "allow" || record.outcome === "deny")
+    (record.outcome === "allow_once" ||
+      record.outcome === "allow_always" ||
+      record.outcome === "reject_once" ||
+      record.outcome === "reject_always")
   );
 }
 
@@ -368,7 +371,8 @@ export function createControlPlaneRequestHandler(deps: ControlPlaneRouterDeps) {
         if (!isPostPermissionResolveRequest(payload)) {
           writeJson(res, 400, {
             code: "INVALID_REQUEST",
-            message: "requestId/outcome(allow|deny) are required",
+            message:
+              "requestId/outcome(allow_once|allow_always|reject_once|reject_always) are required",
           });
           return;
         }

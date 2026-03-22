@@ -67,6 +67,8 @@ import { WatermarkStore } from "./control-plane/proactive/watermark-store.js";
 import { createHeartbeatRunner } from "./control-plane/heartbeat/heartbeat-runner.js";
 import { HeartbeatResultStore } from "./control-plane/heartbeat/result-store.js";
 import { buildSnapshotResponse } from "./control-plane/http/snapshot-builder.js";
+import { resolveGuardrailRuntimeConfig } from "./guardrails/config.js";
+import { GuardrailPolicyStore } from "./guardrails/policy-store.js";
 import { loadProjectEnv } from "./runtime/load-project-env.js";
 import { ensureWorkspaceReady, resolveRuntimeDirectories } from "./runtime/runtime-directories.js";
 import { renderMinimalUiPage } from "./ui/minimal-page.js";
@@ -469,10 +471,29 @@ export async function main(): Promise<void> {
   const emitSse = (event: StreamEventType, data: Record<string, unknown>) => {
     sseHub.broadcast(event, data);
   };
+  const guardrailConfig = resolveGuardrailRuntimeConfig({
+    env: process.env,
+    stateDir,
+  });
+  const guardrailPolicyStore = GuardrailPolicyStore.fromStateDir(stateDir, {
+    onWarn: (message, meta) => {
+      logControlPlane({
+        level: "warn",
+        event: "guardrail.policy_store.warn",
+        message,
+        runId: null,
+        sessionKey: null,
+        toolCallId: null,
+        details: meta,
+      });
+    },
+  });
   const uiRuntime = new UiRuntime({
     resolveRunId: (sessionId) => runLifecycle.resolveRunId(sessionId),
   });
   const permissionGateway = new PermissionGateway({
+    defaultTimeoutMs: guardrailConfig.permissionTimeoutMs,
+    defaultTimeoutSelection: guardrailConfig.permissionTimeoutSelection,
     emitUiEvent: (event) => {
       uiRuntime.onPermissionEvent(event);
       emitSse(event.type, event.payload);
@@ -714,7 +735,19 @@ export async function main(): Promise<void> {
       }
       return (await handlePermissionRequest(request.params as never, {
         permissionGateway,
+        policyStore: guardrailPolicyStore,
         resolveRunId: (sessionId) => runLifecycle.resolveRunId(sessionId),
+        onWarn: (message, meta) => {
+          logControlPlane({
+            level: "warn",
+            event: "guardrail.permission_handler.warn",
+            message,
+            runId: null,
+            sessionKey: null,
+            toolCallId: null,
+            details: meta,
+          });
+        },
       })) as unknown as Record<string, unknown>;
     }
   );

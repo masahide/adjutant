@@ -114,6 +114,8 @@
   - `ADJUTANT_GUARDRAIL_MODE`
   - `ADJUTANT_GUARDRAIL_PERMISSION_TIMEOUT_MS`
   - `ADJUTANT_GUARDRAIL_TIMEOUT_OUTCOME`
+  - `ADJUTANT_GUARDRAIL_RPC_TIMEOUT_MS`
+  - `ADJUTANT_GUARDRAIL_RPC_TIMEOUT_OUTCOME`
   - `ADJUTANT_GUARDRAIL_LLM_ENABLED`
   - `ADJUTANT_GUARDRAIL_LLM_MODEL`
   - `ADJUTANT_GUARDRAIL_LLM_TIMEOUT_MS`
@@ -131,18 +133,23 @@
 type PersistedGuardrailPolicy = {
   policyId: string;
   scope: "session" | "workspace" | "global";
+  scopeKey?: string;
   match: {
     toolName?: string;
+    path?: string;
+    toolHubMode?: "catalog" | "provider_help" | "action_help" | "execute";
     toolHubProvider?: string;
     toolHubAction?: string;
-    domain?: string;
-    commandPrefix?: string;
+    bashCommandPrefix?: string;
   };
   effect: "allow" | "deny";
   createdAt: string;
   createdBy: "user";
 };
 ```
+
+- `scope="workspace"` の場合、`scopeKey` は `projectRoot:<abs-path>::workspaceDir:<abs-path>` を使う
+- `allow_always` / `reject_always` の保存は将来向けの best-effort であり、保存失敗が今回の承認結果を覆さない
 
 - audit record
 
@@ -178,7 +185,7 @@ type GuardrailTimeoutPolicy = {
   permissionTimeoutMs: number;
   permissionTimeoutOutcome: "deny" | "cancelled";
   rpcTimeoutMs: number;
-  rpcTimeoutOutcome: "deny" | "review";
+  rpcTimeoutOutcome: "deny" | "cancelled";
 };
 ```
 
@@ -193,7 +200,7 @@ type GuardrailTimeoutPolicy = {
   - `GUARDRAIL_PERMISSION_TIMEOUT`
 - リトライ方針
   - audit append は best-effort、失敗しても実行経路を止めない
-  - policy store write は 1 回のみ再試行
+  - policy store write は best-effort とし、失敗しても今回の承認結果は巻き込まない
   - LLM evaluator は 0 または 1 回の軽い retry に限定
 - タイムアウト方針
   - human review timeout は設定値で制御し、結果は `deny` または `cancelled`
@@ -209,6 +216,8 @@ type GuardrailTimeoutPolicy = {
 ADJUTANT_GUARDRAIL_MODE=audit
 ADJUTANT_GUARDRAIL_PERMISSION_TIMEOUT_MS=30000
 ADJUTANT_GUARDRAIL_TIMEOUT_OUTCOME=deny
+ADJUTANT_GUARDRAIL_RPC_TIMEOUT_MS=5000
+ADJUTANT_GUARDRAIL_RPC_TIMEOUT_OUTCOME=deny
 ADJUTANT_GUARDRAIL_LLM_ENABLED=1
 ADJUTANT_GUARDRAIL_LLM_MODEL=gpt-5-mini
 ADJUTANT_GUARDRAIL_LLM_TIMEOUT_MS=3000
@@ -222,6 +231,7 @@ ADJUTANT_GUARDRAIL_LLM_TIMEOUT_MS=3000
   "scope": "workspace",
   "match": {
     "toolName": "tool_hub",
+    "toolHubMode": "execute",
     "toolHubProvider": "memory",
     "toolHubAction": "write"
   },
@@ -377,7 +387,9 @@ stateDiagram-v2
 ### 6.2 カバレッジ対象
 
 - 重要ロジック
-  - builtin rules と persisted policies の precedence
+  - builtin `forbid` が persisted `allow` を踏み越えられない precedence
+  - persisted `allow` が builtin `review` を override できること
+  - builtin rule 同士が specificity / priority / tie-break で安定決定されること
   - `tool_hub` action 単位の安全分類
   - timeout 時の fail-safe outcome
 - エラー分岐
@@ -395,61 +407,61 @@ stateDiagram-v2
 
 ### Phase 1 設計と準備
 
-- [ ] `Task-GR2-PLAN-001` インターフェース契約を確定し、追加 env / storage / advisory schema を定義する
-- [ ] `Task-GR2-PLAN-002` Mermaid 図を作成し、既存 guardrail との差分責務を明文化する
-- [ ] `Task-GR2-PLAN-003` 追加型定義 `PersistedGuardrailPolicy` / `GuardrailAuditRecord` / `GuardrailTimeoutPolicy` を作成する
-- [ ] `Task-GR2-PLAN-004` 既存テスト基盤で Node test / integration / docs sync が使えることを確認する
+- [x] `Task-GR2-PLAN-001` インターフェース契約を確定し、追加 env / storage / advisory schema を定義する
+- [x] `Task-GR2-PLAN-002` Mermaid 図を作成し、既存 guardrail との差分責務を明文化する
+- [x] `Task-GR2-PLAN-003` 追加型定義 `PersistedGuardrailPolicy` / `GuardrailAuditRecord` / `GuardrailTimeoutPolicy` を作成する
+- [x] `Task-GR2-PLAN-004` 既存テスト基盤で Node test / integration / docs sync が使えることを確認する
 
 ### Phase 2 Audit Mode と ToolHub 精密化
 
-- [ ] `Task-GR2-RED-001` Test: `audit` モードで rule hit を記録しつつ block しない失敗テストを追加する
-- [ ] `Task-GR2-GREEN-001` Impl: `audit` モードと audit log append を実装する
-- [ ] `Task-GR2-RED-002` Test: `tool_hub` provider / action 単位の判定テストを追加する
-- [ ] `Task-GR2-GREEN-002` Impl: `tool_hub` action resolver と action 単位ルールを実装する
-- [ ] `Task-GR2-REF-001` Refactor: builtin rule と action metadata の重複を整理する
-- [ ] `Task-GR2-INT-001` Integration: `audit` モードと `tool_hub` 精密化の統合テストを追加する
+- [x] `Task-GR2-RED-001` Test: `audit` モードで rule hit を記録しつつ block しない失敗テストを追加する
+- [x] `Task-GR2-GREEN-001` Impl: `audit` モードと audit log append を実装する
+- [x] `Task-GR2-RED-002` Test: `tool_hub` provider / action 単位の判定テストを追加する
+- [x] `Task-GR2-GREEN-002` Impl: `tool_hub` action resolver と action 単位ルールを実装する
+- [x] `Task-GR2-REF-001` Refactor: builtin rule と action metadata の重複を整理する
+- [x] `Task-GR2-INT-001` Integration: `audit` モードと `tool_hub` 精密化の統合テストを追加する
 
 ### Phase 3 永続 whitelist / denylist
 
-- [ ] `Task-GR2-RED-003` Test: 永続ポリシーの save / load / restart 反映の失敗テストを追加する
-- [ ] `Task-GR2-GREEN-003` Impl: `PersistedPolicyStore` と policy precedence を実装する
-- [ ] `Task-GR2-REF-002` Refactor: builtin / persisted / temporary policy の評価順を明文化しコードへ固定する
-- [ ] `Task-GR2-INT-002` Integration: user 選択が永続ポリシーへ反映される統合テストを追加する
-- [ ] `Task-GR2-DOC-001` Docs: 永続ポリシー保存先と制約を追記する
+- [x] `Task-GR2-RED-003` Test: 永続ポリシーの save / load / restart 反映の失敗テストを追加する
+- [x] `Task-GR2-GREEN-003` Impl: `PersistedPolicyStore` と policy precedence を実装する
+- [x] `Task-GR2-REF-002` Refactor: builtin / persisted / temporary policy の評価順を明文化しコードへ固定する
+- [x] `Task-GR2-INT-002` Integration: user 選択が永続ポリシーへ反映される統合テストを追加する
+- [x] `Task-GR2-DOC-001` Docs: 永続ポリシー保存先と制約を追記する
 
 ### Phase 4 LLM Advisory と Timeout Policy
 
-- [ ] `Task-GR2-RED-004` Test: LLM advisory timeout / malformed output の失敗テストを追加する
-- [ ] `Task-GR2-GREEN-004` Impl: OpenAI Responses API を使う optional advisory client を実装する
-- [ ] `Task-GR2-RED-005` Test: permission timeout と RPC timeout の失敗テストを追加する
-- [ ] `Task-GR2-GREEN-005` Impl: timeout controller と default outcome 解決を実装する
-- [ ] `Task-GR2-REF-003` Refactor: LLM advisory を最終承認から切り離し、rule engine への補助入力へ限定する
-- [ ] `Task-GR2-INT-003` Integration: timeout policy と advisory fallback の統合テストを追加する
-- [ ] `Task-GR2-DOC-002` Docs: 新しい `ADJUTANT_GUARDRAIL_*` 設定を docs sync 対象へ追加する
+- [x] `Task-GR2-RED-004` Test: LLM advisory timeout / malformed output の失敗テストを追加する
+- [x] `Task-GR2-GREEN-004` Impl: OpenAI Responses API を使う optional advisory client を実装する
+- [x] `Task-GR2-RED-005` Test: permission timeout と RPC timeout の失敗テストを追加する
+- [x] `Task-GR2-GREEN-005` Impl: timeout controller と default outcome 解決を実装する
+- [x] `Task-GR2-REF-003` Refactor: LLM advisory を最終承認から切り離し、rule engine への補助入力へ限定する
+- [x] `Task-GR2-INT-003` Integration: timeout policy と advisory fallback の統合テストを追加する
+- [x] `Task-GR2-DOC-002` Docs: 新しい `ADJUTANT_GUARDRAIL_*` 設定を docs sync 対象へ追加する
 
 ### Phase 5 統合と検証
 
-- [ ] `Task-GR2-VERIFY-001` `pnpm run typecheck` を通す
-- [ ] `Task-GR2-VERIFY-002` `pnpm run test` を通す
-- [ ] `Task-GR2-VERIFY-003` `pnpm run check` を通す
-- [ ] `Task-GR2-VERIFY-004` `audit` / `enforce` / timeout / persisted policy のエッジケースを手動確認する
+- [x] `Task-GR2-VERIFY-001` `pnpm run typecheck` を通す
+- [x] `Task-GR2-VERIFY-002` `pnpm run test` を通す
+- [x] `Task-GR2-VERIFY-003` `pnpm run check` を通す
+- [x] `Task-GR2-VERIFY-004` `audit` / `enforce` / timeout / persisted policy のエッジケースを手動確認する
 
 ## 8. 完了の定義 Definition of Done
 
 ### 8.1 機能 DoD Functional DoD
 
-- [ ] `audit` モードが実装され、実行制御なしで rule hit を観測できること
-- [ ] `tool_hub` が action 単位で guardrail 判定できること
-- [ ] 永続 whitelist / denylist が再起動後も反映されること
-- [ ] LLM advisory が optional に動作し、失敗時は rule-based 判定へ安全にフォールバックすること
-- [ ] permission / RPC timeout が契約どおり解決されること
+- [x] `audit` モードが実装され、実行制御なしで rule hit を観測できること
+- [x] `tool_hub` が action 単位で guardrail 判定できること
+- [x] 永続 whitelist / denylist が再起動後も反映されること
+- [x] LLM advisory が optional に動作し、失敗時は rule-based 判定へ安全にフォールバックすること
+- [x] permission / RPC timeout が契約どおり解決されること
 
 ### 8.2 品質 DoD Quality DoD
 
-- [ ] 全てのテストがパスしていること
-- [ ] Linter / Formatter のエラーがないこと
-- [ ] 不要なデバッグコードが削除されていること
-- [ ] 主要な変更点がドキュメントに反映されていること
+- [x] 全てのテストがパスしていること
+- [x] Linter / Formatter のエラーがないこと
+- [x] 不要なデバッグコードが削除されていること
+- [x] 主要な変更点がドキュメントに反映されていること
 
 ## 9. 懸念事項と未確定事項 Concerns and Questions
 

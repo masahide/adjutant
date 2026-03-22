@@ -17,13 +17,14 @@ test("PermissionGateway emits UI events and resolves permission outcome", async 
     title: "Allow file write",
   });
 
-  const resolved = gateway.resolvePermission("perm_1", "allow");
+  const resolved = gateway.resolvePermission("perm_1", "allow_once");
   assert.equal(resolved, true);
 
-  assert.equal(await pending, "allow");
+  assert.equal(await pending, "allow_once");
   assert.equal(events[0]?.type, "permission/requested");
   assert.equal(events[1]?.type, "permission/resolved");
   assert.equal(events[1]?.payload.outcome, "allow");
+  assert.equal(events[1]?.payload.selection, "allow_once");
 });
 
 test("PermissionGateway cancelSession resolves pending permission with cancelled", async () => {
@@ -38,4 +39,19 @@ test("PermissionGateway cancelSession resolves pending permission with cancelled
   const cancelled = gateway.cancelSession("sess_cancel");
   assert.deepEqual(cancelled, ["perm_2"]);
   assert.equal(await pending, "cancelled");
+});
+
+test("PermissionGateway auto resolves pending permission on timeout", async () => {
+  const gateway = new PermissionGateway({
+    defaultTimeoutMs: 5,
+    defaultTimeoutSelection: "reject_once",
+  });
+
+  const pending = gateway.requestPermission({
+    requestId: "perm_3",
+    sessionId: "sess_timeout",
+    title: "Allow terminal",
+  });
+
+  assert.equal(await pending, "reject_once");
 });

@@ -23,6 +23,7 @@ import { createContainerizedFileTools } from "./containerized-file-tool-operatio
 import { createToolHubToolDefinition, ToolHub } from "./dynamic-tool/index.js";
 import { createAssistantProviderRegistry } from "./tool-hub-provider-registry.js";
 import { createGuardrailExtension } from "./guardrail-extension.js";
+import { resolveGuardrailMode } from "../guardrails/config.js";
 
 export interface PiAgentSessionLike {
   prompt: (text: string) => Promise<void>;
@@ -49,7 +50,7 @@ export interface CreatePiAgentSessionOptions {
   agentDir?: string;
   homedirPath?: string;
   onSkillWarning?: SkillWarningLogger;
-  guardrailMode?: "off" | "enforce";
+  guardrailMode?: "off" | "audit" | "enforce";
 }
 
 let activeSandbox: ActiveSandboxConfig | null = null;
@@ -102,16 +103,6 @@ function isPhaseBEnabledForScope(
   return memoryScope === "main";
 }
 
-function resolveGuardrailMode(
-  explicit: CreatePiAgentSessionOptions["guardrailMode"],
-  env: NodeJS.ProcessEnv
-): "off" | "enforce" {
-  if (explicit === "off" || explicit === "enforce") {
-    return explicit;
-  }
-  return env.ADJUTANT_GUARDRAIL_MODE?.trim().toLowerCase() === "enforce" ? "enforce" : "off";
-}
-
 function buildExtensionFactories(
   options: CreatePiAgentSessionOptions,
   env: NodeJS.ProcessEnv
@@ -121,11 +112,18 @@ function buildExtensionFactories(
     return [];
   }
 
-  if (resolveGuardrailMode(options.guardrailMode, env) !== "enforce") {
+  const mode = resolveGuardrailMode(options.guardrailMode, env);
+  if (mode === "off") {
     return [];
   }
 
-  return [createGuardrailExtension({ sessionId })];
+  return [
+    createGuardrailExtension({
+      sessionId,
+      stateDir: options.stateDir,
+      mode,
+    }),
+  ];
 }
 
 export async function createPiAgentSession(

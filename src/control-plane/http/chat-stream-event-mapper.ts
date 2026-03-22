@@ -159,6 +159,13 @@ export function mapPermissionEventToChatStreamEvent(input: {
     permissionResolved: {
       requestId,
       outcome,
+      selection: asString(input.event.payload.selection) as
+        | "allow_once"
+        | "allow_always"
+        | "reject_once"
+        | "reject_always"
+        | "cancelled"
+        | undefined,
     },
   };
 }

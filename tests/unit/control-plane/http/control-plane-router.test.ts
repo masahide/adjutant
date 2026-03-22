@@ -199,16 +199,16 @@ test("POST /api/permissions/resolve resolves pending permission and rejects inva
   const resolveRes = await fetch(`http://127.0.0.1:${port}/api/permissions/resolve`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ requestId: "perm_1", outcome: "allow" }),
+    body: JSON.stringify({ requestId: "perm_1", outcome: "allow_once" }),
   });
   assert.equal(resolveRes.status, 200);
   assert.deepEqual(await resolveRes.json(), {});
-  assert.equal(await pending, "allow");
+  assert.equal(await pending, "allow_once");
 
   const missingRes = await fetch(`http://127.0.0.1:${port}/api/permissions/resolve`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ requestId: "perm_1", outcome: "allow" }),
+    body: JSON.stringify({ requestId: "perm_1", outcome: "allow_once" }),
   });
   assert.equal(missingRes.status, 404);
 });

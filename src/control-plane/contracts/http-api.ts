@@ -67,6 +67,7 @@ export type PermissionSummary = {
   reason?: string;
   ruleId?: string;
   requestedAt: string;
+  expiresAt?: string;
 };
 
 export type ToolEventRecord = {
@@ -117,6 +118,7 @@ export type ChatStreamEvent = {
   permissionResolved?: {
     requestId: string;
     outcome: "allow" | "deny" | "cancelled";
+    selection?: "allow_once" | "allow_always" | "reject_once" | "reject_always" | "cancelled";
   };
 };
 
@@ -236,7 +238,7 @@ export type ThreadSnapshotResponse = SnapshotResponse & {
 
 export type PostPermissionResolveRequest = {
   requestId: string;
-  outcome: "allow" | "deny";
+  outcome: "allow_once" | "allow_always" | "reject_once" | "reject_always";
 };
 
 export type PostPermissionResolveResponse = Record<string, never>;
@@ -282,5 +284,6 @@ export function toPermissionSummary(input: PendingPermission): PermissionSummary
     ...(input.reason !== undefined ? { reason: input.reason } : {}),
     ...(input.ruleId !== undefined ? { ruleId: input.ruleId } : {}),
     requestedAt: input.createdAt,
+    ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
   };
 }
