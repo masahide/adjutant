@@ -50,3 +50,11 @@ Skills are shared. Your setup is yours. Keeping them apart means you can update 
 ---
 
 Add whatever helps you do your job. This is your cheat sheet.
+
+## Slack Tool Hub Notes
+
+- For `slack.list-users`, `slack.list-channels`, `slack.resolve-channel-id`, and `slack.save-users`, prefer the tool description and runtime error message over repo `README.md`.
+- These Slack client-state tools can fail in a fresh session or logged-out state because Slack IndexedDB state is not initialized yet.
+- If they fail with an IndexedDB / client state error, run `slack.search` with `mode=login`, log in to the target workspace, then retry.
+- If multiple workspaces are possible, pass `workspaceUrl` explicitly so the tool uses the intended workspace state.
+- When validating a fix, capture the exact tool call, args, success/failure, full error text, login state, and write the result to `memory/YYYY-MM-DD.md`.

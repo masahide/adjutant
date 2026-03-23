@@ -2,6 +2,10 @@ import type {
   ResolveChannelCodeInput,
   ResolveChannelsPayload,
 } from '../contracts.ts';
+import {
+  buildSlackClientStateUnavailableError,
+  installBrowserRuntimeShims,
+} from './runtime-shims.ts';
 
 type BrowserPage = any;
 
@@ -9,6 +13,7 @@ export async function runResolveChannelInBrowser(
   page: BrowserPage,
   input: ResolveChannelCodeInput,
 ): Promise<ResolveChannelsPayload> {
+  await installBrowserRuntimeShims(page);
   const searchDialogTimeoutMs = 5_000;
   const searchResultsTimeoutMs = 2_500;
 
@@ -26,14 +31,15 @@ export async function runResolveChannelInBrowser(
   };
 
   const lookupChannelsFromCache = async () => {
-    return await page.evaluate(
-      async ({
-        channelIdsForLookup,
-        workspaceUrlForTeam,
-      }: {
-        channelIdsForLookup: string[];
-        workspaceUrlForTeam: string;
-      }) => {
+    return await page
+      .evaluate(
+        async ({
+          channelIdsForLookup,
+          workspaceUrlForTeam,
+        }: {
+          channelIdsForLookup: string[];
+          workspaceUrlForTeam: string;
+        }) => {
         const normalizedText = (value: unknown): string | null => {
           if (typeof value !== 'string') {
             return null;
@@ -136,12 +142,19 @@ export async function runResolveChannelInBrowser(
         } finally {
           db.close();
         }
-      },
-      {
-        channelIdsForLookup: requestedIds,
-        workspaceUrlForTeam: input.workspaceUrl,
-      },
-    );
+        },
+        {
+          channelIdsForLookup: requestedIds,
+          workspaceUrlForTeam: input.workspaceUrl,
+        },
+      )
+      .catch((error: unknown) => {
+        throw buildSlackClientStateUnavailableError({
+          action: 'slack.resolve-channel-id',
+          cause: error,
+          workspaceUrl: input.workspaceUrl,
+        });
+      });
   };
 
   const openSearchDialog = async (): Promise<boolean> => {

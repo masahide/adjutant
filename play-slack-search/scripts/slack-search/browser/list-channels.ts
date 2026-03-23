@@ -5,6 +5,10 @@ import type {
   ChannelType,
   ListChannelsCodeInput,
 } from '../contracts.ts';
+import {
+  buildSlackClientStateUnavailableError,
+  installBrowserRuntimeShims,
+} from './runtime-shims.ts';
 
 type BrowserPage = any;
 type ChannelListSource = ChannelListPayload['source'];
@@ -248,6 +252,7 @@ export async function runListChannelsInBrowser(
   page: BrowserPage,
   input: ListChannelsCodeInput,
 ): Promise<ChannelListPayload> {
+  await installBrowserRuntimeShims(page);
   const { hydrate = false, limit, workspaceUrl } = input;
   const sleep = (ms: number) => page.waitForTimeout(ms);
   const isHomeTitle = (title: string): boolean =>
@@ -1072,14 +1077,15 @@ export async function runListChannelsInBrowser(
   await page.goto(workspaceUrl, { waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(2000);
 
-  const payload = await page.evaluate(
-    async ({
-      maxItems,
-      workspaceUrlForTeam,
-    }: {
-      maxItems: number;
-      workspaceUrlForTeam: string;
-    }) => {
+  const payload = await page
+    .evaluate(
+      async ({
+        maxItems,
+        workspaceUrlForTeam,
+      }: {
+        maxItems: number;
+        workspaceUrlForTeam: string;
+      }) => {
       const isChannelLikeEntryInPage = (channel: unknown): boolean => {
         if (!channel || typeof channel !== 'object') {
           return false;
@@ -1229,9 +1235,16 @@ export async function runListChannelsInBrowser(
       } finally {
         db.close();
       }
-    },
-    { maxItems: limit, workspaceUrlForTeam: workspaceUrl },
-  );
+      },
+      { maxItems: limit, workspaceUrlForTeam: workspaceUrl },
+    )
+    .catch((error: unknown) => {
+      throw buildSlackClientStateUnavailableError({
+        action: 'slack.list-channels',
+        cause: error,
+        workspaceUrl,
+      });
+    });
 
   if (!hydrate || !uiResult || uiResult.channels.length === 0) {
     return uiResult?.debug

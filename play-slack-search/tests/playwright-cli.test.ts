@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
 import test from 'node:test';
 
 import {
@@ -56,6 +57,34 @@ test('serializeBrowserCode は TS 変換由来の __name helper を shim する'
   });
 
   assert.match(source, /const __name = \(target, _name\) => target;/);
+  const runner = new Function(`return (${source});`)() as (
+    page: Record<string, unknown>,
+  ) => Promise<unknown>;
+
+  assert.equal(typeof runner, 'function');
+});
+
+test('serializeBrowserCode は require 経由で import_runtime_shims 参照が入っても解決できる', () => {
+  const require = createRequire(import.meta.url);
+  const { runListUsersInBrowser } = require(
+    '../scripts/slack-search/browser/list-users.ts',
+  ) as {
+    runListUsersInBrowser: (
+      page: unknown,
+      input: { hydrate: boolean; limit: number; workspaceUrl: string },
+    ) => Promise<unknown>;
+  };
+
+  const source = serializeBrowserCode(runListUsersInBrowser, {
+    hydrate: false,
+    limit: 1,
+    workspaceUrl: 'https://example.slack.com/client/T123',
+  });
+
+  assert.match(
+    source,
+    /const import_runtime_shims = \{ installBrowserRuntimeShims, buildSlackClientStateUnavailableError \};/,
+  );
   const runner = new Function(`return (${source});`)() as (
     page: Record<string, unknown>,
   ) => Promise<unknown>;

@@ -230,7 +230,7 @@ function createSlackProvider(options: {
       descriptor: {
         name: "list-users",
         description:
-          "List Slack users from the current workspace state. Use hydrate=true when the member list may need warm-up first.",
+          "List Slack users from the current workspace state. Pass workspaceUrl unless PLAY_SLACK_SEARCH_WORKSPACE_URL is configured, and run slack/search mode=login first if the session is not logged in. Use hydrate=true when the member list may need warm-up first.",
         requiredArgs: [],
         argsSchema: {
           type: "object",
@@ -256,7 +256,7 @@ function createSlackProvider(options: {
       descriptor: {
         name: "resolve-channel-id",
         description:
-          "Resolve one or more Slack channel IDs to channel names using the current workspace state.",
+          "Resolve one or more Slack channel IDs to channel names using the current workspace state. Pass workspaceUrl unless PLAY_SLACK_SEARCH_WORKSPACE_URL is configured, and run slack/search mode=login first if the session is not logged in.",
         requiredArgs: ["channelIds"],
         argsSchema: {
           type: "object",
@@ -286,7 +286,7 @@ function createSlackProvider(options: {
       descriptor: {
         name: "save-users",
         description:
-          "Fetch the full Slack user list and save it under workspace/tools/play-slack-search/<workspace-host>/users.json.",
+          "Fetch the full Slack user list and save it under workspace/tools/play-slack-search/<workspace-host>/users.json. Pass workspaceUrl unless PLAY_SLACK_SEARCH_WORKSPACE_URL is configured, and run slack/search mode=login first if the session is not logged in.",
         requiredArgs: [],
         argsSchema: {
           type: "object",

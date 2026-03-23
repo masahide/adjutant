@@ -1,4 +1,5 @@
 import type { SearchCodeInput, SearchPayload } from '../contracts.ts';
+import { installBrowserRuntimeShims } from './runtime-shims.ts';
 
 type BrowserPage = any;
 
@@ -6,6 +7,7 @@ export async function runSlackSearchInBrowser(
   page: BrowserPage,
   input: SearchCodeInput,
 ): Promise<SearchPayload> {
+  await installBrowserRuntimeShims(page);
   const { limit, query, workspaceUrl } = input;
   const searchInputSelector = [
     '[role="dialog"] [role="combobox"]',

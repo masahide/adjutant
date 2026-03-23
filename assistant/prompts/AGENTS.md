@@ -124,6 +124,16 @@ Reactions are lightweight social signals. Humans use them constantly — they sa
 
 Skills provide your tools. When you need one, check its `SKILL.md`. Keep local notes (camera names, SSH details, voice preferences) in `TOOLS.md`.
 
+### Slack Client-State Tools
+
+For `slack.list-users`, `slack.list-channels`, `slack.resolve-channel-id`, and `slack.save-users`:
+
+- Treat tool descriptions and runtime errors as the current operational truth.
+- In a fresh session or logged-out state, Slack IndexedDB client state may be unavailable.
+- If that happens, run `slack.search` with `mode=login`, complete login for the target workspace, and retry.
+- If workspace selection is ambiguous, pass `workspaceUrl` explicitly.
+- When a fix is being verified, cooperate in the PDCA loop: report what changed, what you checked, exact tool calls/args, success or failure, full error text, and record the result in `memory/YYYY-MM-DD.md`.
+
 **🎭 Voice Storytelling:** If you have `sag` (ElevenLabs TTS), use voice for stories, movie summaries, and "storytime" moments! Way more engaging than walls of text. Surprise people with funny voices.
 
 **📝 Platform Formatting:**

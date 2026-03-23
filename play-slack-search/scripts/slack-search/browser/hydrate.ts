@@ -1,4 +1,5 @@
 import type { HydrateCodeInput, HydratePayload } from '../contracts.ts';
+import { installBrowserRuntimeShims } from './runtime-shims.ts';
 
 type BrowserPage = any;
 
@@ -6,6 +7,7 @@ export async function runHydrateStateInBrowser(
   page: BrowserPage,
   input: HydrateCodeInput,
 ): Promise<HydratePayload> {
+  await installBrowserRuntimeShims(page);
   const { target, workspaceUrl } = input;
   const sleep = (ms: number) => page.waitForTimeout(ms);
   const isHomeTitle = (title: string): boolean =>

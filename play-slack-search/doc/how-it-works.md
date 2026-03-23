@@ -280,6 +280,8 @@ channel-list と同じく IndexedDB を使います。
 - これは Slack クライアントにキャッシュ済みの member 情報です
 - `members` と `users` をマージしても、必ずしもワークスペース全ユーザーを完全網羅するとは限りません
 - bot、削除済みユーザー、外部チーム所属ユーザーも state に入っていれば返ります
+- 新しい session や未ログイン状態では `reduxPersistence` / `reduxPersistenceStore` が未初期化で失敗することがあります。その場合は先に `--login` で対象 workspace にログインしてから再試行します
+- 複数 workspace を扱う場合は、意図した workspace の state を引くため `--workspace-url` を明示する方が安全です
 
 ## 9. 出力形式
 

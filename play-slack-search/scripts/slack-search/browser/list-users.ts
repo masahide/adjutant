@@ -3,6 +3,10 @@ import type {
   UserListHydrateDebug,
   UserListPayload,
 } from '../contracts.ts';
+import {
+  buildSlackClientStateUnavailableError,
+  installBrowserRuntimeShims,
+} from './runtime-shims.ts';
 
 type BrowserPage = any;
 type UserListSource = UserListPayload['source'];
@@ -181,6 +185,7 @@ export async function runListUsersInBrowser(
   page: BrowserPage,
   input: ListUsersCodeInput,
 ): Promise<UserListPayload> {
+  await installBrowserRuntimeShims(page);
   const { hydrate = false, limit, workspaceUrl } = input;
   const buildUserSortKeyInBrowserRunner = (user: SortableUserLike): string => {
     return (
@@ -698,14 +703,15 @@ export async function runListUsersInBrowser(
   await page.goto(workspaceUrl, { waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(2000);
 
-  const payload = await page.evaluate(
-    async ({
-      maxItems,
-      workspaceUrlForTeam,
-    }: {
-      maxItems: number;
-      workspaceUrlForTeam: string;
-    }) => {
+  const payload = await page
+    .evaluate(
+      async ({
+        maxItems,
+        workspaceUrlForTeam,
+      }: {
+        maxItems: number;
+        workspaceUrlForTeam: string;
+      }) => {
       const normalizedTextInPage = (value: unknown): string | null => {
         if (typeof value !== 'string') {
           return null;
@@ -937,9 +943,16 @@ export async function runListUsersInBrowser(
       } finally {
         db.close();
       }
-    },
-    { maxItems: limit, workspaceUrlForTeam: workspaceUrl },
-  );
+      },
+      { maxItems: limit, workspaceUrlForTeam: workspaceUrl },
+    )
+    .catch((error: unknown) => {
+      throw buildSlackClientStateUnavailableError({
+        action: 'slack.list-users',
+        cause: error,
+        workspaceUrl,
+      });
+    });
 
   if (!hydrate || !uiUsers || uiUsers.users.length === 0) {
     return uiUsers?.debug

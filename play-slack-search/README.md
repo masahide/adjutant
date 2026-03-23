@@ -105,6 +105,8 @@ pnpm slack-search --list-channels --hydrate --output ./tmp/channels.json
 pnpm slack-search --list-users --limit 100 --output ./tmp/users.json
 ```
 
+新しい session やログイン期限切れの状態では、`--list-users` / `--list-channels` は Slack client state を読めず失敗することがあります。その場合は先に `--login` で対象 workspace にログインしてください。複数 workspace がありうる場合は `--workspace-url` を明示する方が安全です。
+
 ## ディレクトリ構成
 
 - `scripts/slack-search.ts`: CLI のエントリポイント
