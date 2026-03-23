@@ -2,6 +2,7 @@ import {
   AuthStorage,
   createBashTool,
   createAgentSession,
+  type ExtensionFactory,
   ModelRegistry,
   SessionManager,
   SettingsManager,
@@ -10,12 +11,19 @@ import {
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
+import {
+  createPiResourceLoader,
+  logSkillDiagnostics,
+  type SkillWarningLogger,
+} from "./pi-skills.js";
 import type { MemoryScope } from "./memory/types.js";
 import { createDockerBashOperations, shouldSandbox } from "../sandbox/docker-bash-operations.js";
 import type { ActiveSandboxConfig } from "../sandbox/types.js";
 import { createContainerizedFileTools } from "./containerized-file-tool-operations.js";
 import { createToolHubToolDefinition, ToolHub } from "./dynamic-tool/index.js";
 import { createAssistantProviderRegistry } from "./tool-hub-provider-registry.js";
+import { createGuardrailExtension } from "./guardrail-extension.js";
+import { resolveGuardrailMode } from "../guardrails/config.js";
 
 export interface PiAgentSessionLike {
   prompt: (text: string) => Promise<void>;
@@ -39,6 +47,10 @@ export interface CreatePiAgentSessionOptions {
   stateDir?: string;
   phaseBRolloutScope?: "main" | "all";
   isHeartbeat?: boolean;
+  agentDir?: string;
+  homedirPath?: string;
+  onSkillWarning?: SkillWarningLogger;
+  guardrailMode?: "off" | "audit" | "enforce";
 }
 
 let activeSandbox: ActiveSandboxConfig | null = null;
@@ -91,6 +103,29 @@ function isPhaseBEnabledForScope(
   return memoryScope === "main";
 }
 
+function buildExtensionFactories(
+  options: CreatePiAgentSessionOptions,
+  env: NodeJS.ProcessEnv
+): ExtensionFactory[] {
+  const sessionId = options.sessionId?.trim();
+  if (!sessionId) {
+    return [];
+  }
+
+  const mode = resolveGuardrailMode(options.guardrailMode, env);
+  if (mode === "off") {
+    return [];
+  }
+
+  return [
+    createGuardrailExtension({
+      sessionId,
+      stateDir: options.stateDir,
+      mode,
+    }),
+  ];
+}
+
 export async function createPiAgentSession(
   options: CreatePiAgentSessionOptions
 ): Promise<{ session: PiAgentSessionLike }> {
@@ -98,6 +133,16 @@ export async function createPiAgentSession(
   const modelRegistry = new ModelRegistry(authStorage);
   const settingsManager = SettingsManager.inMemory();
   const sessionManager = createPiSessionManager(options);
+  const resourceLoader = createPiResourceLoader({
+    workspaceDir: options.workspaceDir,
+    projectRoot: options.projectRoot,
+    settingsManager,
+    agentDir: options.agentDir,
+    homedirPath: options.homedirPath,
+    extensionFactories: buildExtensionFactories(options, process.env),
+  });
+  await resourceLoader.reload();
+  logSkillDiagnostics(resourceLoader.getSkills().diagnostics, options.onSkillWarning);
 
   const modelSpec = options.model?.trim();
   const parsed = modelSpec ? parseModelSpecifier(modelSpec) : null;
@@ -112,6 +157,7 @@ export async function createPiAgentSession(
     settingsManager,
     model,
     customTools,
+    resourceLoader,
   });
 
   return {

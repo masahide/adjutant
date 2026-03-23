@@ -12,11 +12,11 @@ test("PermissionRegistry register + resolve returns outcome", async () => {
     title: "Allow tool",
   });
 
-  const resolved = registry.resolve("perm_1", "allow");
+  const resolved = registry.resolve("perm_1", "allow_once");
   assert.equal(resolved, true);
 
   const outcome = await pending;
-  assert.equal(outcome, "allow");
+  assert.equal(outcome, "allow_once");
 });
 
 test("PermissionRegistry cancelBySession resolves pending as cancelled", async () => {
@@ -29,6 +29,6 @@ test("PermissionRegistry cancelBySession resolves pending as cancelled", async (
   assert.deepEqual(cancelled, ["perm_1"]);
 
   assert.equal(await p1, "cancelled");
-  registry.resolve("perm_2", "deny");
-  assert.equal(await p2, "deny");
+  registry.resolve("perm_2", "reject_once");
+  assert.equal(await p2, "reject_once");
 });

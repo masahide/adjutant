@@ -10,12 +10,12 @@ test("ThreadTitleGenerator は apiKey 未設定時に fallback title を返す",
     messages: ["Slack の通知 triage UI の archive 復元導線を設計したい"],
   });
 
-  assert.equal(result.model, "gpt-5-nano");
+  assert.equal(result.model, "gpt-5.4-nano");
   assert.equal(result.fallback, true);
   assert.equal(result.title, "Slack の通知 triage UI の archive 復元導線を設計したい");
 });
 
-test("ThreadTitleGenerator は gpt-5-nano を使ってタイトルを生成する", async () => {
+test("ThreadTitleGenerator は gpt-5.4-nano を使ってタイトルを生成する", async () => {
   const calls: Array<Record<string, unknown>> = [];
   const generator = createThreadTitleGenerator({
     apiKey: "test-key",
@@ -34,8 +34,8 @@ test("ThreadTitleGenerator は gpt-5-nano を使ってタイトルを生成す�
   });
 
   assert.equal(result.title, "Archive UI cleanup");
-  assert.equal(result.model, "gpt-5-nano");
+  assert.equal(result.model, "gpt-5.4-nano");
   assert.equal(result.fallback, false);
   assert.equal(calls.length, 1);
-  assert.equal(calls[0]?.model, "gpt-5-nano");
+  assert.equal(calls[0]?.model, "gpt-5.4-nano");
 });

@@ -22,14 +22,22 @@
 
 ## 3. ディレクトリ / ランタイム基底設定
 
-| 変数                     | 既定値                               | 用途                                                         |
-| ------------------------ | ------------------------------------ | ------------------------------------------------------------ |
-| `ADJUTANT_STATE_DIR`     | `~/.adjutant`                        | control-plane / worker の状態保存先                          |
-| `ADJUTANT_WORKSPACE_DIR` | `<stateDir>/workspace`               | agent の workspace                                           |
-| `ADJUTANT_DATA_DIR`      | `<stateDir>/data`                    | collector 系保存先                                           |
-| `DATA_DIR`               | `ADJUTANT_DATA_DIR` 未指定時のみ使用 | 旧互換の data dir alias                                      |
-| `OPENAI_API_KEY`         | 未設定                               | 外部 agent runner と thread title 生成で使う OpenAI API キー |
-| `ADJUTANT_MODEL`         | 未指定                               | agent session に渡すモデル名                                 |
+| 変数                                       | 既定値                               | 用途                                                                           |
+| ------------------------------------------ | ------------------------------------ | ------------------------------------------------------------------------------ |
+| `ADJUTANT_STATE_DIR`                       | `~/.adjutant`                        | control-plane / worker の状態保存先                                            |
+| `ADJUTANT_WORKSPACE_DIR`                   | `<stateDir>/workspace`               | agent の workspace                                                             |
+| `ADJUTANT_DATA_DIR`                        | `<stateDir>/data`                    | collector 系保存先                                                             |
+| `DATA_DIR`                                 | `ADJUTANT_DATA_DIR` 未指定時のみ使用 | 旧互換の data dir alias                                                        |
+| `OPENAI_API_KEY`                           | 未設定                               | 外部 agent runner と thread title 生成で使う OpenAI API キー                   |
+| `ADJUTANT_MODEL`                           | 未指定                               | agent session に渡すモデル名                                                   |
+| `ADJUTANT_GUARDRAIL_MODE`                  | `off`                                | tool 実行前の rule-based guardrail を有効化する (`off` / `audit` / `enforce`)  |
+| `ADJUTANT_GUARDRAIL_PERMISSION_TIMEOUT_MS` | `30000`                              | human review permission の待機タイムアウト                                     |
+| `ADJUTANT_GUARDRAIL_TIMEOUT_OUTCOME`       | `deny`                               | human review timeout 時の既定解決 (`deny` / `cancelled`)                       |
+| `ADJUTANT_GUARDRAIL_RPC_TIMEOUT_MS`        | `5000`                               | worker から control-plane への review request timeout                          |
+| `ADJUTANT_GUARDRAIL_RPC_TIMEOUT_OUTCOME`   | `deny`                               | review request roundtrip timeout 時の fail-safe outcome (`deny` / `cancelled`) |
+| `ADJUTANT_GUARDRAIL_LLM_ENABLED`           | `false`                              | guardrail LLM advisory を有効化するか                                          |
+| `ADJUTANT_GUARDRAIL_LLM_MODEL`             | `gpt-5-mini`                         | guardrail LLM advisory のモデル名                                              |
+| `ADJUTANT_GUARDRAIL_LLM_TIMEOUT_MS`        | `3000`                               | guardrail LLM advisory のタイムアウト                                          |
 
 ## 4. Collector / Slack
 

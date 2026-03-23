@@ -64,7 +64,10 @@ export type PermissionSummary = {
   runId?: string;
   toolCallId?: string;
   title: string;
+  reason?: string;
+  ruleId?: string;
   requestedAt: string;
+  expiresAt?: string;
 };
 
 export type ToolEventRecord = {
@@ -109,10 +112,13 @@ export type ChatStreamEvent = {
     requestId: string;
     title: string;
     toolCallId?: string;
+    reason?: string;
+    ruleId?: string;
   };
   permissionResolved?: {
     requestId: string;
     outcome: "allow" | "deny" | "cancelled";
+    selection?: "allow_once" | "allow_always" | "reject_once" | "reject_always" | "cancelled";
   };
 };
 
@@ -232,7 +238,7 @@ export type ThreadSnapshotResponse = SnapshotResponse & {
 
 export type PostPermissionResolveRequest = {
   requestId: string;
-  outcome: "allow" | "deny";
+  outcome: "allow_once" | "allow_always" | "reject_once" | "reject_always";
 };
 
 export type PostPermissionResolveResponse = Record<string, never>;
@@ -272,9 +278,12 @@ export function toPermissionSummary(input: PendingPermission): PermissionSummary
   return {
     requestId: input.requestId,
     sessionId: input.sessionId,
-    runId: input.runId,
-    toolCallId: input.toolCallId,
     title: input.title,
+    ...(input.runId !== undefined ? { runId: input.runId } : {}),
+    ...(input.toolCallId !== undefined ? { toolCallId: input.toolCallId } : {}),
+    ...(input.reason !== undefined ? { reason: input.reason } : {}),
+    ...(input.ruleId !== undefined ? { ruleId: input.ruleId } : {}),
     requestedAt: input.createdAt,
+    ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
   };
 }

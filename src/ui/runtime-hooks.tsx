@@ -225,6 +225,9 @@ type PendingPermissionItem = {
   requestId: string;
   title: string;
   toolCallId?: string;
+  reason?: string;
+  ruleId?: string;
+  expiresAt?: string;
 };
 
 type AssistantRunState = {
@@ -238,6 +241,9 @@ function mapPendingPermissions(summary: PermissionSummary[]): PendingPermissionI
     requestId: permission.requestId,
     title: permission.title,
     toolCallId: permission.toolCallId,
+    reason: permission.reason,
+    ruleId: permission.ruleId,
+    expiresAt: permission.expiresAt,
   }));
 }
 
@@ -840,7 +846,10 @@ export function useAdjutantAssistantRuntime(baseUrl = "") {
 export function useThreadPendingPermissions(baseUrl = ""): {
   pendingPermissions: PendingPermissionItem[];
   resolvingRequestId?: string;
-  resolvePermission: (requestId: string, outcome: "allow" | "deny") => Promise<void>;
+  resolvePermission: (
+    requestId: string,
+    outcome: "allow_once" | "allow_always" | "reject_once" | "reject_always"
+  ) => Promise<void>;
 } {
   const aui = useAui();
   const sessionKey = resolveThreadSessionKey(aui);
@@ -884,7 +893,10 @@ export function useThreadPendingPermissions(baseUrl = ""): {
   }, [load]);
 
   const resolvePermission = useCallback(
-    async (requestId: string, outcome: "allow" | "deny") => {
+    async (
+      requestId: string,
+      outcome: "allow_once" | "allow_always" | "reject_once" | "reject_always"
+    ) => {
       setResolvingRequestId(requestId);
       try {
         const response = await fetch(`${baseUrl}/api/permissions/resolve`, {

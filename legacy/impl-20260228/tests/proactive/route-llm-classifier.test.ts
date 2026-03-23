@@ -33,7 +33,7 @@ describe("route-llm-classifier", () => {
   it("OpenAI 応答の outcome を run/pending へ正規化する", async () => {
     const audits: string[] = [];
     const classifier = createOpenAiSecondaryClassifier({
-      model: "gpt-5-mini",
+      model: "gpt-5.4-mini",
       maxConcurrent: 1,
       client: {
         chat: {
@@ -56,7 +56,7 @@ describe("route-llm-classifier", () => {
 
   it("不正なJSON応答は例外として扱う", async () => {
     const classifier = createOpenAiSecondaryClassifier({
-      model: "gpt-5-mini",
+      model: "gpt-5.4-mini",
       maxConcurrent: 1,
       client: {
         chat: {
@@ -74,7 +74,7 @@ describe("route-llm-classifier", () => {
 
   it("```json フェンス付き応答でも判定を抽出できる", async () => {
     const classifier = createOpenAiSecondaryClassifier({
-      model: "gpt-5-mini",
+      model: "gpt-5.4-mini",
       maxConcurrent: 1,
       client: {
         chat: {
@@ -93,7 +93,7 @@ describe("route-llm-classifier", () => {
 
   it("空の応答は route-llm-empty-response で失敗する", async () => {
     const classifier = createOpenAiSecondaryClassifier({
-      model: "gpt-5-mini",
+      model: "gpt-5.4-mini",
       maxConcurrent: 1,
       client: {
         chat: {
@@ -113,7 +113,7 @@ describe("route-llm-classifier", () => {
     let active = 0;
     let maxActive = 0;
     const classifier = createOpenAiSecondaryClassifier({
-      model: "gpt-5-mini",
+      model: "gpt-5.4-mini",
       maxConcurrent: 1,
       client: {
         chat: {

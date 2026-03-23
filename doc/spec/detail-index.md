@@ -50,6 +50,8 @@
 - notification-driven 実行方針
 - timeline / watermark / pending flusher
 - bootstrap context
+- Pi skills discovery
+- tool 実行前 guardrail
 - compaction
 - memory flush
 - hybrid memory search / memory write
@@ -76,6 +78,7 @@
 
 - ACP 分離アーキテクチャ
 - worker supervisor
+- review 専用 permission handshake
 - capability gate
 - session recovery
 - error classification

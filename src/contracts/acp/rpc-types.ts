@@ -79,6 +79,35 @@ export interface SessionCancelParams {
   sessionId: string;
 }
 
+export interface PermissionOption {
+  optionId: string;
+  name: string;
+  kind: "allow_once" | "allow_always" | "reject_once" | "reject_always";
+  _meta?: Record<string, unknown>;
+}
+
+export interface RequestPermissionRequest {
+  sessionId: string;
+  toolCall: Record<string, unknown>;
+  options: PermissionOption[];
+  _meta?: Record<string, unknown>;
+}
+
+export type RequestPermissionOutcome =
+  | {
+      outcome: "cancelled";
+    }
+  | {
+      outcome: "selected";
+      optionId: string;
+      _meta?: Record<string, unknown>;
+    };
+
+export interface RequestPermissionResponse {
+  outcome: RequestPermissionOutcome;
+  _meta?: Record<string, unknown>;
+}
+
 export type AgentRequest =
   | (JsonRpcRequest<InitializeParams> & {
       method: typeof ACP_AGENT_METHODS.INITIALIZE;

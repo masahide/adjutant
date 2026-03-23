@@ -134,3 +134,32 @@ test("AgentRunnerAdapter.prompt propagates session meta to runAgent options", as
     memoryWriteEnabled: true,
   });
 });
+
+test("AgentRunnerAdapter.prompt preserves ACP prompt payload for /skill commands", async () => {
+  let observedPrompt = "";
+
+  const runAgentMock: AgentRunner = async (options) => {
+    observedPrompt = options.prompt;
+    return {
+      runId: options.runId,
+      text: "ok",
+      stopReason: "end_turn",
+    };
+  };
+
+  const adapter = new AgentRunnerAdapter({
+    runAgent: runAgentMock,
+    emitNotification: () => {},
+  });
+
+  await adapter.prompt({
+    sessionId: "sess_skill",
+    prompt: "/skill:repo-helper fix imports",
+    meta: {
+      sessionKey: "main",
+      origin: "user",
+    },
+  });
+
+  assert.equal(observedPrompt, "/skill:repo-helper fix imports");
+});

@@ -10,6 +10,7 @@ Adjutant は、Slack Desktop の CDP イベントを収集し、後段で再利�
 - プロアクティブ通知ルーティング
 - Heartbeat
 - AI エージェント実行
+- tool 実行前 guardrail
 - memory search / memory write
 - Web UI と HTTP / SSE API
 
@@ -37,6 +38,7 @@ Adjutant は、Slack Desktop の CDP イベントを収集し、後段で再利�
 - 収集、制御、エージェント実行を分離した ACP / Process RPC ベース構成を採る
 - control-plane は API、UI、通知ルーティング、worker 管理、監査の中心になる
 - agent worker は ACP stdio server として動作し、`pi-coding-agent` と custom tools を仲介する
+- agent worker は Pi skills discovery と `tool_call` guardrail を内包する
 - sandbox は Docker を使って `bash` および標準ツール群の実行境界を制御する
 - custom tool は direct 公開せず、`tool_hub` 経由の provider / action 契約へ統一する
 
@@ -52,6 +54,7 @@ Adjutant は、Slack Desktop の CDP イベントを収集し、後段で再利�
   - heartbeat
   - tool hub
   - memory search / write
+  - guardrail
   - sandbox
   - workspace bootstrap
 - 一部のみ実装

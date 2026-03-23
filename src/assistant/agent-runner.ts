@@ -80,12 +80,14 @@ type AgentRunnerRuntime = {
   isExternalRunnerEnabled: () => boolean;
   createSession: (input: {
     workspaceDir: string;
+    projectRoot?: string;
     model?: string;
     sessionId?: string;
     memoryScope?: "main" | "spoke";
     memoryWriteEnabled?: boolean;
     stateDir?: string;
     isHeartbeat?: boolean;
+    onSkillWarning?: (message: string) => void;
   }) => Promise<{ session: PiAgentSessionLike }>;
   ensureWorkspaceBootstrapFiles: (workspaceDir: string) => Promise<unknown>;
   loadWorkspaceBootstrapFiles: (workspaceDir: string) => Promise<WorkspaceBootstrapFile[]>;
@@ -135,22 +137,26 @@ const defaultRuntime: AgentRunnerRuntime = {
   },
   createSession: async ({
     workspaceDir,
+    projectRoot,
     model,
     sessionId,
     memoryScope,
     memoryWriteEnabled,
     stateDir,
     isHeartbeat,
+    onSkillWarning,
   }) => {
     const module = await import("./agent-session-factory.js");
     return await module.createPiAgentSession({
       workspaceDir,
+      projectRoot,
       model,
       sessionId,
       memoryScope,
       memoryWriteEnabled,
       stateDir,
       isHeartbeat,
+      onSkillWarning,
     });
   },
   ensureWorkspaceBootstrapFiles,
@@ -201,12 +207,16 @@ async function resolveAgentSession(params: {
 
   const created = await params.runtime.createSession({
     workspaceDir: params.workspaceDir,
+    projectRoot: process.cwd(),
     model: process.env.ADJUTANT_MODEL,
     sessionId,
     memoryScope: params.memoryScope,
     memoryWriteEnabled: params.options.memoryWriteEnabled,
     stateDir: params.stateDir,
     isHeartbeat: params.options.isHeartbeat === true,
+    onSkillWarning: (message) => {
+      console.warn(`[assistant][skills][session:${params.options.sessionKey}] ${message}`);
+    },
   });
 
   if (typeof sessionId === "string" && sessionId.length > 0) {

@@ -1,6 +1,7 @@
 import { createInterface } from "node:readline";
 
 import { AgentRunnerAdapter } from "./adapters/agent-runner-adapter.js";
+import { ControlPlaneClient, requestPermissionFromControlPlane } from "./control-plane-client.js";
 import { loadProjectEnv } from "../runtime/load-project-env.js";
 import { handleAuthenticate } from "./handlers/authenticate.js";
 import { handleInitialize } from "./handlers/initialize.js";
@@ -12,6 +13,7 @@ import { configureWorkerSandboxFromEnv } from "./sandbox-bootstrap.js";
 import { SessionExecutionRegistry } from "./session-execution-registry.js";
 import { WorkerSessionStore } from "./session-store.js";
 import { WorkerRuntimeError } from "./errors.js";
+import { configureGuardrailPermissionRequester } from "../guardrails/worker-runtime.js";
 
 loadProjectEnv();
 
@@ -57,6 +59,13 @@ async function main(): Promise<void> {
   });
   const enableLoadSession = process.env.ACP_ENABLE_LOAD_SESSION === "1";
 
+  const controlPlaneClient = new ControlPlaneClient({
+    writeEnvelope,
+  });
+  configureGuardrailPermissionRequester((input) =>
+    requestPermissionFromControlPlane(controlPlaneClient, input)
+  );
+
   const adapter = new AgentRunnerAdapter({
     emitNotification: (notification) => {
       writeEnvelope(notification);
@@ -90,6 +99,12 @@ async function main(): Promise<void> {
     }
 
     if (request.jsonrpc !== "2.0" || typeof request.method !== "string") {
+      if (
+        (request as { id?: string | number }).id !== undefined &&
+        controlPlaneClient.handleEnvelope(request as never)
+      ) {
+        return;
+      }
       writeError(request.id ?? null, -32600, "Invalid Request");
       return;
     }

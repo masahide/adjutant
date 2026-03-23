@@ -44,7 +44,7 @@ describe("runtime-config-loader", () => {
       ADJUTANT_DATA_DIR: "data-x",
       ADJUTANT_WORKSPACE_DIR: "workspace-x",
       ADJUTANT_TZ: "UTC",
-      ADJUTANT_MODEL: "gpt-5-mini",
+      ADJUTANT_MODEL: "gpt-5.4-mini",
       ADJUTANT_ROUTE_LLM_ENABLED: "true",
       ADJUTANT_ROUTE_LLM_MODEL: "gpt-4.1-mini",
       ADJUTANT_ROUTE_LLM_TIMEOUT_MS: "1500",
@@ -59,7 +59,7 @@ describe("runtime-config-loader", () => {
     assert.equal(config.app.assistant.dataDir, "data-x");
     assert.equal(config.app.assistant.workspaceDir, resolve("workspace-x"));
     assert.equal(config.app.assistant.timezone, "UTC");
-    assert.equal(config.app.assistant.model, "gpt-5-mini");
+    assert.equal(config.app.assistant.model, "gpt-5.4-mini");
     assert.equal(config.app.agentAudit.enabled, true);
     assert.equal(
       config.app.agentAudit.path,
@@ -184,7 +184,7 @@ describe("runtime-config-loader", () => {
     } as NodeJS.ProcessEnv);
 
     assert.equal(config.enabled, false);
-    assert.equal(config.model, "gpt-5-mini");
+    assert.equal(config.model, "gpt-5.4-mini");
     assert.equal(config.routeLlmTimeoutMs, 1000);
     assert.equal(config.maxConcurrentRouteLlm, 1);
   });

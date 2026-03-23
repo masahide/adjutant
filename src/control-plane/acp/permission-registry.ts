@@ -1,3 +1,12 @@
+import type { PersistedGuardrailPolicyMatch } from "../../guardrails/types.js";
+
+export type PermissionSelection =
+  | "allow_once"
+  | "allow_always"
+  | "reject_once"
+  | "reject_always"
+  | "cancelled";
+
 export type PermissionOutcome = "allow" | "deny" | "cancelled";
 
 export interface PendingPermission {
@@ -6,25 +15,46 @@ export interface PendingPermission {
   runId?: string;
   toolCallId?: string;
   title: string;
+  reason?: string;
+  ruleId?: string;
+  policyCandidate?: PersistedGuardrailPolicyMatch;
   createdAt: string;
+  expiresAt?: string;
 }
 
 interface PendingPermissionEntry {
   request: PendingPermission;
-  resolve: (outcome: PermissionOutcome) => void;
+  resolve: (outcome: PermissionSelection) => void;
+}
+
+export interface PermissionRegisterInput
+  extends Omit<PendingPermission, "createdAt" | "expiresAt"> {
+  expiresAt?: string;
+}
+
+export function normalizePermissionSelection(outcome: PermissionSelection): PermissionOutcome {
+  if (outcome === "allow_once" || outcome === "allow_always") {
+    return "allow";
+  }
+  if (outcome === "cancelled") {
+    return "cancelled";
+  }
+  return "deny";
 }
 
 export class PermissionRegistry {
   private readonly entries = new Map<string, PendingPermissionEntry>();
 
-  register(request: Omit<PendingPermission, "createdAt">): Promise<PermissionOutcome> {
+  register(request: PermissionRegisterInput): Promise<PermissionSelection> {
     if (this.entries.has(request.requestId)) {
       throw new Error(`Duplicate requestId: ${request.requestId}`);
     }
 
+    const createdAt = new Date().toISOString();
     const enriched: PendingPermission = {
       ...request,
-      createdAt: new Date().toISOString(),
+      createdAt,
+      ...(request.expiresAt !== undefined ? { expiresAt: request.expiresAt } : {}),
     };
 
     return new Promise((resolve) => {
@@ -35,14 +65,14 @@ export class PermissionRegistry {
     });
   }
 
-  resolve(requestId: string, outcome: PermissionOutcome): boolean {
+  resolve(requestId: string, selection: PermissionSelection): boolean {
     const entry = this.entries.get(requestId);
     if (entry === undefined) {
       return false;
     }
 
     this.entries.delete(requestId);
-    entry.resolve(outcome);
+    entry.resolve(selection);
     return true;
   }
 
@@ -59,6 +89,10 @@ export class PermissionRegistry {
     }
 
     return cancelled;
+  }
+
+  getPending(requestId: string): PendingPermission | undefined {
+    return this.entries.get(requestId)?.request;
   }
 
   listPending(sessionId?: string): PendingPermission[] {

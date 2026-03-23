@@ -13,6 +13,7 @@ import type {
 } from "./contracts/process-rpc/method-types.js";
 import type { ClientNotification } from "./contracts/acp/rpc-types.js";
 import { PermissionGateway } from "./control-plane/acp/permission-gateway.js";
+import { handlePermissionRequest } from "./control-plane/acp/permission-request-handler.js";
 import { resolveOrCreateSession } from "./control-plane/acp/session-recovery-resolver.js";
 import { SessionRecoveryStore } from "./control-plane/acp/session-recovery-store.js";
 import { WorkerSupervisor } from "./control-plane/acp/worker-supervisor.js";
@@ -66,6 +67,8 @@ import { WatermarkStore } from "./control-plane/proactive/watermark-store.js";
 import { createHeartbeatRunner } from "./control-plane/heartbeat/heartbeat-runner.js";
 import { HeartbeatResultStore } from "./control-plane/heartbeat/result-store.js";
 import { buildSnapshotResponse } from "./control-plane/http/snapshot-builder.js";
+import { resolveGuardrailRuntimeConfig } from "./guardrails/config.js";
+import { GuardrailPolicyStore } from "./guardrails/policy-store.js";
 import { loadProjectEnv } from "./runtime/load-project-env.js";
 import { ensureWorkspaceReady, resolveRuntimeDirectories } from "./runtime/runtime-directories.js";
 import { renderMinimalUiPage } from "./ui/minimal-page.js";
@@ -97,7 +100,12 @@ function createWorkerSupervisor(
     };
   },
   onLog: (entry: Record<string, unknown>) => void,
-  onNotification: (notification: { method: string; params: Record<string, unknown> }) => void
+  onNotification: (notification: { method: string; params: Record<string, unknown> }) => void,
+  onRequest?: (request: {
+    id: number;
+    method: string;
+    params: Record<string, unknown>;
+  }) => Promise<Record<string, unknown>> | Record<string, unknown>
 ): WorkerSupervisor {
   const workerEnv: NodeJS.ProcessEnv = {
     ...process.env,
@@ -129,6 +137,7 @@ function createWorkerSupervisor(
     restartDelayMs: 100,
     onLog,
     onNotification,
+    onRequest,
   });
 }
 
@@ -462,10 +471,29 @@ export async function main(): Promise<void> {
   const emitSse = (event: StreamEventType, data: Record<string, unknown>) => {
     sseHub.broadcast(event, data);
   };
+  const guardrailConfig = resolveGuardrailRuntimeConfig({
+    env: process.env,
+    stateDir,
+  });
+  const guardrailPolicyStore = GuardrailPolicyStore.fromStateDir(stateDir, {
+    onWarn: (message, meta) => {
+      logControlPlane({
+        level: "warn",
+        event: "guardrail.policy_store.warn",
+        message,
+        runId: null,
+        sessionKey: null,
+        toolCallId: null,
+        details: meta,
+      });
+    },
+  });
   const uiRuntime = new UiRuntime({
     resolveRunId: (sessionId) => runLifecycle.resolveRunId(sessionId),
   });
   const permissionGateway = new PermissionGateway({
+    defaultTimeoutMs: guardrailConfig.permissionTimeoutMs,
+    defaultTimeoutSelection: guardrailConfig.permissionTimeoutSelection,
     emitUiEvent: (event) => {
       uiRuntime.onPermissionEvent(event);
       emitSse(event.type, event.payload);
@@ -700,6 +728,27 @@ export async function main(): Promise<void> {
       if (mapped !== undefined) {
         runEventBuffer.append(runId, mapped);
       }
+    },
+    async (request) => {
+      if (request.method !== "session/request_permission") {
+        throw new Error(`Method not found: ${request.method}`);
+      }
+      return (await handlePermissionRequest(request.params as never, {
+        permissionGateway,
+        policyStore: guardrailPolicyStore,
+        resolveRunId: (sessionId) => runLifecycle.resolveRunId(sessionId),
+        onWarn: (message, meta) => {
+          logControlPlane({
+            level: "warn",
+            event: "guardrail.permission_handler.warn",
+            message,
+            runId: null,
+            sessionKey: null,
+            toolCallId: null,
+            details: meta,
+          });
+        },
+      })) as unknown as Record<string, unknown>;
     }
   );
   let submitPromptForCollector:
@@ -1300,6 +1349,7 @@ export async function main(): Promise<void> {
             sessionId: session.sessionId,
             prompt: input.message,
             meta: {
+              runId: accepted.runId,
               sessionKey: input.sessionKey,
               memoryScope,
               memoryWriteEnabled: false,

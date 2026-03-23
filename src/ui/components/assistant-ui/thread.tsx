@@ -64,27 +64,58 @@ export function Thread() {
                     <span className="text-sm text-amber-900 dark:text-yellow-200">
                       {permission.title}
                       {permission.toolCallId ? ` (${permission.toolCallId})` : ""}
+                      {permission.reason ? (
+                        <span className="mt-1 block text-xs text-amber-700 dark:text-yellow-300">
+                          {permission.reason}
+                          {permission.ruleId ? ` [${permission.ruleId}]` : ""}
+                        </span>
+                      ) : null}
+                      {permission.expiresAt ? (
+                        <span className="mt-1 block text-[11px] text-amber-700/80 dark:text-yellow-300/80">
+                          Timeout: {new Date(permission.expiresAt).toLocaleString()}
+                        </span>
+                      ) : null}
                     </span>
-                    <div className="flex gap-1.5">
+                    <div className="flex flex-wrap gap-1.5">
                       <Button
                         variant="secondary"
                         size="sm"
                         disabled={isResolving}
                         onClick={() => {
-                          void resolvePermission(permission.requestId, "allow");
+                          void resolvePermission(permission.requestId, "allow_once");
                         }}
                       >
                         Approve
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        disabled={isResolving}
+                        onClick={() => {
+                          void resolvePermission(permission.requestId, "allow_always");
+                        }}
+                      >
+                        Always Allow
                       </Button>
                       <Button
                         variant="ghost"
                         size="sm"
                         disabled={isResolving}
                         onClick={() => {
-                          void resolvePermission(permission.requestId, "deny");
+                          void resolvePermission(permission.requestId, "reject_once");
                         }}
                       >
                         Deny
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={isResolving}
+                        onClick={() => {
+                          void resolvePermission(permission.requestId, "reject_always");
+                        }}
+                      >
+                        Always Deny
                       </Button>
                     </div>
                   </li>

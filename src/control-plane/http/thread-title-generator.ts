@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 
-const DEFAULT_THREAD_TITLE_MODEL = "gpt-5-nano";
+const DEFAULT_THREAD_TITLE_MODEL = "gpt-5.4-nano";
 const DEFAULT_THREAD_TITLE_TIMEOUT_MS = 5_000;
 
 export type GenerateThreadTitleInput = {
